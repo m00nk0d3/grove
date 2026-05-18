@@ -2387,15 +2387,23 @@ func TestBuildNewTerminalCmd(t *testing.T) {
 		path        string
 		goos        string
 		terminalEnv string
+		shellEnv    string
 		wantExe     string
 		wantArgs    []string
 	}{
 		{
-			name:     "windows launches cmd /C start cmd /K",
+			name:     "windows launches cmd /C start cmd /K with quoted path",
 			path:     `C:\repo\wt-feature`,
 			goos:     "windows",
 			wantExe:  "cmd",
-			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d C:\repo\wt-feature`},
+			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d "C:\repo\wt-feature"`},
+		},
+		{
+			name:     "windows quotes path containing spaces",
+			path:     `C:\My Projects\nexus`,
+			goos:     "windows",
+			wantExe:  "cmd",
+			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d "C:\My Projects\nexus"`},
 		},
 		{
 			name:     "darwin uses open -a Terminal",
@@ -2413,16 +2421,19 @@ func TestBuildNewTerminalCmd(t *testing.T) {
 			wantArgs:    []string{"kitty", "--working-directory=/home/dev/repo/wt"},
 		},
 		{
-			name:    "linux without TERMINAL env falls back to xterm",
-			path:    "/home/dev/repo/wt",
-			goos:    "linux",
-			wantExe: "xterm",
+			name:     "linux without TERMINAL env falls back to xterm",
+			path:     "/home/dev/repo/wt",
+			goos:     "linux",
+			shellEnv: "/bin/bash",
+			wantExe:  "xterm",
+			wantArgs: []string{"xterm", "-e", `cd "/home/dev/repo/wt"; /bin/bash`},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("TERMINAL", tt.terminalEnv)
+			t.Setenv("SHELL", tt.shellEnv)
 
 			cmd := buildNewTerminalCmd(tt.path, tt.goos)
 			require.NotNil(t, cmd)

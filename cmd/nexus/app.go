@@ -91,12 +91,16 @@ func clearErrorCmd() tea.Cmd {
 	})
 }
 
-// clearMsgMsg is dispatched after the 3-second success-notification timer fires.
+// msgAutoDismissDuration is how long the success/info toast stays visible before
+// being cleared by clearMsgCmd. Must stay in sync with the label in renderInfoModal.
+const msgAutoDismissDuration = 3 * time.Second
+
+// clearMsgMsg is dispatched after the success-notification timer fires.
 type clearMsgMsg struct{}
 
-// clearMsgCmd returns a Cmd that fires clearMsgMsg after 3 seconds.
+// clearMsgCmd returns a Cmd that fires clearMsgMsg after msgAutoDismissDuration.
 func clearMsgCmd() tea.Cmd {
-	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(msgAutoDismissDuration, func(t time.Time) tea.Msg {
 		return clearMsgMsg{}
 	})
 }
@@ -1119,7 +1123,8 @@ func getShell() string {
 func buildNewTerminalCmd(path, goos string) *exec.Cmd {
 	switch goos {
 	case "windows":
-		return exec.Command("cmd", "/C", "start", "cmd", "/K", fmt.Sprintf(`cd /d %s`, path))
+		// Quote the path so worktree paths that contain spaces are handled correctly.
+		return exec.Command("cmd", "/C", "start", "cmd", "/K", fmt.Sprintf(`cd /d "%s"`, path))
 	case "darwin":
 		return exec.Command("open", "-a", "Terminal", path)
 	default:
@@ -1157,7 +1162,11 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 		pid := cmd.Process.Pid
 		session := domain.Session{
 			WorktreePath: worktreePath,
-			ShellPID:     &pid,
+			// NOTE: on Windows (cmd /C start) and macOS (open -a Terminal) the
+			// launcher process exits almost immediately, so this PID is best-effort
+			// — it will be dead by the time Mission Control queries it.
+			// On Linux the terminal emulator process stays alive, so PID is reliable.
+			ShellPID:  &pid,
 			Status:       domain.StatusActive,
 			StartedAt:    time.Now().UTC().Truncate(time.Second),
 		}

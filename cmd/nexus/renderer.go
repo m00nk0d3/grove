@@ -1001,16 +1001,14 @@ func renderInfoModal(msg string, termWidth, termHeight int, baseView string) str
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
-	if termHeight <= 0 {
-		termHeight = 24
-	}
+	_ = termHeight // reserved for future height-capping logic
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#00FF88")).
 		Padding(0, 1).
 		MaxWidth(60).
-		Render("✓ " + msg + "\n\nAuto-dismisses in 3s")
+		Render(fmt.Sprintf("✓ %s\n\nAuto-dismisses in %.0fs", msg, msgAutoDismissDuration.Seconds()))
 
 	return overlayBottomRight(baseView, box, termWidth)
 }
