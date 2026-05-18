@@ -1166,7 +1166,7 @@ func TestModel_WindowSizeMsg_StoresDimensions(t *testing.T) {
 
 
 // TestModelUpdate_SKeyOpensShellInWorktreeverifies that pressing "s" in
-// viewWorktrees with a selected worktree triggers switchWorktreeCmd.
+// viewWorktrees with a selected worktree triggers spawnSessionCmd.
 func TestModelUpdate_SKeyOpensShellInWorktree(t *testing.T) {
 tests := []struct {
 name       string
@@ -1175,7 +1175,7 @@ worktrees  []domain.Worktree
 wantCmdNil bool
 }{
 {
-name: "s key triggers switchWorktreeCmd when in worktrees view",
+name: "s key triggers spawnSessionCmd when in worktrees view",
 view: viewWorktrees,
 worktrees: []domain.Worktree{
 {Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
@@ -1183,10 +1183,10 @@ worktrees: []domain.Worktree{
 wantCmdNil: false,
 },
 {
-name:       "s key does nothing when worktree list is empty",
+name:       "s key returns clearErrorCmd when worktree list is empty",
 view:       viewWorktrees,
 worktrees:  nil,
-wantCmdNil: true,
+wantCmdNil: false, // clearErrorCmd is returned with the "no worktree selected" error
 },
 {
 name: "s key does nothing in issues view",
@@ -1209,7 +1209,7 @@ _, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 if tt.wantCmdNil {
 assert.Nil(t, cmd)
 } else {
-assert.NotNil(t, cmd, "expected a non-nil cmd from switchWorktreeCmd")
+assert.NotNil(t, cmd, "expected a non-nil cmd from spawnSessionCmd or clearErrorCmd")
 }
 })
 }
@@ -2373,5 +2373,183 @@ func TestPagination_PrevPageClampsAtZero(t *testing.T) {
 	m2 := updated.(*Model)
 	assert.Equal(t, 0, m2.currentPage, "PageUp on first page stays at page 0")
 	assert.Equal(t, 0, m2.selectedIssueIdx, "selectedIssueIdx unchanged when already at first page")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 (sessions): buildNewTerminalCmd and sessionSpawnedMsg tests
+// ---------------------------------------------------------------------------
+
+// TestBuildNewTerminalCmd verifies that buildNewTerminalCmd returns the correct
+// command shape for each supported platform.
+func TestBuildNewTerminalCmd(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		goos        string
+		terminalEnv string
+		shellEnv    string
+		wantExe     string
+		wantArgs    []string
+	}{
+		{
+			name:     "windows launches cmd /C start cmd /K with quoted path",
+			path:     `C:\repo\wt-feature`,
+			goos:     "windows",
+			wantExe:  "cmd",
+			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d "C:\repo\wt-feature"`},
+		},
+		{
+			name:     "windows quotes path containing spaces",
+			path:     `C:\My Projects\nexus`,
+			goos:     "windows",
+			wantExe:  "cmd",
+			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d "C:\My Projects\nexus"`},
+		},
+		{
+			name:     "darwin uses open -a Terminal",
+			path:     "/Users/dev/repo/wt",
+			goos:     "darwin",
+			wantExe:  "open",
+			wantArgs: []string{"open", "-a", "Terminal", "/Users/dev/repo/wt"},
+		},
+		{
+			name:        "linux with TERMINAL env uses --working-directory",
+			path:        "/home/dev/repo/wt",
+			goos:        "linux",
+			terminalEnv: "kitty",
+			wantExe:     "kitty",
+			wantArgs:    []string{"kitty", "--working-directory=/home/dev/repo/wt"},
+		},
+		{
+			name:     "linux without TERMINAL env falls back to xterm",
+			path:     "/home/dev/repo/wt",
+			goos:     "linux",
+			shellEnv: "/bin/bash",
+			wantExe:  "xterm",
+			wantArgs: []string{"xterm", "-e", `cd "/home/dev/repo/wt"; /bin/bash`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TERMINAL", tt.terminalEnv)
+			t.Setenv("SHELL", tt.shellEnv)
+
+			cmd := buildNewTerminalCmd(tt.path, tt.goos)
+			require.NotNil(t, cmd)
+			require.NotEmpty(t, cmd.Args)
+
+			// The first arg is the executable path — check it contains the expected name.
+			assert.Contains(t, cmd.Args[0], tt.wantExe,
+				"command executable should contain %q", tt.wantExe)
+
+			if tt.wantArgs != nil {
+				assert.Equal(t, tt.wantArgs, cmd.Args)
+			}
+		})
+	}
+}
+
+// TestModelUpdate_SessionSpawnedMsg_SpawnErrorSetsStatusErr verifies that when
+// the terminal itself failed to launch (PID == 0), Update sets statusErr.
+func TestModelUpdate_SessionSpawnedMsg_SpawnErrorSetsStatusErr(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	updated, cmd := m.Update(sessionSpawnedMsg{err: errors.New("spawn session: exec: no such file")})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Equal(t, "Failed to spawn session: spawn session: exec: no such file", next.statusErr)
+	assert.Empty(t, next.statusMsg, "statusMsg must be empty on a hard spawn failure")
+	assert.NotNil(t, cmd, "clearErrorCmd should be returned on spawn error")
+}
+
+// TestModelUpdate_SessionSpawnedMsg_TrackErrorSetsStatusMsg verifies that when
+// the terminal launched (PID != 0) but PID tracking failed, Update sets statusMsg
+// (not statusErr) so the user sees a non-fatal warning.
+func TestModelUpdate_SessionSpawnedMsg_TrackErrorSetsStatusMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	pid5678 := 5678
+	updated, cmd := m.Update(sessionSpawnedMsg{
+		session: domain.Session{WorktreePath: "/repo/wt", ShellPID: &pid5678},
+		err:     errors.New("track session: db closed"),
+	})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Empty(t, next.statusErr, "statusErr must be empty when terminal did launch")
+	assert.Contains(t, next.statusMsg, "/repo/wt", "statusMsg should include the worktree path")
+	assert.Contains(t, next.statusMsg, "5678", "statusMsg should include the PID")
+	assert.Contains(t, next.statusMsg, "tracking failed", "statusMsg should indicate tracking failed")
+	assert.NotNil(t, cmd, "clearMsgCmd should be returned on a non-fatal tracking error")
+}
+
+// TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg verifies that a
+// successful sessionSpawnedMsg sets statusMsg with PID info and returns clearMsgCmd.
+func TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	pid9999 := 9999
+	updated, cmd := m.Update(sessionSpawnedMsg{
+		session: domain.Session{ID: 1, WorktreePath: "/repo/feat", ShellPID: &pid9999},
+	})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.NotNil(t, cmd, "clearMsgCmd should be returned on success")
+	assert.Contains(t, next.statusMsg, "/repo/feat", "statusMsg should include the worktree path")
+	assert.Contains(t, next.statusMsg, "9999", "statusMsg should include the PID")
+	assert.Empty(t, next.statusErr, "no error on success")
+}
+
+// TestModel_SKey_InWorktreeView_WithSelection_ReturnsSpawnCmd verifies that
+// pressing s in the worktrees view with a selection returns a non-nil Cmd.
+func TestModel_SKey_InWorktreeView_WithSelection_ReturnsSpawnCmd(t *testing.T) {
+	m := NewModel()
+	m.view = viewWorktrees
+	m.Worktrees = []domain.Worktree{
+		{Path: "/repos/nexus", Branch: "main"},
+	}
+	m.selectedIdx = 0
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.NotNil(t, cmd, "s key on selected worktree should return a spawn Cmd")
+	assert.Empty(t, next.statusErr, "no error when a worktree is selected")
+}
+
+// TestModel_SKey_InWorktreeView_NoSelection_SetsError verifies that pressing s
+// in the worktrees view with no selection sets statusErr.
+func TestModel_SKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
+	m := NewModel()
+	m.view = viewWorktrees
+	m.Worktrees = nil
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.NotEmpty(t, next.statusErr, "statusErr should be set when no worktree is selected")
+	assert.NotNil(t, cmd, "clearErrorCmd should be returned")
+}
+
+// TestModel_EnterKey_StillUsesSwitchWorktreeCmd verifies that pressing Enter
+// still triggers switchWorktreeCmd (i.e. s-key rebind did not affect Enter).
+func TestModel_EnterKey_StillUsesSwitchWorktreeCmd(t *testing.T) {
+	m := NewModel()
+	m.view = viewWorktrees
+	m.Worktrees = []domain.Worktree{
+		{Path: "/repos/nexus", Branch: "main"},
+	}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.NotNil(t, cmd, "Enter key must still return a Cmd (switchWorktreeCmd)")
 }
 
