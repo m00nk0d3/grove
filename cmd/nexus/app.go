@@ -244,7 +244,11 @@ func NewModel() *Model {
 // Init initializes the model and triggers an initial worktree list load and GitHub sync.
 func (m *Model) Init() tea.Cmd {
 	m.syncing = true
-	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(), sessionTickCmd())
+	cmds := []tea.Cmd{m.refreshWorktreesCmd(), m.syncGitHubCmd()}
+	if m.db != nil {
+		cmds = append(cmds, sessionTickCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update handles incoming messages and returns an updated model and command.
@@ -1218,6 +1222,7 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 		}
 		all, err := data.GetSessions(db)
 		if err != nil {
+			slog.Warn("session health check: failed to read sessions from DB", "err", err)
 			return sessionStatusUpdatedMsg{sessions: current}
 		}
 		var alive []domain.Session
@@ -1238,12 +1243,16 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 			if agentAlive {
 				// Agent is still running — transition to agent_running.
 				s.Status = domain.StatusAgentRunning
-				_, _ = data.UpsertSession(db, s)
+				if _, err := data.UpsertSession(db, s); err != nil {
+					slog.Warn("session health check: failed to update session status", "id", s.ID, "err", err)
+				}
 				alive = append(alive, s)
 				continue
 			}
 			// Both are dead — remove from DB.
-			_ = data.DeleteSession(db, s.ID)
+			if err := data.DeleteSession(db, s.ID); err != nil {
+				slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
+			}
 		}
 		if alive == nil {
 			alive = []domain.Session{}
