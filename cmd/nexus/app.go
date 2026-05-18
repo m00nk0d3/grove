@@ -218,6 +218,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modal.WorktreeCreateConfirmedMsg:
 			m.activeModal = nil
 			return m, m.addWorktreeCmd(msg.Branch, msg.Path, msg.BaseBranch)
+		case modal.ParentWorktreeRequiredMsg:
+			// Re-open create modal filtered to the parent issue so the user can
+			// create the parent worktree first. Once done, they can press 'c' again
+			// to create the sub-issue worktree (parent branch will exist by then).
+			m.activeModal = nil
+			for _, iss := range m.issues {
+				if iss.Number == msg.ParentNumber {
+					m.activeModal = modal.NewCreateModal([]domain.Issue{iss}, m.RepoPath)
+					break
+				}
+			}
+			return m, nil
 		case modal.PRWorktreeCreateConfirmedMsg:
 			m.activeModal = nil
 			return m, m.checkoutPRWorktreeCmd(msg.Branch, msg.Path)

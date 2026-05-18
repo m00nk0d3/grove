@@ -37,6 +37,13 @@ type WorktreeDeleteConfirmedMsg struct {
 // ModalCancelledMsg is sent when the user cancels a modal (Esc or 'n').
 type ModalCancelledMsg struct{}
 
+// ParentWorktreeRequiredMsg is sent when the user tries to create a sub-issue worktree
+// but the parent issue has no worktree yet. The app should re-open the create modal
+// filtered to the parent issue so the user can create the parent worktree first.
+type ParentWorktreeRequiredMsg struct {
+	ParentNumber int
+}
+
 // AiderLaunchMsg is sent when the user confirms Aider file selection.
 type AiderLaunchMsg struct {
 	Files []string

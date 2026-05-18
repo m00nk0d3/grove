@@ -13,9 +13,10 @@ import (
 type createStep int
 
 const (
-	stepIssues    createStep = iota
+	stepIssues        createStep = iota
 	stepType
-	stepBaseBranch // only shown when len(m.baseBranches) > 0
+	stepParentRequired // only shown when sub-issue has no parent worktree
+	stepBaseBranch     // only shown when len(m.baseBranches) > 0
 	stepSlug
 	stepConfirm
 )
@@ -24,7 +25,7 @@ const (
 var BranchTypes = []string{"feat", "fix", "chore", "docs", "test", "refactor"}
 
 // CreateModal is a multi-step Bubbletea model for creating a new worktree from a GitHub issue.
-// Steps: issue picker → type picker → [base branch picker] → slug editor → confirm.
+// Steps: issue picker → type picker → [parent required warning] → [base branch picker] → slug editor → confirm.
 type CreateModal struct {
 	step           createStep
 	issues         []domain.Issue
@@ -34,6 +35,8 @@ type CreateModal struct {
 	baseBranches   []string // "main" + any parent branches; empty means skip base branch step
 	slugInput      textinput.Model
 	repoPath       string
+	parentIssueNum int // set when stepParentRequired is shown
+	warnChoiceIdx  int // 0 = create parent first, 1 = continue with main
 }
 
 // NewCreateModal creates a new CreateModal with the given issues and repo path.
@@ -113,6 +116,10 @@ func (m *CreateModal) moveUp() {
 		if m.typeIdx > 0 {
 			m.typeIdx--
 		}
+	case stepParentRequired:
+		if m.warnChoiceIdx > 0 {
+			m.warnChoiceIdx--
+		}
 	case stepBaseBranch:
 		if m.baseBranchIdx > 0 {
 			m.baseBranchIdx--
@@ -130,6 +137,10 @@ func (m *CreateModal) moveDown() {
 		if m.typeIdx < len(BranchTypes)-1 {
 			m.typeIdx++
 		}
+	case stepParentRequired:
+		if m.warnChoiceIdx < 1 {
+			m.warnChoiceIdx++
+		}
 	case stepBaseBranch:
 		if m.baseBranchIdx < len(m.baseBranches)-1 {
 			m.baseBranchIdx++
@@ -146,7 +157,20 @@ func (m *CreateModal) advance() (tea.Model, tea.Cmd) {
 		m.step = stepType
 
 	case stepType:
-		if len(m.baseBranches) > 0 {
+		issue := m.SelectedIssue()
+		if issue.ParentNumber != nil {
+			// Sub-issue: check whether the parent already has a worktree branch.
+			if idx := m.parentBranchIdx(); idx >= 0 {
+				// Parent worktree exists — pre-select its branch and go to the picker.
+				m.baseBranchIdx = idx
+				m.step = stepBaseBranch
+			} else {
+				// Parent has no worktree yet — warn the user before proceeding.
+				m.parentIssueNum = *issue.ParentNumber
+				m.warnChoiceIdx = 0
+				m.step = stepParentRequired
+			}
+		} else if len(m.baseBranches) > 0 {
 			m.step = stepBaseBranch
 		} else {
 			slug := domain.SlugFromTitle(m.SelectedIssue().Title)
@@ -154,6 +178,18 @@ func (m *CreateModal) advance() (tea.Model, tea.Cmd) {
 			m.slugInput.Focus()
 			m.step = stepSlug
 		}
+
+	case stepParentRequired:
+		if m.warnChoiceIdx == 0 {
+			// User wants to create the parent worktree first.
+			pNum := m.parentIssueNum
+			return m, func() tea.Msg { return ParentWorktreeRequiredMsg{ParentNumber: pNum} }
+		}
+		// User chose to continue anyway — base on main.
+		slug := domain.SlugFromTitle(m.SelectedIssue().Title)
+		m.slugInput.SetValue(slug)
+		m.slugInput.Focus()
+		m.step = stepSlug
 
 	case stepBaseBranch:
 		slug := domain.SlugFromTitle(m.SelectedIssue().Title)
@@ -194,6 +230,22 @@ func (m *CreateModal) BaseBranch() string {
 	return m.baseBranches[m.baseBranchIdx]
 }
 
+// parentBranchIdx returns the index within baseBranches of the branch belonging to the
+// selected issue's parent, or -1 if the parent has no worktree branch.
+func (m *CreateModal) parentBranchIdx() int {
+	issue := m.SelectedIssue()
+	if issue.ParentNumber == nil {
+		return -1
+	}
+	needle := fmt.Sprintf("issue-%d-", *issue.ParentNumber)
+	for i, br := range m.baseBranches {
+		if strings.Contains(br, needle) {
+			return i
+		}
+	}
+	return -1
+}
+
 // BranchName returns the branch name following the <type>/issue-<N>-<slug> convention.
 func (m *CreateModal) BranchName() string {
 	issue := m.SelectedIssue()
@@ -216,6 +268,8 @@ func (m *CreateModal) View() string {
 		return m.viewIssueList()
 	case stepType:
 		return m.viewTypePicker()
+	case stepParentRequired:
+		return m.viewParentRequired()
 	case stepBaseBranch:
 		return m.viewBaseBranchPicker()
 	case stepSlug:
@@ -259,6 +313,32 @@ func (m *CreateModal) viewTypePicker() string {
 			cursor = "> "
 		}
 		b.WriteString(fmt.Sprintf("%s%s\n", cursor, t))
+	}
+
+	b.WriteString("\n↑/↓ navigate  •  Enter select  •  Esc cancel")
+	return b.String()
+}
+
+func (m *CreateModal) viewParentRequired() string {
+	issue := m.SelectedIssue()
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("Issue: #%d %s\n\n", issue.Number, issue.Title))
+	b.WriteString(fmt.Sprintf("⚠  Parent issue #%d has no worktree yet.\n", m.parentIssueNum))
+	b.WriteString("   Without a parent worktree the PR will target main\n")
+	b.WriteString("   instead of the parent branch.\n\n")
+	b.WriteString("What would you like to do?\n\n")
+
+	choices := []string{
+		fmt.Sprintf("Create parent #%d worktree first (recommended)", m.parentIssueNum),
+		"Continue anyway (base: main)",
+	}
+	for i, c := range choices {
+		cursor := "  "
+		if i == m.warnChoiceIdx {
+			cursor = "> "
+		}
+		b.WriteString(fmt.Sprintf("%s%s\n", cursor, c))
 	}
 
 	b.WriteString("\n↑/↓ navigate  •  Enter select  •  Esc cancel")

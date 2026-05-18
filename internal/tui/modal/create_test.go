@@ -159,7 +159,7 @@ func TestCreateModal_Enter_AtConfirmStep_EmitsCreateMsg(t *testing.T) {
 }
 
 func TestCreateModal_Esc_AtAnyStep_EmitsCancelMsg(t *testing.T) {
-	steps := []createStep{stepIssues, stepType, stepSlug, stepConfirm}
+	steps := []createStep{stepIssues, stepType, stepParentRequired, stepSlug, stepConfirm}
 
 	for _, step := range steps {
 		m := NewCreateModal(testIssues, "/home/user/repo")
@@ -193,4 +193,100 @@ func TestCreateModal_EmptyIssueList_EnterDoesNotAdvance(t *testing.T) {
 	m = updated.(*CreateModal)
 
 	assert.Equal(t, stepIssues, m.step)
+}
+
+// Sub-issue tests — parent #10 with and without a worktree branch.
+
+var parentNum10 = 10
+
+var subIssue = domain.Issue{Number: 42, Title: "Sub thing", ParentNumber: &parentNum10}
+
+func TestCreateModal_SubIssue_ParentHasNoWorktree_ShowsParentRequired(t *testing.T) {
+	// No parentBranches provided → parent has no worktree.
+	m := NewCreateModal([]domain.Issue{subIssue}, "/home/user/repo")
+	m.step = stepType
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*CreateModal)
+
+	assert.Equal(t, stepParentRequired, m.step)
+	assert.Equal(t, 10, m.parentIssueNum)
+	assert.Equal(t, 0, m.warnChoiceIdx)
+}
+
+func TestCreateModal_SubIssue_ParentHasWorktree_AutoSelectsParentBranch(t *testing.T) {
+	parentBranch := "feat/issue-10-some-feature"
+	m := NewCreateModal([]domain.Issue{subIssue}, "/home/user/repo", parentBranch)
+	m.step = stepType
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*CreateModal)
+
+	assert.Equal(t, stepBaseBranch, m.step)
+	// baseBranches = ["main", parentBranch], parent is index 1.
+	assert.Equal(t, 1, m.baseBranchIdx)
+	assert.Equal(t, parentBranch, m.BaseBranch())
+}
+
+func TestCreateModal_ParentRequired_View_ShowsWarning(t *testing.T) {
+	m := NewCreateModal([]domain.Issue{subIssue}, "/home/user/repo")
+	m.step = stepParentRequired
+	m.parentIssueNum = 10
+
+	view := m.View()
+
+	assert.Contains(t, view, "#10")
+	assert.Contains(t, view, "no worktree")
+	assert.Contains(t, view, "Create parent")
+	assert.Contains(t, view, "Continue anyway")
+}
+
+func TestCreateModal_ParentRequired_CreateFirst_EmitsParentRequiredMsg(t *testing.T) {
+	m := NewCreateModal([]domain.Issue{subIssue}, "/home/user/repo")
+	m.step = stepParentRequired
+	m.parentIssueNum = 10
+	m.warnChoiceIdx = 0 // "Create parent first"
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	reqMsg, ok := msg.(ParentWorktreeRequiredMsg)
+	require.True(t, ok)
+	assert.Equal(t, 10, reqMsg.ParentNumber)
+}
+
+func TestCreateModal_ParentRequired_ContinueWithMain_GoesToSlug(t *testing.T) {
+	m := NewCreateModal([]domain.Issue{subIssue}, "/home/user/repo")
+	m.step = stepParentRequired
+	m.parentIssueNum = 10
+	m.warnChoiceIdx = 1 // "Continue anyway"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*CreateModal)
+
+	assert.Equal(t, stepSlug, m.step)
+	assert.Equal(t, "", m.BaseBranch()) // no baseBranches → empty
+}
+
+func TestCreateModal_ParentRequired_DownKey_MovesToContinue(t *testing.T) {
+	m := NewCreateModal([]domain.Issue{subIssue}, "/home/user/repo")
+	m.step = stepParentRequired
+	m.warnChoiceIdx = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m = updated.(*CreateModal)
+
+	assert.Equal(t, 1, m.warnChoiceIdx)
+}
+
+func TestCreateModal_ParentRequired_UpKey_MovesToCreateFirst(t *testing.T) {
+	m := NewCreateModal([]domain.Issue{subIssue}, "/home/user/repo")
+	m.step = stepParentRequired
+	m.warnChoiceIdx = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	m = updated.(*CreateModal)
+
+	assert.Equal(t, 0, m.warnChoiceIdx)
 }
