@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -164,6 +165,10 @@ type Model struct {
 	// DB is optional; when non-nil, agent runs are logged to agent_history.
 	db *data.DB
 
+	// issueTree caches the depth-first-ordered tree built from m.issues.
+	// Rebuilt whenever m.issues is updated (debouncedRenderMsg handler).
+	issueTree []issueTreeRow
+
 	// Copilot prompt state
 	copilotPromptActive bool            // true while the inline Copilot prompt is open
 	copilotPromptInput  textinput.Model // text input for entering the Copilot prompt
@@ -232,7 +237,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.spawnCopilotCmd(msg.WorktreePath, msg.Prompt)
 			case modal.AgentNameClaude:
 				return m, m.spawnClaudeCmd(msg.WorktreePath, msg.Prompt)
-		case modal.AgentNameAider:
+			case modal.AgentNameAider:
 				return m, m.fetchAiderFilesCmd(msg.WorktreePath)
 			}
 			return m, nil
@@ -595,6 +600,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if pending.err == nil {
 				m.prs = pending.prs
 				m.issues = pending.issues
+				m.issueTree = buildIssueTree(m.issues)
 				m.lastSynced = pending.syncedAt
 				m.clampIssueIdx()
 				m.clampPRIdx()
@@ -747,13 +753,17 @@ func (m *Model) syncGitHubCmd() tea.Cmd {
 		// Best-effort hierarchy enrichment — failures are silently ignored.
 		if issErr == nil && len(issues) > 0 {
 			owner, repo, err := issueCmd.GetRepoOwnerAndName()
-			if err == nil {
+			if err != nil {
+				slog.Debug("hierarchy: get repo owner/name", "err", err)
+			} else {
 				nums := make([]int, len(issues))
 				for i, iss := range issues {
 					nums[i] = iss.Number
 				}
 				hier, err := issueCmd.FetchIssueHierarchy(nums, owner, repo)
-				if err == nil && hier != nil {
+				if err != nil {
+					slog.Debug("hierarchy: fetch failed", "err", err)
+				} else if hier != nil {
 					// Build child→parent reverse map.
 					childToParent := make(map[int]int)
 					for parentNum, children := range hier {
@@ -1153,7 +1163,10 @@ func (m *Model) moveDown() {
 	default: // panelList
 		switch m.view {
 		case viewIssues:
-			tree := buildIssueTree(m.issues)
+			tree := m.issueTree
+			if tree == nil {
+				tree = buildIssueTree(m.issues)
+			}
 			for ti, r := range tree {
 				if r.originalIdx == m.selectedIssueIdx {
 					if ti < len(tree)-1 {
@@ -1196,7 +1209,10 @@ func (m *Model) moveUp() {
 	default: // panelList
 		switch m.view {
 		case viewIssues:
-			tree := buildIssueTree(m.issues)
+			tree := m.issueTree
+			if tree == nil {
+				tree = buildIssueTree(m.issues)
+			}
 			for ti, r := range tree {
 				if r.originalIdx == m.selectedIssueIdx {
 					if ti > 0 {

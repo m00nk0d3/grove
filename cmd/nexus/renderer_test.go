@@ -1789,3 +1789,147 @@ func TestRenderFooterBar_NoPageInfo_WhenListFitsOnOnePage(t *testing.T) {
 	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, nil, 0)
 	assert.NotContains(t, footer, "Page", "no page info when list fits in one page")
 }
+
+// ---------------------------------------------------------------------------
+// Renderer helper unit tests
+// ---------------------------------------------------------------------------
+
+func TestBuildIssueTree_TopLevelOnly(t *testing.T) {
+issues := []domain.Issue{
+{Number: 1, Title: "First"},
+{Number: 2, Title: "Second"},
+{Number: 3, Title: "Third"},
+}
+tree := buildIssueTree(issues)
+require.Len(t, tree, 3)
+assert.Equal(t, 1, tree[0].issue.Number)
+assert.Equal(t, 2, tree[1].issue.Number)
+assert.Equal(t, 3, tree[2].issue.Number)
+for _, r := range tree {
+assert.Empty(t, r.prefix)
+}
+}
+
+func TestBuildIssueTree_ParentWithChildren(t *testing.T) {
+parent := 10
+issues := []domain.Issue{
+{Number: 1, Title: "Parent", SubIssueNumbers: []int{2, 3}},
+{Number: 2, Title: "Child A", ParentNumber: &parent},
+{Number: 3, Title: "Child B", ParentNumber: &parent},
+}
+// Fix: set parent refs to match parent issue number (1, not 10)
+one := 1
+issues[1].ParentNumber = &one
+issues[2].ParentNumber = &one
+
+tree := buildIssueTree(issues)
+require.Len(t, tree, 3)
+assert.Equal(t, 1, tree[0].issue.Number)
+assert.Empty(t, tree[0].prefix)
+assert.Equal(t, 2, tree[1].issue.Number)
+assert.Equal(t, "├─ ", tree[1].prefix)
+assert.Equal(t, 3, tree[2].issue.Number)
+assert.Equal(t, "└─ ", tree[2].prefix, "last child gets └─ prefix")
+}
+
+func TestBuildIssueTree_OrphanedSubIssue(t *testing.T) {
+missingParent := 99
+issues := []domain.Issue{
+{Number: 1, Title: "Regular"},
+{Number: 2, Title: "Orphan", ParentNumber: &missingParent},
+}
+tree := buildIssueTree(issues)
+require.Len(t, tree, 2)
+assert.Equal(t, 1, tree[0].issue.Number)
+// Orphan is appended at bottom with no prefix.
+assert.Equal(t, 2, tree[1].issue.Number)
+assert.Empty(t, tree[1].prefix)
+}
+
+func TestBuildIssueTree_OriginalIdxPreserved(t *testing.T) {
+one := 1
+issues := []domain.Issue{
+{Number: 1, Title: "Parent", SubIssueNumbers: []int{2}},
+{Number: 2, Title: "Child", ParentNumber: &one},
+}
+tree := buildIssueTree(issues)
+require.Len(t, tree, 2)
+assert.Equal(t, 0, tree[0].originalIdx)
+assert.Equal(t, 1, tree[1].originalIdx)
+}
+
+func TestExtractIssueNumber_Valid(t *testing.T) {
+cases := []struct {
+branch string
+want   int
+}{
+{"feat/issue-42-some-feature", 42},
+{"fix/issue-7-bug-fix", 7},
+{"issue-100-other", 100},
+}
+for _, tc := range cases {
+assert.Equal(t, tc.want, extractIssueNumber(tc.branch), tc.branch)
+}
+}
+
+func TestExtractIssueNumber_NoMatch(t *testing.T) {
+cases := []string{"main", "feat/no-number", "hotfix-something", ""}
+for _, branch := range cases {
+assert.Equal(t, 0, extractIssueNumber(branch), "should return 0 for %q", branch)
+}
+}
+
+func TestBuildIssueHierarchyStr_ParentIssue(t *testing.T) {
+parentNum := 5
+issue := domain.Issue{Number: 10, Title: "Child", ParentNumber: &parentNum}
+parent := domain.Issue{Number: 5, Title: "The Parent"}
+result := buildIssueHierarchyStr(issue, []domain.Issue{parent, issue}, 80)
+assert.Contains(t, result, "Parent: #5")
+assert.Contains(t, result, "The Parent")
+}
+
+func TestBuildIssueHierarchyStr_SubIssues(t *testing.T) {
+issue := domain.Issue{Number: 5, Title: "Parent", SubIssueNumbers: []int{10, 11}}
+child1 := domain.Issue{Number: 10, Title: "Child One"}
+child2 := domain.Issue{Number: 11, Title: "Child Two"}
+result := buildIssueHierarchyStr(issue, []domain.Issue{issue, child1, child2}, 80)
+assert.Contains(t, result, "Sub-issues:")
+assert.Contains(t, result, "#10")
+assert.Contains(t, result, "#11")
+assert.Contains(t, result, "Child One")
+assert.Contains(t, result, "Child Two")
+}
+
+func TestBuildIssueHierarchyStr_NeitherParentNorChildren(t *testing.T) {
+issue := domain.Issue{Number: 1, Title: "Standalone"}
+result := buildIssueHierarchyStr(issue, []domain.Issue{issue}, 80)
+assert.Empty(t, result)
+}
+
+func TestBuildPRHint_SubIssueWithParentWorktree(t *testing.T) {
+parentNum := 5
+issues := []domain.Issue{
+{Number: 10, Title: "Child", ParentNumber: &parentNum},
+{Number: 5, Title: "Parent"},
+}
+worktrees := []domain.Worktree{
+{Branch: "feat/issue-5-parent-feature"},
+{Branch: "feat/issue-10-child-feature"},
+}
+hint := buildPRHint("feat/issue-10-child-feature", issues, worktrees)
+assert.Contains(t, hint, "gh pr create --base feat/issue-5-parent-feature")
+}
+
+func TestBuildPRHint_NotASubIssue(t *testing.T) {
+issues := []domain.Issue{
+{Number: 10, Title: "Standalone"},
+}
+worktrees := []domain.Worktree{{Branch: "feat/issue-10-standalone"}}
+hint := buildPRHint("feat/issue-10-standalone", issues, worktrees)
+assert.Empty(t, hint)
+}
+
+func TestBuildPRHint_NonIssueBranch(t *testing.T) {
+hint := buildPRHint("main", []domain.Issue{}, []domain.Worktree{})
+assert.Empty(t, hint)
+}

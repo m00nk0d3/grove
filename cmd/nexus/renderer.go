@@ -11,19 +11,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	libtable "github.com/charmbracelet/lipgloss/table"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/mattn/go-runewidth"
 	"github.com/m00nk0d3/nexus/internal/domain"
 	"github.com/m00nk0d3/nexus/internal/tui/styles"
+	"github.com/mattn/go-runewidth"
 )
 
 const (
-	appVersion             = "1.0"
-	footerHintsWorktrees   = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [esc] Quit"
-	footerHintsPRs         = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [t] Settings | [g] GH | [esc] Quit"
-	footerHintsDefault     = footerHintsWorktrees
-	actionBarHints         = "[c-n] New  [c-d] Delete  [c-l] Lock | [f1] Help"
-	defaultTermWidth = 120
-	navPanelInner    = 18
+	appVersion           = "1.0"
+	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [esc] Quit"
+	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [t] Settings | [g] GH | [esc] Quit"
+	footerHintsDefault   = footerHintsWorktrees
+	actionBarHints       = "[c-n] New  [c-d] Delete  [c-l] Lock | [f1] Help"
+	defaultTermWidth     = 120
+	navPanelInner        = 18
 	// ctxPanelInner is no longer a constant — use computeCtxInner(termWidth) instead.
 	// panelOverhead: 1 border-left + 1 pad-left + 1 pad-right + 1 border-right
 	panelOverhead = 4
@@ -161,11 +161,11 @@ func renderNavRail(theme styles.Theme, panelHeight int, view activeView, focused
 
 func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme styles.Theme, listInner, panelHeight int, focused bool) string {
 	const (
-		cursorW  = 2
-		pathW    = 30
-		statusW  = 10
-		updatedW = 10
-		ghidW    = 6
+		cursorW    = 2
+		pathW      = 30
+		statusW    = 10
+		updatedW   = 10
+		ghidW      = 6
 		fixedTotal = cursorW + pathW + statusW + updatedW + ghidW // 58
 	)
 	nameW := listInner - fixedTotal
@@ -193,7 +193,7 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 
 	type wtEntry struct {
 		cursor, name, path, status, updated, ghid string
-		prState string
+		prState                                   string
 	}
 	entries := make([]wtEntry, len(visible))
 	for i, wt := range visible {
@@ -225,10 +225,10 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 		}
 	}
 
-	selSt    := theme.GetStyle("selected-row")
+	selSt := theme.GetStyle("selected-row")
 	normalSt := theme.GetStyle("_")
 	surfaceBg := normalSt.GetBackground()
-	normalFg  := normalSt.GetForeground()
+	normalFg := normalSt.GetForeground()
 
 	colStyle := func(row, col int) lipgloss.Style {
 		var base lipgloss.Style
@@ -331,8 +331,8 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 				body = "(no description)"
 			}
 			title := wrapText(pr.Title, ctxInner)
-			branch := truncateStr(pr.Branch, ctxInner-8)  // "Branch: " prefix = 8 chars
-			author := truncateStr(pr.Author, ctxInner-9)  // "Author: @" prefix = 9 chars
+			branch := truncateStr(pr.Branch, ctxInner-8) // "Branch: " prefix = 8 chars
+			author := truncateStr(pr.Author, ctxInner-9) // "Author: @" prefix = 9 chars
 			// "Labels: " prefix = 8 chars; wrap to remaining width to avoid re-wrap.
 			labels := wrapText(labelsStr, ctxInner-8)
 			content = fmt.Sprintf("Context: PR #%d\n%s\n\nBranch: %s\nAuthor: @%s\nStatus: %s\nLabels: %s\n\n%s\n\n[g] Open in GitHub", pr.Number, title, branch, author, state, labels, body)
@@ -506,10 +506,10 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 	}
 
 	// Capture styles outside StyleFunc to avoid repeated allocations.
-	selSt    := theme.GetStyle("selected-row")
+	selSt := theme.GetStyle("selected-row")
 	normalSt := theme.GetStyle("_") // unknown key → default: Background(surface).Foreground(fg)
 	surfaceBg := normalSt.GetBackground()
-	normalFg  := normalSt.GetForeground()
+	normalFg := normalSt.GetForeground()
 
 	colStyle := func(row, col int) lipgloss.Style {
 		var base lipgloss.Style
@@ -572,8 +572,8 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 
 func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme, listInner, panelHeight int, focused bool) string {
 	const (
-		prCursorW  = 2
-		prNumColW  = 6
+		prCursorW    = 2
+		prNumColW    = 6
 		prBranchColW = 20
 		prAssignColW = 12
 		prStatusColW = 8
@@ -622,10 +622,10 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 		}
 	}
 
-	selSt    := theme.GetStyle("selected-row")
+	selSt := theme.GetStyle("selected-row")
 	normalSt := theme.GetStyle("_")
 	surfaceBg := normalSt.GetBackground()
-	normalFg  := normalSt.GetForeground()
+	normalFg := normalSt.GetForeground()
 
 	colStyle := func(row, col int) lipgloss.Style {
 		var base lipgloss.Style
@@ -885,7 +885,6 @@ func wrapLine(s string, width int) string {
 	}
 	return out.String()
 }
-
 
 func truncateStr(s string, n int) string {
 	runes := []rune(s)
