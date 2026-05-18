@@ -37,6 +37,12 @@ type worktreeSwitchedMsg struct {
 	err error // Error during switch, if any
 }
 
+// sessionSpawnedMsg carries the result of spawning a new terminal session.
+type sessionSpawnedMsg struct {
+	session domain.Session
+	err     error
+}
+
 // githubSyncedMsg carries the result of a background GitHub PR/issue sync.
 type githubSyncedMsg struct {
 	prs      []domain.PullRequest
@@ -446,8 +452,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "s", "S":
 				if m.view == viewWorktrees {
 					if selected, ok := m.selectedWorktree(); ok {
-						return m, m.switchWorktreeCmd(selected.Path)
+						return m, m.spawnSessionCmd(selected.Path)
 					}
+					m.statusErr = "No worktree selected — select one first"
+					return m, clearErrorCmd()
 				}
 			case "c", "C":
 				if m.view != viewWorktrees {
@@ -547,6 +555,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusErr = ""
 		// Refresh worktrees after switching back
 		return m, m.refreshWorktreesCmd()
+
+	case sessionSpawnedMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("Failed to spawn session: %v", msg.err)
+			return m, clearErrorCmd()
+		}
+		return m, nil
 
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
@@ -1065,6 +1080,60 @@ func getShell() string {
 		return shell
 	}
 	return "/bin/sh"
+}
+
+// buildNewTerminalCmd constructs a platform-specific command that opens a new
+// terminal window rooted at path without blocking the caller.
+//
+//   - Windows: cmd /C start cmd /K "cd /d <path>"
+//   - macOS:   open -a Terminal <path>
+//   - Linux:   $TERMINAL --working-directory=<path>  (fallback: xterm)
+func buildNewTerminalCmd(path, goos string) *exec.Cmd {
+	switch goos {
+	case "windows":
+		return exec.Command("cmd", "/C", "start", "cmd", "/K", fmt.Sprintf(`cd /d %s`, path))
+	case "darwin":
+		return exec.Command("open", "-a", "Terminal", path)
+	default:
+		// Linux: respect the $TERMINAL env var when set.
+		if term := os.Getenv("TERMINAL"); term != "" {
+			return exec.Command(term, "--working-directory="+path)
+		}
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+		return exec.Command("xterm", "-e", fmt.Sprintf("cd %q; %s", path, shell))
+	}
+}
+
+// spawnSessionCmd opens a new terminal window at worktreePath in the background
+// and dispatches a sessionSpawnedMsg with the PID once the process is launched.
+// The PID is persisted in active_sessions when a DB connection is available.
+func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
+	db := m.db
+	return func() tea.Msg {
+		cmd := buildNewTerminalCmd(worktreePath, runtime.GOOS)
+		if err := cmd.Start(); err != nil {
+			return sessionSpawnedMsg{err: fmt.Errorf("spawn session: %w", err)}
+		}
+		pid := cmd.Process.Pid
+		session := domain.Session{
+			WorktreePath: worktreePath,
+			ShellPID:     &pid,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now(),
+		}
+		if db != nil {
+			id, err := data.UpsertSession(db, session)
+			if err != nil {
+				// Non-fatal: terminal is running but we could not persist the PID.
+				return sessionSpawnedMsg{session: session, err: fmt.Errorf("track session: %w", err)}
+			}
+			session.ID = id
+		}
+		return sessionSpawnedMsg{session: session}
+	}
 }
 
 // worktreesRefreshedMsg carries the result of refreshing the worktree list.
