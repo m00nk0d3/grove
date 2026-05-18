@@ -91,6 +91,16 @@ func clearErrorCmd() tea.Cmd {
 	})
 }
 
+// clearMsgMsg is dispatched after the 3-second success-notification timer fires.
+type clearMsgMsg struct{}
+
+// clearMsgCmd returns a Cmd that fires clearMsgMsg after 3 seconds.
+func clearMsgCmd() tea.Cmd {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+		return clearMsgMsg{}
+	})
+}
+
 // debouncedRenderCmd schedules a debouncedRenderMsg after delay.
 func debouncedRenderCmd(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(t time.Time) tea.Msg {
@@ -148,6 +158,7 @@ type Model struct {
 	selectedIdx      int                  // Currently selected worktree index
 	activeModal      modal.Modal          // Currently open modal (if any)
 	statusErr        string               // Error message to display (if any)
+	statusMsg        string               // Success/info message to display (if any)
 	themeIdx         int                  // Index into styles.Themes for the active theme
 	view             activeView           // Currently active main panel view
 	width            int                  // Terminal width in columns; 0 means use default
@@ -561,7 +572,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusErr = fmt.Sprintf("Failed to spawn session: %v", msg.err)
 			return m, clearErrorCmd()
 		}
-		return m, nil
+		pid := 0
+		if msg.session.ShellPID != nil {
+			pid = *msg.session.ShellPID
+		}
+		m.statusMsg = fmt.Sprintf("Session spawned for %s (PID %d)", msg.session.WorktreePath, pid)
+		return m, clearMsgCmd()
 
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
@@ -658,6 +674,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearErrorMsg:
 		m.statusErr = ""
 
+	case clearMsgMsg:
+		m.statusMsg = ""
+
 	case syncTickMsg:
 		m.syncing = true
 		return m, m.syncGitHubCmd()
@@ -711,6 +730,10 @@ func (m *Model) View() string {
 
 	if m.statusErr != "" {
 		return renderErrorModal(m.statusErr, w, h, baseView)
+	}
+
+	if m.statusMsg != "" {
+		return renderInfoModal(m.statusMsg, w, h, baseView)
 	}
 
 	return baseView
@@ -1087,7 +1110,7 @@ func getShell() string {
 //
 //   - Windows: cmd /C start cmd /K "cd /d <path>"
 //   - macOS:   open -a Terminal <path>
-//   - Linux:   $TERMINAL --working-directory=<path>  (fallback: xterm)
+//   - Linux:   $TERMINAL --working-directory=<path>  (fallback: x-terminal-emulator, then xterm)
 func buildNewTerminalCmd(path, goos string) *exec.Cmd {
 	switch goos {
 	case "windows":
@@ -1103,6 +1126,15 @@ func buildNewTerminalCmd(path, goos string) *exec.Cmd {
 		if shell == "" {
 			shell = "/bin/sh"
 		}
+		// Try common terminal emulators in order; x-terminal-emulator is the
+		// Debian/Ubuntu update-alternatives symlink that works on most distros.
+		for _, candidate := range []string{"x-terminal-emulator", "xterm"} {
+			if _, err := exec.LookPath(candidate); err == nil {
+				return exec.Command(candidate, "-e", fmt.Sprintf("cd %q; %s", path, shell))
+			}
+		}
+		// Last resort: return an xterm cmd; Start() will surface the error if
+		// xterm is not installed either.
 		return exec.Command("xterm", "-e", fmt.Sprintf("cd %q; %s", path, shell))
 	}
 }

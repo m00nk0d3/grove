@@ -995,6 +995,26 @@ func renderErrorModal(msg string, termWidth, termHeight int, baseView string) st
 	return overlayBottomRight(baseView, box, termWidth)
 }
 
+// renderInfoModal renders a floating success/info notification box anchored to the
+// bottom-right corner of the terminal viewport, overlaid on top of the base view.
+func renderInfoModal(msg string, termWidth, termHeight int, baseView string) string {
+	if termWidth <= 0 {
+		termWidth = defaultTermWidth
+	}
+	if termHeight <= 0 {
+		termHeight = 24
+	}
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00FF88")).
+		Padding(0, 1).
+		MaxWidth(60).
+		Render("✓ " + msg + "\n\nAuto-dismisses in 3s")
+
+	return overlayBottomRight(baseView, box, termWidth)
+}
+
 // overlayBottomRight places the overlay string at the bottom-right corner of the
 // base string. ANSI escape codes in both strings are handled correctly via
 // charmbracelet/x/ansi. base is assumed to be a multi-line string filling the

@@ -2475,19 +2475,22 @@ func TestModelUpdate_SessionSpawnedMsg_ErrorSetsStatusErr(t *testing.T) {
 	}
 }
 
-// TestModelUpdate_SessionSpawnedMsg_SuccessReturnsNilCmd verifies that a
-// successful sessionSpawnedMsg returns a nil Cmd (no further actions needed).
-func TestModelUpdate_SessionSpawnedMsg_SuccessReturnsNilCmd(t *testing.T) {
+// TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg verifies that a
+// successful sessionSpawnedMsg sets statusMsg with PID info and returns clearMsgCmd.
+func TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg(t *testing.T) {
 	m := NewModel()
 	require.NotNil(t, m)
 
 	updated, cmd := m.Update(sessionSpawnedMsg{
 		session: domain.Session{ID: 1, WorktreePath: "/repo/feat", PID: 9999},
 	})
-	_, ok := updated.(*Model)
+	next, ok := updated.(*Model)
 	require.True(t, ok)
 
-	assert.Nil(t, cmd, "no clearErrorCmd on success")
+	assert.NotNil(t, cmd, "clearMsgCmd should be returned on success")
+	assert.Contains(t, next.statusMsg, "/repo/feat", "statusMsg should include the worktree path")
+	assert.Contains(t, next.statusMsg, "9999", "statusMsg should include the PID")
+	assert.Empty(t, next.statusErr, "no error on success")
 }
 
 // TestModel_SKey_InWorktreeView_WithSelection_ReturnsSpawnCmd verifies that
