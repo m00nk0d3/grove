@@ -569,6 +569,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionSpawnedMsg:
 		if msg.err != nil {
+			if msg.session.ShellPID != nil {
+				// Terminal launched but PID tracking failed — non-fatal.
+				m.statusMsg = fmt.Sprintf("Session spawned for %s (PID %d) — tracking failed: %v", msg.session.WorktreePath, *msg.session.ShellPID, msg.err)
+				return m, clearMsgCmd()
+			}
 			m.statusErr = fmt.Sprintf("Failed to spawn session: %v", msg.err)
 			return m, clearErrorCmd()
 		}
@@ -1154,7 +1159,7 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 			WorktreePath: worktreePath,
 			ShellPID:     &pid,
 			Status:       domain.StatusActive,
-			StartedAt:    time.Now(),
+			StartedAt:    time.Now().UTC().Truncate(time.Second),
 		}
 		if db != nil {
 			id, err := data.UpsertSession(db, session)

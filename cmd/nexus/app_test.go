@@ -2439,40 +2439,41 @@ func TestBuildNewTerminalCmd(t *testing.T) {
 	}
 }
 
-// TestModelUpdate_SessionSpawnedMsg_ErrorSetsStatusErr verifies that when
-// sessionSpawnedMsg carries an error, Update sets statusErr and returns a
-// non-nil Cmd (clearErrorCmd).
-func TestModelUpdate_SessionSpawnedMsg_ErrorSetsStatusErr(t *testing.T) {
-	tests := []struct {
-		name      string
-		msg       sessionSpawnedMsg
-		wantError string
-	}{
-		{
-			name:      "spawn error sets statusErr",
-			msg:       sessionSpawnedMsg{err: errors.New("spawn session: exec: no such file")},
-			wantError: "Failed to spawn session: spawn session: exec: no such file",
-		},
-		{
-			name:      "track error sets statusErr",
-			msg:       sessionSpawnedMsg{err: errors.New("track session: db closed")},
-			wantError: "Failed to spawn session: track session: db closed",
-		},
-	}
+// TestModelUpdate_SessionSpawnedMsg_SpawnErrorSetsStatusErr verifies that when
+// the terminal itself failed to launch (PID == 0), Update sets statusErr.
+func TestModelUpdate_SessionSpawnedMsg_SpawnErrorSetsStatusErr(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := NewModel()
-			require.NotNil(t, m)
+	updated, cmd := m.Update(sessionSpawnedMsg{err: errors.New("spawn session: exec: no such file")})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
 
-			updated, cmd := m.Update(tt.msg)
-			next, ok := updated.(*Model)
-			require.True(t, ok)
+	assert.Equal(t, "Failed to spawn session: spawn session: exec: no such file", next.statusErr)
+	assert.Empty(t, next.statusMsg, "statusMsg must be empty on a hard spawn failure")
+	assert.NotNil(t, cmd, "clearErrorCmd should be returned on spawn error")
+}
 
-			assert.Equal(t, tt.wantError, next.statusErr)
-			assert.NotNil(t, cmd, "clearErrorCmd should be returned on spawn error")
-		})
-	}
+// TestModelUpdate_SessionSpawnedMsg_TrackErrorSetsStatusMsg verifies that when
+// the terminal launched (PID != 0) but PID tracking failed, Update sets statusMsg
+// (not statusErr) so the user sees a non-fatal warning.
+func TestModelUpdate_SessionSpawnedMsg_TrackErrorSetsStatusMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	pid5678 := 5678
+	updated, cmd := m.Update(sessionSpawnedMsg{
+		session: domain.Session{WorktreePath: "/repo/wt", ShellPID: &pid5678},
+		err:     errors.New("track session: db closed"),
+	})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Empty(t, next.statusErr, "statusErr must be empty when terminal did launch")
+	assert.Contains(t, next.statusMsg, "/repo/wt", "statusMsg should include the worktree path")
+	assert.Contains(t, next.statusMsg, "5678", "statusMsg should include the PID")
+	assert.Contains(t, next.statusMsg, "tracking failed", "statusMsg should indicate tracking failed")
+	assert.NotNil(t, cmd, "clearMsgCmd should be returned on a non-fatal tracking error")
 }
 
 // TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg verifies that a
@@ -2481,8 +2482,9 @@ func TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg(t *testing.T) {
 	m := NewModel()
 	require.NotNil(t, m)
 
+	pid9999 := 9999
 	updated, cmd := m.Update(sessionSpawnedMsg{
-		session: domain.Session{ID: 1, WorktreePath: "/repo/feat", PID: 9999},
+		session: domain.Session{ID: 1, WorktreePath: "/repo/feat", ShellPID: &pid9999},
 	})
 	next, ok := updated.(*Model)
 	require.True(t, ok)
