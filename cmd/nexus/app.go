@@ -54,6 +54,12 @@ type githubSyncedMsg struct {
 // syncTickMsg triggers the next periodic GitHub sync.
 type syncTickMsg struct{}
 
+// sessionTickMsg triggers the next periodic session health check.
+type sessionTickMsg struct{}
+
+// sessionStatusUpdatedMsg carries the updated sessions list after a health check.
+type sessionStatusUpdatedMsg struct{ sessions []domain.Session }
+
 // debouncedRenderMsg fires after the debounce delay to apply pending sync data.
 type debouncedRenderMsg struct{}
 
@@ -88,6 +94,13 @@ type clearErrorMsg struct{}
 func clearErrorCmd() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return clearErrorMsg{}
+	})
+}
+
+// sessionTickCmd schedules a sessionTickMsg after 3 seconds.
+func sessionTickCmd() tea.Cmd {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+		return sessionTickMsg{}
 	})
 }
 
@@ -186,6 +199,9 @@ type Model struct {
 	// DB is optional; when non-nil, agent runs are logged to agent_history.
 	db *data.DB
 
+	// sessions holds the last-known list of active terminal sessions.
+	sessions []domain.Session
+
 	// issueTree caches the depth-first-ordered tree built from m.issues.
 	// Rebuilt whenever m.issues is updated (debouncedRenderMsg handler).
 	issueTree []issueTreeRow
@@ -228,7 +244,11 @@ func NewModel() *Model {
 // Init initializes the model and triggers an initial worktree list load and GitHub sync.
 func (m *Model) Init() tea.Cmd {
 	m.syncing = true
-	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd())
+	cmds := []tea.Cmd{m.refreshWorktreesCmd(), m.syncGitHubCmd()}
+	if m.db != nil {
+		cmds = append(cmds, sessionTickCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update handles incoming messages and returns an updated model and command.
@@ -691,6 +711,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case syncTickMsg:
 		m.syncing = true
 		return m, m.syncGitHubCmd()
+
+	case sessionTickMsg:
+		return m, m.checkSessionsCmd()
+
+	case sessionStatusUpdatedMsg:
+		m.sessions = msg.sessions
+		return m, sessionTickCmd()
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -1184,7 +1211,58 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 	}
 }
 
-// worktreesRefreshedMsg carries the result of refreshing the worktree list.
+// checkSessionsCmd reads all tracked sessions from the DB, checks whether each
+// PID is still alive, updates session status for agent-only survivors, and
+// removes fully dead sessions. Returns sessionStatusUpdatedMsg with the updated list.
+// When db is nil it is a no-op that returns the current sessions unchanged.
+func (m *Model) checkSessionsCmd() tea.Cmd {
+	db := m.db
+	current := m.sessions
+	return func() tea.Msg {
+		if db == nil {
+			return sessionStatusUpdatedMsg{sessions: current}
+		}
+		all, err := data.GetSessions(db)
+		if err != nil {
+			slog.Warn("session health check: failed to read sessions from DB", "err", err)
+			return sessionStatusUpdatedMsg{sessions: current}
+		}
+		var alive []domain.Session
+		for _, s := range all {
+			if s.ShellPID == nil {
+				// No PID to check — keep as-is.
+				alive = append(alive, s)
+				continue
+			}
+			shellAlive := pidAlive(*s.ShellPID)
+			agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
+
+			if shellAlive {
+				alive = append(alive, s)
+				continue
+			}
+			// Shell is dead.
+			if agentAlive {
+				// Agent is still running — transition to agent_running.
+				s.Status = domain.StatusAgentRunning
+				if _, err := data.UpsertSession(db, s); err != nil {
+					slog.Warn("session health check: failed to update session status", "id", s.ID, "err", err)
+				}
+				alive = append(alive, s)
+				continue
+			}
+			// Both are dead — remove from DB.
+			if err := data.DeleteSession(db, s.ID); err != nil {
+				slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
+			}
+		}
+		if alive == nil {
+			alive = []domain.Session{}
+		}
+		return sessionStatusUpdatedMsg{sessions: alive}
+	}
+}
+
 type worktreesRefreshedMsg struct {
 	worktrees []domain.Worktree
 	err       error
