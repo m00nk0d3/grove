@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -891,13 +892,13 @@ func TestModel_G_Key_OpensInBrowser(t *testing.T) {
 // the new list bounds so openInBrowserCmd never panics.
 func TestModel_GithubSync_ClampsIssueAndPRIdx(t *testing.T) {
 	tests := []struct {
-		name             string
-		initialIssueIdx  int
-		initialPRIdx     int
-		syncIssues       []domain.Issue
-		syncPRs          []domain.PullRequest
-		wantIssueIdx     int
-		wantPRIdx        int
+		name            string
+		initialIssueIdx int
+		initialPRIdx    int
+		syncIssues      []domain.Issue
+		syncPRs         []domain.PullRequest
+		wantIssueIdx    int
+		wantPRIdx       int
 	}{
 		{
 			name:            "issue idx clamped when sync shrinks list",
@@ -1164,55 +1165,54 @@ func TestModel_WindowSizeMsg_StoresDimensions(t *testing.T) {
 	}
 }
 
-
 // TestModelUpdate_SKeyOpensShellInWorktreeverifies that pressing "s" in
 // viewWorktrees with a selected worktree triggers spawnSessionCmd.
 func TestModelUpdate_SKeyOpensShellInWorktree(t *testing.T) {
-tests := []struct {
-name       string
-view       activeView
-worktrees  []domain.Worktree
-wantCmdNil bool
-}{
-{
-name: "s key triggers spawnSessionCmd when in worktrees view",
-view: viewWorktrees,
-worktrees: []domain.Worktree{
-{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
-},
-wantCmdNil: false,
-},
-{
-name:       "s key returns clearErrorCmd when worktree list is empty",
-view:       viewWorktrees,
-worktrees:  nil,
-wantCmdNil: false, // clearErrorCmd is returned with the "no worktree selected" error
-},
-{
-name: "s key does nothing in issues view",
-view: viewIssues,
-worktrees: []domain.Worktree{
-{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
-},
-wantCmdNil: true,
-},
-}
+	tests := []struct {
+		name       string
+		view       activeView
+		worktrees  []domain.Worktree
+		wantCmdNil bool
+	}{
+		{
+			name: "s key triggers spawnSessionCmd when in worktrees view",
+			view: viewWorktrees,
+			worktrees: []domain.Worktree{
+				{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
+			},
+			wantCmdNil: false,
+		},
+		{
+			name:       "s key returns clearErrorCmd when worktree list is empty",
+			view:       viewWorktrees,
+			worktrees:  nil,
+			wantCmdNil: false, // clearErrorCmd is returned with the "no worktree selected" error
+		},
+		{
+			name: "s key does nothing in issues view",
+			view: viewIssues,
+			worktrees: []domain.Worktree{
+				{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
+			},
+			wantCmdNil: true,
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-model := NewModel()
-require.NotNil(t, model)
-model.view = tt.view
-model.Worktrees = tt.worktrees
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewModel()
+			require.NotNil(t, model)
+			model.view = tt.view
+			model.Worktrees = tt.worktrees
 
-_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-if tt.wantCmdNil {
-assert.Nil(t, cmd)
-} else {
-assert.NotNil(t, cmd, "expected a non-nil cmd from spawnSessionCmd or clearErrorCmd")
-}
-})
-}
+			_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+			if tt.wantCmdNil {
+				assert.Nil(t, cmd)
+			} else {
+				assert.NotNil(t, cmd, "expected a non-nil cmd from spawnSessionCmd or clearErrorCmd")
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2553,3 +2553,75 @@ func TestModel_EnterKey_StillUsesSwitchWorktreeCmd(t *testing.T) {
 	assert.NotNil(t, cmd, "Enter key must still return a Cmd (switchWorktreeCmd)")
 }
 
+// TestSessionTickMsg verifies that sessionTickMsg dispatches checkSessionsCmd.
+func TestSessionTickMsg(t *testing.T) {
+	m := NewModel()
+	_, cmd := m.Update(sessionTickMsg{})
+	assert.NotNil(t, cmd, "sessionTickMsg should return a non-nil command (checkSessionsCmd)")
+}
+
+// TestSessionStatusUpdatedMsg verifies that sessionStatusUpdatedMsg updates m.sessions
+// and schedules the next tick.
+func TestSessionStatusUpdatedMsg(t *testing.T) {
+	m := NewModel()
+	sessions := []domain.Session{
+		{ID: 1, WorktreePath: "/repo/test", Status: domain.StatusActive},
+	}
+	updated, cmd := m.Update(sessionStatusUpdatedMsg{sessions: sessions})
+	m2 := updated.(*Model)
+	require.Len(t, m2.sessions, 1)
+	assert.Equal(t, "/repo/test", m2.sessions[0].WorktreePath)
+	assert.NotNil(t, cmd, "sessionStatusUpdatedMsg should schedule next tick")
+}
+
+// TestSessionStatusUpdatedMsg_Empty verifies that empty sessions list is stored correctly.
+func TestSessionStatusUpdatedMsg_Empty(t *testing.T) {
+	m := NewModel()
+	m.sessions = []domain.Session{{ID: 1, WorktreePath: "/repo/old"}}
+	updated, _ := m.Update(sessionStatusUpdatedMsg{sessions: []domain.Session{}})
+	m2 := updated.(*Model)
+	assert.Empty(t, m2.sessions)
+}
+
+// TestCheckSessionsCmd_NilDB verifies that checkSessionsCmd is a no-op when db is nil.
+func TestCheckSessionsCmd_NilDB(t *testing.T) {
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: "/repo/existing", Status: domain.StatusActive},
+	}
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok, "expected sessionStatusUpdatedMsg, got %T", msg)
+	require.Len(t, result.sessions, 1)
+	assert.Equal(t, "/repo/existing", result.sessions[0].WorktreePath)
+}
+
+// TestCheckSessionsCmd_EmptyDB verifies that checkSessionsCmd returns empty sessions when DB is empty.
+func TestCheckSessionsCmd_EmptyDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	m := NewModel()
+	m.db = db
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions)
+}
+
+// TestPidAlive_CurrentProcess verifies that pidAlive returns true for the current process.
+func TestPidAlive_CurrentProcess(t *testing.T) {
+	assert.True(t, pidAlive(os.Getpid()), "current process should be alive")
+}
+
+// TestPidAlive_InvalidPID verifies that pidAlive returns false for an invalid PID.
+func TestPidAlive_InvalidPID(t *testing.T) {
+	// PID 0 is the idle process on Windows and typically reserved on Unix.
+	// A very high PID is extremely unlikely to exist.
+	assert.False(t, pidAlive(999999999), "PID 999999999 should not be alive")
+}
