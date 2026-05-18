@@ -18,11 +18,12 @@ func UpsertSession(db *DB, s domain.Session) (int64, error) {
 		// this format when reading back, so we match it on the write side too.
 		startedAt = s.StartedAt.UTC().Format(time.RFC3339)
 	}
+	updatedAt := time.Now().UTC().Format(time.RFC3339)
 
 	res, err := db.Conn.Exec(
 		`INSERT OR REPLACE INTO active_sessions
-		 (worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		 (worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.WorktreePath,
 		s.ShellPID,
 		s.AgentName,
@@ -30,6 +31,7 @@ func UpsertSession(db *DB, s domain.Session) (int64, error) {
 		s.Prompt,
 		string(s.Status),
 		startedAt,
+		updatedAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("upsert session: %w", err)
@@ -45,7 +47,7 @@ func UpsertSession(db *DB, s domain.Session) (int64, error) {
 // An empty database returns an empty slice and no error.
 func GetSessions(db *DB) ([]domain.Session, error) {
 	rows, err := db.Conn.Query(
-		`SELECT id, worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at
+		`SELECT id, worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at, updated_at
 		 FROM active_sessions
 		 ORDER BY started_at DESC`,
 	)
@@ -75,7 +77,7 @@ func GetSessions(db *DB) ([]domain.Session, error) {
 // when no row matches.
 func GetSessionByWorktree(db *DB, worktreePath string) (*domain.Session, error) {
 	row := db.Conn.QueryRow(
-		`SELECT id, worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at
+		`SELECT id, worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at, updated_at
 		 FROM active_sessions
 		 WHERE worktree_path = ?`,
 		worktreePath,
@@ -101,7 +103,7 @@ func DeleteSession(db *DB, id int64) error {
 
 // DeleteDeadSessions removes all session rows whose status is 'dead'.
 func DeleteDeadSessions(db *DB) error {
-	_, err := db.Conn.Exec(`DELETE FROM active_sessions WHERE status = 'dead'`)
+	_, err := db.Conn.Exec(`DELETE FROM active_sessions WHERE status = ?`, string(domain.StatusDead))
 	if err != nil {
 		return fmt.Errorf("delete dead sessions: %w", err)
 	}
@@ -124,6 +126,7 @@ func scanSession(s rowScanner) (domain.Session, error) {
 		agentPID  sql.NullInt64
 		prompt    sql.NullString
 		startedAt sql.NullString
+		updatedAt sql.NullString
 	)
 	err := s.Scan(
 		&sess.ID,
@@ -134,6 +137,7 @@ func scanSession(s rowScanner) (domain.Session, error) {
 		&prompt,
 		&sess.Status,
 		&startedAt,
+		&updatedAt,
 	)
 	if err != nil {
 		return domain.Session{}, err
@@ -158,6 +162,13 @@ func scanSession(s rowScanner) (domain.Session, error) {
 			return domain.Session{}, fmt.Errorf("parse started_at %q: %w", startedAt.String, err)
 		}
 		sess.StartedAt = t
+	}
+	if updatedAt.Valid && updatedAt.String != "" {
+		t, err := parseSessionTime(updatedAt.String)
+		if err != nil {
+			return domain.Session{}, fmt.Errorf("parse updated_at %q: %w", updatedAt.String, err)
+		}
+		sess.UpdatedAt = t
 	}
 	return sess, nil
 }

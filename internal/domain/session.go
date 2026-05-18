@@ -28,4 +28,5 @@ type Session struct {
 	Prompt       *string
 	Status       SessionStatus
 	StartedAt    time.Time
+	UpdatedAt    time.Time
 }

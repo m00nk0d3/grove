@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS active_sessions (
     agent_name    TEXT,
     agent_pid     INTEGER,
     prompt        TEXT,
-    status        TEXT DEFAULT 'active',
-    started_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    status        TEXT DEFAULT 'active' CHECK(status IN ('active','agent_running','agent_done','agent_failed','dead')),
+    started_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 );

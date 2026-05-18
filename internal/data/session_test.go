@@ -273,3 +273,39 @@ func TestDeleteSession_ClosedDB(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "delete session")
 }
+
+// TestGetSessions_ClosedDB verifies that operating on a closed DB returns a
+// wrapped error containing "get sessions".
+func TestGetSessions_ClosedDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = data.GetSessions(db)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "get sessions")
+}
+
+// TestGetSessionByWorktree_ClosedDB verifies that operating on a closed DB
+// returns a wrapped error containing "get session by worktree".
+func TestGetSessionByWorktree_ClosedDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = data.GetSessionByWorktree(db, "/repo/closed")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "get session by worktree")
+}
+
+// TestDeleteDeadSessions_ClosedDB verifies that operating on a closed DB
+// returns a wrapped error containing "delete dead sessions".
+func TestDeleteDeadSessions_ClosedDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	err = data.DeleteDeadSessions(db)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete dead sessions")
+}
