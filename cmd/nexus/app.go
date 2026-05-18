@@ -37,6 +37,12 @@ type worktreeSwitchedMsg struct {
 	err error // Error during switch, if any
 }
 
+// sessionSpawnedMsg carries the result of spawning a new terminal session.
+type sessionSpawnedMsg struct {
+	session domain.Session
+	err     error
+}
+
 // githubSyncedMsg carries the result of a background GitHub PR/issue sync.
 type githubSyncedMsg struct {
 	prs      []domain.PullRequest
@@ -82,6 +88,20 @@ type clearErrorMsg struct{}
 func clearErrorCmd() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return clearErrorMsg{}
+	})
+}
+
+// msgAutoDismissDuration is how long the success/info toast stays visible before
+// being cleared by clearMsgCmd. Must stay in sync with the label in renderInfoModal.
+const msgAutoDismissDuration = 3 * time.Second
+
+// clearMsgMsg is dispatched after the success-notification timer fires.
+type clearMsgMsg struct{}
+
+// clearMsgCmd returns a Cmd that fires clearMsgMsg after msgAutoDismissDuration.
+func clearMsgCmd() tea.Cmd {
+	return tea.Tick(msgAutoDismissDuration, func(t time.Time) tea.Msg {
+		return clearMsgMsg{}
 	})
 }
 
@@ -142,6 +162,7 @@ type Model struct {
 	selectedIdx      int                  // Currently selected worktree index
 	activeModal      modal.Modal          // Currently open modal (if any)
 	statusErr        string               // Error message to display (if any)
+	statusMsg        string               // Success/info message to display (if any)
 	themeIdx         int                  // Index into styles.Themes for the active theme
 	view             activeView           // Currently active main panel view
 	width            int                  // Terminal width in columns; 0 means use default
@@ -448,8 +469,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "s", "S":
 				if m.view == viewWorktrees {
 					if selected, ok := m.selectedWorktree(); ok {
-						return m, m.switchWorktreeCmd(selected.Path)
+						return m, m.spawnSessionCmd(selected.Path)
 					}
+					m.statusErr = "No worktree selected — select one first"
+					return m, clearErrorCmd()
 				}
 			case "c", "C":
 				if m.view != viewWorktrees {
@@ -550,6 +573,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refresh worktrees after switching back
 		return m, m.refreshWorktreesCmd()
 
+	case sessionSpawnedMsg:
+		if msg.err != nil {
+			if msg.session.ShellPID != nil {
+				// Terminal launched but PID tracking failed — non-fatal.
+				m.statusMsg = fmt.Sprintf("Session spawned for %s (PID %d) — tracking failed: %v", msg.session.WorktreePath, *msg.session.ShellPID, msg.err)
+				return m, clearMsgCmd()
+			}
+			m.statusErr = fmt.Sprintf("Failed to spawn session: %v", msg.err)
+			return m, clearErrorCmd()
+		}
+		pid := 0
+		if msg.session.ShellPID != nil {
+			pid = *msg.session.ShellPID
+		}
+		m.statusMsg = fmt.Sprintf("Session spawned for %s (PID %d)", msg.session.WorktreePath, pid)
+		return m, clearMsgCmd()
+
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
 			m.Worktrees = msg.worktrees
@@ -645,6 +685,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearErrorMsg:
 		m.statusErr = ""
 
+	case clearMsgMsg:
+		m.statusMsg = ""
+
 	case syncTickMsg:
 		m.syncing = true
 		return m, m.syncGitHubCmd()
@@ -698,6 +741,10 @@ func (m *Model) View() string {
 
 	if m.statusErr != "" {
 		return renderErrorModal(m.statusErr, w, h, baseView)
+	}
+
+	if m.statusMsg != "" {
+		return renderInfoModal(m.statusMsg, w, h, baseView)
 	}
 
 	return baseView
@@ -1067,6 +1114,74 @@ func getShell() string {
 		return shell
 	}
 	return "/bin/sh"
+}
+
+// buildNewTerminalCmd constructs a platform-specific command that opens a new
+// terminal window rooted at path without blocking the caller.
+//
+//   - Windows: cmd /C start cmd /K "cd /d <path>"
+//   - macOS:   open -a Terminal <path>
+//   - Linux:   $TERMINAL --working-directory=<path>  (fallback: x-terminal-emulator, then xterm)
+func buildNewTerminalCmd(path, goos string) *exec.Cmd {
+	switch goos {
+	case "windows":
+		// Quote the path so worktree paths that contain spaces are handled correctly.
+		return exec.Command("cmd", "/C", "start", "cmd", "/K", fmt.Sprintf(`cd /d "%s"`, path))
+	case "darwin":
+		return exec.Command("open", "-a", "Terminal", path)
+	default:
+		// Linux: respect the $TERMINAL env var when set.
+		if term := os.Getenv("TERMINAL"); term != "" {
+			return exec.Command(term, "--working-directory="+path)
+		}
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+		// Try common terminal emulators in order; x-terminal-emulator is the
+		// Debian/Ubuntu update-alternatives symlink that works on most distros.
+		for _, candidate := range []string{"x-terminal-emulator", "xterm"} {
+			if _, err := exec.LookPath(candidate); err == nil {
+				return exec.Command(candidate, "-e", fmt.Sprintf("cd %q; %s", path, shell))
+			}
+		}
+		// Last resort: return an xterm cmd; Start() will surface the error if
+		// xterm is not installed either.
+		return exec.Command("xterm", "-e", fmt.Sprintf("cd %q; %s", path, shell))
+	}
+}
+
+// spawnSessionCmd opens a new terminal window at worktreePath in the background
+// and dispatches a sessionSpawnedMsg with the PID once the process is launched.
+// The PID is persisted in active_sessions when a DB connection is available.
+func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
+	db := m.db
+	return func() tea.Msg {
+		cmd := buildNewTerminalCmd(worktreePath, runtime.GOOS)
+		if err := cmd.Start(); err != nil {
+			return sessionSpawnedMsg{err: fmt.Errorf("spawn session: %w", err)}
+		}
+		pid := cmd.Process.Pid
+		session := domain.Session{
+			WorktreePath: worktreePath,
+			// NOTE: on Windows (cmd /C start) and macOS (open -a Terminal) the
+			// launcher process exits almost immediately, so this PID is best-effort
+			// — it will be dead by the time Mission Control queries it.
+			// On Linux the terminal emulator process stays alive, so PID is reliable.
+			ShellPID:  &pid,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC().Truncate(time.Second),
+		}
+		if db != nil {
+			id, err := data.UpsertSession(db, session)
+			if err != nil {
+				// Non-fatal: terminal is running but we could not persist the PID.
+				return sessionSpawnedMsg{session: session, err: fmt.Errorf("track session: %w", err)}
+			}
+			session.ID = id
+		}
+		return sessionSpawnedMsg{session: session}
+	}
 }
 
 // worktreesRefreshedMsg carries the result of refreshing the worktree list.
