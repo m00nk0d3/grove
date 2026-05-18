@@ -18,8 +18,9 @@ type SettingsSavedMsg struct {
 
 // WorktreeCreateConfirmedMsg is sent when the user confirms creating a new worktree.
 type WorktreeCreateConfirmedMsg struct {
-	Branch string
-	Path   string
+	Branch     string
+	Path       string
+	BaseBranch string // empty means "main"
 }
 
 // PRWorktreeCreateConfirmedMsg is sent when the user confirms checking out a PR as a new worktree.

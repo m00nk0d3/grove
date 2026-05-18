@@ -13,8 +13,9 @@ import (
 type createStep int
 
 const (
-	stepIssues createStep = iota
+	stepIssues    createStep = iota
 	stepType
+	stepBaseBranch // only shown when len(m.baseBranches) > 0
 	stepSlug
 	stepConfirm
 )
@@ -23,27 +24,38 @@ const (
 var BranchTypes = []string{"feat", "fix", "chore", "docs", "test", "refactor"}
 
 // CreateModal is a multi-step Bubbletea model for creating a new worktree from a GitHub issue.
-// Steps: issue picker → type picker → slug editor → confirm.
+// Steps: issue picker → type picker → [base branch picker] → slug editor → confirm.
 type CreateModal struct {
-	step      createStep
-	issues    []domain.Issue
-	issueIdx  int
-	typeIdx   int
-	slugInput textinput.Model
-	repoPath  string
+	step           createStep
+	issues         []domain.Issue
+	issueIdx       int
+	typeIdx        int
+	baseBranchIdx  int
+	baseBranches   []string // "main" + any parent branches; empty means skip base branch step
+	slugInput      textinput.Model
+	repoPath       string
 }
 
 // NewCreateModal creates a new CreateModal with the given issues and repo path.
-func NewCreateModal(issues []domain.Issue, repoPath string) *CreateModal {
+// Optional parentBranches are offered as additional base branch options (beyond "main").
+func NewCreateModal(issues []domain.Issue, repoPath string, parentBranches ...string) *CreateModal {
 	ti := textinput.New()
 	ti.Placeholder = "slug"
 	ti.CharLimit = 60
 
+	var bases []string
+	if len(parentBranches) > 0 {
+		bases = make([]string, 0, 1+len(parentBranches))
+		bases = append(bases, "main")
+		bases = append(bases, parentBranches...)
+	}
+
 	return &CreateModal{
-		step:      stepIssues,
-		issues:    issues,
-		repoPath:  repoPath,
-		slugInput: ti,
+		step:         stepIssues,
+		issues:       issues,
+		repoPath:     repoPath,
+		slugInput:    ti,
+		baseBranches: bases,
 	}
 }
 
@@ -101,6 +113,10 @@ func (m *CreateModal) moveUp() {
 		if m.typeIdx > 0 {
 			m.typeIdx--
 		}
+	case stepBaseBranch:
+		if m.baseBranchIdx > 0 {
+			m.baseBranchIdx--
+		}
 	}
 }
 
@@ -114,6 +130,10 @@ func (m *CreateModal) moveDown() {
 		if m.typeIdx < len(BranchTypes)-1 {
 			m.typeIdx++
 		}
+	case stepBaseBranch:
+		if m.baseBranchIdx < len(m.baseBranches)-1 {
+			m.baseBranchIdx++
+		}
 	}
 }
 
@@ -126,6 +146,16 @@ func (m *CreateModal) advance() (tea.Model, tea.Cmd) {
 		m.step = stepType
 
 	case stepType:
+		if len(m.baseBranches) > 0 {
+			m.step = stepBaseBranch
+		} else {
+			slug := domain.SlugFromTitle(m.SelectedIssue().Title)
+			m.slugInput.SetValue(slug)
+			m.slugInput.Focus()
+			m.step = stepSlug
+		}
+
+	case stepBaseBranch:
 		slug := domain.SlugFromTitle(m.SelectedIssue().Title)
 		m.slugInput.SetValue(slug)
 		m.slugInput.Focus()
@@ -134,8 +164,9 @@ func (m *CreateModal) advance() (tea.Model, tea.Cmd) {
 	case stepConfirm:
 		branch := m.BranchName()
 		path := m.WorktreePath()
+		base := m.BaseBranch()
 		return m, func() tea.Msg {
-			return WorktreeCreateConfirmedMsg{Branch: branch, Path: path}
+			return WorktreeCreateConfirmedMsg{Branch: branch, Path: path, BaseBranch: base}
 		}
 	}
 
@@ -153,6 +184,14 @@ func (m *CreateModal) SelectedIssue() domain.Issue {
 // SelectedType returns the currently selected branch type prefix.
 func (m *CreateModal) SelectedType() string {
 	return BranchTypes[m.typeIdx]
+}
+
+// BaseBranch returns the selected base branch, or empty string when no parent branches were provided.
+func (m *CreateModal) BaseBranch() string {
+	if len(m.baseBranches) == 0 {
+		return ""
+	}
+	return m.baseBranches[m.baseBranchIdx]
 }
 
 // BranchName returns the branch name following the <type>/issue-<N>-<slug> convention.
@@ -177,6 +216,8 @@ func (m *CreateModal) View() string {
 		return m.viewIssueList()
 	case stepType:
 		return m.viewTypePicker()
+	case stepBaseBranch:
+		return m.viewBaseBranchPicker()
 	case stepSlug:
 		return m.viewSlugEditor()
 	case stepConfirm:
@@ -224,6 +265,26 @@ func (m *CreateModal) viewTypePicker() string {
 	return b.String()
 }
 
+func (m *CreateModal) viewBaseBranchPicker() string {
+	issue := m.SelectedIssue()
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("Issue: #%d %s\n", issue.Number, issue.Title))
+	b.WriteString(fmt.Sprintf("Type:  %s\n\n", m.SelectedType()))
+	b.WriteString("Select base branch:\n\n")
+
+	for i, br := range m.baseBranches {
+		cursor := "  "
+		if i == m.baseBranchIdx {
+			cursor = "> "
+		}
+		b.WriteString(fmt.Sprintf("%s%s\n", cursor, br))
+	}
+
+	b.WriteString("\n↑/↓ navigate  •  Enter select  •  Esc cancel")
+	return b.String()
+}
+
 func (m *CreateModal) viewSlugEditor() string {
 	issue := m.SelectedIssue()
 	var b strings.Builder
@@ -242,6 +303,9 @@ func (m *CreateModal) viewConfirm() string {
 	b.WriteString("Create worktree:\n\n")
 	b.WriteString(fmt.Sprintf("  Branch:  %s\n", m.BranchName()))
 	b.WriteString(fmt.Sprintf("  Path:    %s\n", m.WorktreePath()))
+	if base := m.BaseBranch(); base != "" {
+		b.WriteString(fmt.Sprintf("  Base:    %s\n", base))
+	}
 	b.WriteString("\nEnter confirm  •  Esc cancel")
 	return b.String()
 }

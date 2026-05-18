@@ -171,6 +171,137 @@ func TestListOpenIssues_MapsAssigneesCorrectly(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// EnrichHierarchyFromBodies
+// ---------------------------------------------------------------------------
+
+func TestEnrichHierarchyFromBodies_PartOfPattern(t *testing.T) {
+	issues := []domain.Issue{
+		{Number: 61, Title: "Parent", Body: ""},
+		{Number: 65, Title: "Child", Body: "## Parent Issue\nPart of #61 - some title"},
+	}
+	EnrichHierarchyFromBodies(issues)
+
+	require.NotNil(t, issues[1].ParentNumber, "sub-issue should have ParentNumber set")
+	assert.Equal(t, 61, *issues[1].ParentNumber)
+	assert.Contains(t, issues[0].SubIssueNumbers, 65, "parent should list sub-issue number")
+}
+
+func TestEnrichHierarchyFromBodies_TrackedByPattern(t *testing.T) {
+	issues := []domain.Issue{
+		{Number: 10, Title: "Epic", Body: ""},
+		{Number: 11, Title: "Task", Body: "Tracked by #10"},
+	}
+	EnrichHierarchyFromBodies(issues)
+
+	require.NotNil(t, issues[1].ParentNumber)
+	assert.Equal(t, 10, *issues[1].ParentNumber)
+}
+
+func TestEnrichHierarchyFromBodies_MultipleChildren(t *testing.T) {
+	issues := []domain.Issue{
+		{Number: 61, Title: "Parent", Body: ""},
+		{Number: 62, Title: "Child A", Body: "Part of #61"},
+		{Number: 63, Title: "Child B", Body: "Part of #61"},
+		{Number: 64, Title: "Child C", Body: "Part of #61"},
+	}
+	EnrichHierarchyFromBodies(issues)
+
+	assert.Equal(t, 3, len(issues[0].SubIssueNumbers))
+	for _, child := range issues[1:] {
+		require.NotNil(t, child.ParentNumber)
+		assert.Equal(t, 61, *child.ParentNumber)
+	}
+}
+
+func TestEnrichHierarchyFromBodies_NoPattern_NoChange(t *testing.T) {
+	issues := []domain.Issue{
+		{Number: 1, Title: "Standalone", Body: "No hierarchy info here"},
+	}
+	EnrichHierarchyFromBodies(issues)
+
+	assert.Nil(t, issues[0].ParentNumber)
+	assert.Empty(t, issues[0].SubIssueNumbers)
+}
+
+func TestEnrichHierarchyFromBodies_DoesNotOverwriteExistingParent(t *testing.T) {
+	existing := 99
+	issues := []domain.Issue{
+		{Number: 61, Title: "Parent", Body: ""},
+		{Number: 65, Title: "Child", Body: "Part of #61", ParentNumber: &existing},
+	}
+	EnrichHierarchyFromBodies(issues)
+
+	assert.Equal(t, 99, *issues[1].ParentNumber, "should not overwrite GraphQL-set ParentNumber")
+}
+
+func TestEnrichHierarchyFromBodies_ParentNotInSlice_ChildStillGetsParentNumber(t *testing.T) {
+	issues := []domain.Issue{
+		{Number: 65, Title: "Child", Body: "Part of #61"},
+		// issue 61 is NOT in this slice (e.g., it's closed)
+	}
+	EnrichHierarchyFromBodies(issues)
+
+	require.NotNil(t, issues[0].ParentNumber)
+	assert.Equal(t, 61, *issues[0].ParentNumber)
+}
+
+// ---------------------------------------------------------------------------
+// FetchIssueHierarchy
+// ---------------------------------------------------------------------------
+
+func TestFetchIssueHierarchy_BulkQuery_ReturnsParentChildMap(t *testing.T) {
+	raw := `{"data":{"repository":{"issues":{"nodes":[
+		{"number":61,"subIssues":{"nodes":[{"number":62},{"number":63}]}},
+		{"number":62,"subIssues":{"nodes":[]}},
+		{"number":63,"subIssues":{"nodes":[]}}
+	]}}}}`
+
+	runner := func(_ string, args ...string) (string, error) { return raw, nil }
+	cmd := NewIssueCommandWithRunner("/repo", runner)
+
+	hier, err := cmd.FetchIssueHierarchy([]int{61, 62, 63}, "owner", "repo")
+
+	require.NoError(t, err)
+	require.NotNil(t, hier)
+	assert.Equal(t, []int{62, 63}, hier[61])
+	assert.Nil(t, hier[62])
+}
+
+func TestFetchIssueHierarchy_RunnerError_ReturnsNilNil(t *testing.T) {
+	runner := func(_ string, _ ...string) (string, error) {
+		return "", errors.New("gh api failed")
+	}
+	cmd := NewIssueCommandWithRunner("/repo", runner)
+
+	hier, err := cmd.FetchIssueHierarchy([]int{1}, "owner", "repo")
+
+	assert.NoError(t, err)
+	assert.Nil(t, hier)
+}
+
+func TestFetchIssueHierarchy_InvalidJSON_ReturnsNilNil(t *testing.T) {
+	runner := func(_ string, _ ...string) (string, error) { return "not-json", nil }
+	cmd := NewIssueCommandWithRunner("/repo", runner)
+
+	hier, err := cmd.FetchIssueHierarchy([]int{1}, "owner", "repo")
+
+	assert.NoError(t, err)
+	assert.Nil(t, hier)
+}
+
+func TestFetchIssueHierarchy_EmptyNumbers_StillQueriesAPI(t *testing.T) {
+	raw := `{"data":{"repository":{"issues":{"nodes":[]}}}}`
+	runner := func(_ string, _ ...string) (string, error) { return raw, nil }
+	cmd := NewIssueCommandWithRunner("/repo", runner)
+
+	// numbers slice is now ignored — func always does a bulk query
+	hier, err := cmd.FetchIssueHierarchy(nil, "owner", "repo")
+
+	assert.NoError(t, err)
+	assert.Empty(t, hier)
+}
+
+// ---------------------------------------------------------------------------
 // PRCommand — PullRequest tests
 // ---------------------------------------------------------------------------
 

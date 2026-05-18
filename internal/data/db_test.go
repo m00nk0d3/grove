@@ -229,5 +229,5 @@ func TestNewDB_SchemaVersionsTracked(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 
-	assert.Equal(t, []string{"001_init_schema.sql", "002_add_diff_summary_to_context_snapshots.sql"}, filenames)
+	assert.Equal(t, []string{"001_init_schema.sql", "002_add_diff_summary_to_context_snapshots.sql", "003_add_issue_hierarchy.sql"}, filenames)
 }

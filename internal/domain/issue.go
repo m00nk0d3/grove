@@ -7,11 +7,13 @@ import (
 
 // Issue represents a GitHub issue.
 type Issue struct {
-	Number    int
-	Title     string
-	Body      string
-	Labels    []string
-	Assignees []string
+	Number          int
+	Title           string
+	Body            string
+	Labels          []string
+	Assignees       []string
+	ParentNumber    *int // nil if this is a top-level issue
+	SubIssueNumbers []int // empty if no sub-issues
 }
 
 var nonAlnumRe = regexp.MustCompile(`[^a-z0-9]+`)

@@ -1,6 +1,7 @@
 package data
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -93,14 +94,30 @@ func (r *GitHubRepository) UpsertIssues(issues []domain.Issue) error {
 			return fmt.Errorf("upsert issues: marshal labels for issue %d: %w", issue.Number, err)
 		}
 
+		subNums := issue.SubIssueNumbers
+		if subNums == nil {
+			subNums = []int{}
+		}
+		subNumsJSON, err := json.Marshal(subNums)
+		if err != nil {
+			return fmt.Errorf("upsert issues: marshal sub_issue_numbers for issue %d: %w", issue.Number, err)
+		}
+
+		var parentNum interface{}
+		if issue.ParentNumber != nil {
+			parentNum = *issue.ParentNumber
+		}
+
 		_, err = r.db.Conn.Exec(`
-			INSERT INTO github_issues (number, title, state, labels, synced_at)
-			VALUES (?, ?, '', ?, CURRENT_TIMESTAMP)
+			INSERT INTO github_issues (number, title, state, labels, parent_number, sub_issue_numbers, synced_at)
+			VALUES (?, ?, '', ?, ?, ?, CURRENT_TIMESTAMP)
 			ON CONFLICT(number) DO UPDATE SET
-				title     = excluded.title,
-				labels    = excluded.labels,
-				synced_at = CURRENT_TIMESTAMP
-		`, issue.Number, issue.Title, string(labels))
+				title              = excluded.title,
+				labels             = excluded.labels,
+				parent_number      = excluded.parent_number,
+				sub_issue_numbers  = excluded.sub_issue_numbers,
+				synced_at          = CURRENT_TIMESTAMP
+		`, issue.Number, issue.Title, string(labels), parentNum, string(subNumsJSON))
 		if err != nil {
 			return fmt.Errorf("upsert issues: %w", err)
 		}
@@ -111,7 +128,7 @@ func (r *GitHubRepository) UpsertIssues(issues []domain.Issue) error {
 // GetIssues returns all cached issues from the database.
 func (r *GitHubRepository) GetIssues() ([]domain.Issue, error) {
 	rows, err := r.db.Conn.Query(`
-		SELECT number, title, labels
+		SELECT number, title, labels, parent_number, sub_issue_numbers
 		FROM github_issues
 		ORDER BY number
 	`)
@@ -124,13 +141,25 @@ func (r *GitHubRepository) GetIssues() ([]domain.Issue, error) {
 	for rows.Next() {
 		var issue domain.Issue
 		var labelsJSON string
+		var parentNum sql.NullInt64
+		var subNumsJSON string
 
-		if err := rows.Scan(&issue.Number, &issue.Title, &labelsJSON); err != nil {
+		if err := rows.Scan(&issue.Number, &issue.Title, &labelsJSON, &parentNum, &subNumsJSON); err != nil {
 			return nil, fmt.Errorf("get issues: scan row: %w", err)
 		}
 
 		if err := json.Unmarshal([]byte(labelsJSON), &issue.Labels); err != nil {
 			return nil, fmt.Errorf("get issues: parse labels for issue %d: %w", issue.Number, err)
+		}
+
+		if parentNum.Valid {
+			n := int(parentNum.Int64)
+			issue.ParentNumber = &n
+		}
+
+		var subNums []int
+		if err := json.Unmarshal([]byte(subNumsJSON), &subNums); err == nil && len(subNums) > 0 {
+			issue.SubIssueNumbers = subNums
 		}
 
 		issues = append(issues, issue)

@@ -122,6 +122,39 @@ func TestGitHubRepository_UpsertAndGetIssues(t *testing.T) {
 	assert.Equal(t, input[1], got[11])
 }
 
+func TestGitHubRepository_UpsertAndGetIssues_WithHierarchy(t *testing.T) {
+	repo := NewGitHubRepository(newTestDB(t))
+
+	parentNum := 10
+	input := []domain.Issue{
+		{Number: 10, Title: "Parent issue", Labels: []string{"epic"}, SubIssueNumbers: []int{11, 12}},
+		{Number: 11, Title: "Sub-issue one", Labels: []string{"task"}, ParentNumber: &parentNum},
+		{Number: 12, Title: "Sub-issue two", Labels: []string{"task"}, ParentNumber: &parentNum},
+	}
+
+	require.NoError(t, repo.UpsertIssues(input))
+
+	issues, err := repo.GetIssues()
+	require.NoError(t, err)
+	require.Len(t, issues, 3)
+
+	byNumber := func(slice []domain.Issue) map[int]domain.Issue {
+		m := make(map[int]domain.Issue)
+		for _, i := range slice {
+			m[i.Number] = i
+		}
+		return m
+	}
+
+	got := byNumber(issues)
+	assert.Nil(t, got[10].ParentNumber, "parent issue should have nil ParentNumber")
+	assert.Equal(t, []int{11, 12}, got[10].SubIssueNumbers, "parent should list sub-issue numbers")
+	require.NotNil(t, got[11].ParentNumber, "sub-issue should have a ParentNumber")
+	assert.Equal(t, 10, *got[11].ParentNumber)
+	require.NotNil(t, got[12].ParentNumber, "sub-issue should have a ParentNumber")
+	assert.Equal(t, 10, *got[12].ParentNumber)
+}
+
 func TestGitHubRepository_UpsertIssues_UpdatesExisting(t *testing.T) {
 	repo := NewGitHubRepository(newTestDB(t))
 
