@@ -598,6 +598,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastSynced = pending.syncedAt
 				m.clampIssueIdx()
 				m.clampPRIdx()
+				// Re-link worktrees to PRs whenever PRs are refreshed.
+				if m.db != nil {
+					if linked, err := data.LinkWorktreesToPRs(m.db, m.Worktrees, m.prs); err == nil {
+						m.Worktrees = linked
+					}
+				} else {
+					m.Worktrees = data.LinkWorktreesToPRsInMemory(m.Worktrees, m.prs)
+				}
 			}
 			nextTick := tea.Tick(m.Config.GitHub.SyncInterval(), func(t time.Time) tea.Msg {
 				return syncTickMsg{}

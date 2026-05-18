@@ -85,7 +85,7 @@ func TestRenderFull_ContainsWorktreeTableHeaders(t *testing.T) {
 	}{
 		{
 			name:    "renders Digital Noir column headers",
-			headers: []string{"NAME", "PATH", "STATUS", "UPDATED", "GH:ID"},
+			headers: []string{"NAME", "PATH", "STATUS", "SHA", "PR"},
 		},
 	}
 
@@ -93,6 +93,7 @@ func TestRenderFull_ContainsWorktreeTableHeaders(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			model := NewModel()
 			require.NotNil(t, model)
+			model.width = 300
 			model.Worktrees = []domain.Worktree{
 				{
 					Path:      filepath.Join("worktrees", "feature-issue-4"),
@@ -708,6 +709,7 @@ func TestRenderFull_PRViewShowsPRList(t *testing.T) {
 			require.NotNil(t, model)
 			model.view = viewPRs
 			model.prs = tt.prs
+			model.width = 300
 
 			view := model.View()
 
@@ -1032,10 +1034,10 @@ func TestRenderer_GHIDColumn_NoLinkedPR(t *testing.T) {
 
 			view := model.View()
 
-			// The GH:ID column should contain "- " (dash padded to 6 chars). We verify
+			// The PR column should contain "-" (right-aligned). We verify
 			// the worktree row is actually rendered and the column shows the placeholder.
 			assert.Contains(t, view, "wt-no-pr")
-			assert.Contains(t, view, "-     ") // "- " padded to 6 chars
+			assert.Contains(t, view, "     -") // "-" right-aligned in 6-char column
 		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	libtable "github.com/charmbracelet/lipgloss/table"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"github.com/m00nk0d3/nexus/internal/domain"
@@ -159,23 +160,20 @@ func renderNavRail(theme styles.Theme, panelHeight int, view activeView, focused
 }
 
 func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme styles.Theme, listInner, panelHeight int, focused bool) string {
-	var content strings.Builder
-
-	// fixed columns: cursor(2) + name(18) + sep(1) + sep(1) + status(8) + sep(1) + updated(10) + sep(1) + ghid(6) = 48
-	const fixedRowWidth = 2 + 18 + 1 + 1 + 8 + 1 + 10 + 1 + 6 // =48 (excl path col)
-	pathWidth := listInner - fixedRowWidth
-	if pathWidth < minPathWidth {
-		pathWidth = minPathWidth
+	const (
+		cursorW  = 2
+		pathW    = 30
+		statusW  = 10
+		updatedW = 10
+		ghidW    = 6
+		fixedTotal = cursorW + pathW + statusW + updatedW + ghidW // 58
+	)
+	nameW := listInner - fixedTotal
+	if nameW < 10 {
+		nameW = 10
 	}
 
-	headerStyle := theme.GetStyle("table-header")
-	headerRow := fmt.Sprintf("  %-18s %-*s %-8s %-10s %-6s", "NAME", pathWidth, "PATH", "STATUS", "UPDATED", "GH:ID")
-	content.WriteString(headerStyle.Render(headerRow))
-	content.WriteString("\n")
-
-	// Cap rendered rows so panel content never exceeds panelHeight.
-	// The header row occupies 1 line, so at most panelHeight-1 data rows fit.
-	// Virtual scrolling: slide the visible window so selectedIdx is always shown.
+	// Cap rendered rows and virtual-scroll so selectedIdx is always in the window.
 	startIdx := 0
 	visible := worktrees
 	if panelHeight > 0 {
@@ -193,38 +191,93 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 		visible = worktrees[startIdx:end]
 	}
 
+	type wtEntry struct {
+		cursor, name, path, status, updated, ghid string
+		prState string
+	}
+	entries := make([]wtEntry, len(visible))
 	for i, wt := range visible {
-		name := truncateStr(filepath.Base(wt.Path), 18)
-		path := truncateStr(wt.Path, pathWidth)
-		status := worktreeStatus(wt)
+		cursor := "  "
+		if i+startIdx == selectedIdx {
+			cursor = "> "
+		}
 		ghID := "-"
 		var prState string
 		if wt.LinkedPR != nil {
-			ghID = fmt.Sprintf("%d", wt.LinkedPR.Number)
+			ghID = fmt.Sprintf("#%d", wt.LinkedPR.Number)
 			prState = wt.LinkedPR.State
 		}
-		if i+startIdx == selectedIdx {
-			ghIDFormatted := fmt.Sprintf("%-6s", ghID)
-			if prState != "" {
-				ghIDFormatted = lipgloss.NewStyle().Foreground(prStateColor(prState)).Render(ghIDFormatted)
-			}
-			row := fmt.Sprintf("%-18s %-*s %-8s %-10s ", name, pathWidth, path, status, "—") + ghIDFormatted
-			content.WriteString(theme.GetStyle("selected-row").Width(listInner).Render("> " + row))
-		} else {
-			nameCol := fmt.Sprintf("%-18s", name)
-			pathCol := fmt.Sprintf("%-*s", pathWidth, path)
-			statusCol := theme.StatusStyle(status).Width(8).Render(status)
-			updatedCol := fmt.Sprintf("%-10s", "—") // TODO: populate from git log --format=%ai
-			ghIDRaw := fmt.Sprintf("%-6s", ghID)
-			var ghIDCol string
-			if prState != "" {
-				ghIDCol = lipgloss.NewStyle().Foreground(prStateColor(prState)).Render(ghIDRaw)
-			} else {
-				ghIDCol = ghIDRaw
-			}
-			content.WriteString("  " + nameCol + " " + pathCol + " " + statusCol + " " + updatedCol + " " + ghIDCol)
+		sha := wt.CommitSHA
+		if len(sha) > 8 {
+			sha = sha[:8]
 		}
-		content.WriteString("\n")
+		if sha == "" {
+			sha = "—"
+		}
+		entries[i] = wtEntry{
+			cursor:  cursor,
+			name:    truncateStr(filepath.Base(wt.Path), nameW),
+			path:    truncateStr(wt.Path, pathW),
+			status:  worktreeStatus(wt),
+			updated: sha,
+			ghid:    ghID,
+			prState: prState,
+		}
+	}
+
+	selSt    := theme.GetStyle("selected-row")
+	normalSt := theme.GetStyle("_")
+	surfaceBg := normalSt.GetBackground()
+	normalFg  := normalSt.GetForeground()
+
+	colStyle := func(row, col int) lipgloss.Style {
+		var base lipgloss.Style
+		switch col {
+		case 0:
+			base = lipgloss.NewStyle().Width(cursorW).AlignHorizontal(lipgloss.Left)
+		case 1:
+			base = lipgloss.NewStyle().Width(nameW).AlignHorizontal(lipgloss.Left)
+		case 2:
+			base = lipgloss.NewStyle().Width(pathW).AlignHorizontal(lipgloss.Left)
+		case 3:
+			base = lipgloss.NewStyle().Width(statusW).AlignHorizontal(lipgloss.Right)
+		case 4:
+			base = lipgloss.NewStyle().Width(updatedW).AlignHorizontal(lipgloss.Right)
+		case 5:
+			base = lipgloss.NewStyle().Width(ghidW).AlignHorizontal(lipgloss.Right)
+		default:
+			return lipgloss.NewStyle()
+		}
+		if row == libtable.HeaderRow {
+			return base.Foreground(lipgloss.Color(theme.Muted())).Bold(true)
+		}
+		if i := row + startIdx; i == selectedIdx {
+			return base.
+				Background(selSt.GetBackground()).
+				Foreground(selSt.GetForeground()).
+				Bold(true)
+		}
+		if col == 3 {
+			st := theme.StatusStyle(strings.ToLower(entries[row].status))
+			return base.Background(st.GetBackground()).Foreground(st.GetForeground())
+		}
+		if col == 5 && entries[row].prState != "" {
+			return base.Background(surfaceBg).Foreground(prStateColor(entries[row].prState))
+		}
+		return base.Background(surfaceBg).Foreground(normalFg)
+	}
+
+	t := libtable.New().
+		Headers("", "NAME", "PATH", "STATUS", "SHA", "PR").
+		BorderTop(false).BorderBottom(false).
+		BorderLeft(false).BorderRight(false).
+		BorderHeader(false).BorderColumn(false).BorderRow(false).
+		Wrap(false).
+		Width(listInner).
+		StyleFunc(colStyle)
+
+	for _, e := range entries {
+		t.Row(e.cursor, e.name, e.path, e.status, e.updated, e.ghid)
 	}
 
 	st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
@@ -234,7 +287,7 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(strings.TrimRight(content.String(), "\n"))
+	return st.Render(t.Render())
 }
 
 func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int) string {
@@ -383,23 +436,17 @@ func buildIssueTree(issues []domain.Issue) []issueTreeRow {
 }
 
 func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.Worktree, theme styles.Theme, listInner, panelHeight int, focused bool) string {
-	var content strings.Builder
-	headerStyle := theme.GetStyle("table-header")
-	// Row layout (all rows share the same column structure):
-	//   "  " (2) + treePfx (3) + number (6) + " " (1) + title (tw) + " " (1)
-	//   + status (11) + " " (1) + assigned (12) + " " (1) = 38 fixed chars
-	// titleWidth = listInner - 38 - labelsMin(9) = listInner - 47
-	titleWidth := listInner - 47
-	if titleWidth < 10 {
-		titleWidth = 10
-	}
-	// 5 spaces = "  " padding (2) + treePfx slot (3), aligning "#" with number column.
-	headerRow := fmt.Sprintf("     %-6s %-*s %-11s %-12s %s", "#", titleWidth, "TITLE", "STATUS", "ASSIGNED", "LABELS")
-	content.WriteString(headerStyle.Render(headerRow))
-	content.WriteString("\n")
-	labelsWidth := listInner - titleWidth - 38 // 38 = fixed overhead excluding title and labels
-	if labelsWidth < 8 {
-		labelsWidth = 8
+	// Fixed column widths. titleColW fills all remaining space (no upper cap).
+	const (
+		numColW    = 5
+		statusColW = 11
+		assignColW = 12
+		labelsColW = 20
+		fixedTotal = numColW + statusColW + assignColW + labelsColW // 48
+	)
+	titleColW := listInner - fixedTotal
+	if titleColW < 10 {
+		titleColW = 10
 	}
 
 	// Build tree-ordered rows and find the tree index for the selected issue.
@@ -431,35 +478,88 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 		visible = treeRows[treeStartIdx:end]
 	}
 
-	for ti, row := range visible {
+	// Pre-build cell values and capture status per visible row for use in StyleFunc.
+	type rowEntry struct{ num, title, status, assign, labels string }
+	entries := make([]rowEntry, len(visible))
+	statusValues := make([]string, len(visible))
+	for i, row := range visible {
 		issue := row.issue
-		labels := truncateStr(strings.Join(issue.Labels, " "), labelsWidth)
-		// All rows share the same column widths; the 3-col treePfx slot is
-		// occupied by spaces for top-level issues and by "├─ "/"└─ " for children.
-		treePfx := row.prefix
-		if treePfx == "" {
-			treePfx = "   "
-		}
-		title := truncateStr(issue.Title, titleWidth)
 		status := "Open"
 		if issueHasWorktree(issue.Number, worktrees) {
 			status = "In Progress"
 		}
-		assigned := truncateStr(formatAssignees(issue.Assignees), 12)
-		statusCol := theme.StatusStyle(strings.ToLower(status)).Width(11).Render(status)
-		assignedCol := fmt.Sprintf("%-12s", assigned)
-		line := fmt.Sprintf("  %s%-6d %-*s ", treePfx, issue.Number, titleWidth, title) +
-			statusCol + " " + assignedCol + " " + labels
-		if ti+treeStartIdx == selectedTreeIdx {
-			content.WriteString(theme.GetStyle("selected-row").Width(listInner + panelPaddingOverhead).Render(line))
+		statusValues[i] = status
+		pfxRunes := []rune(row.prefix)
+		var titleCell string
+		if len(pfxRunes) > 0 {
+			titleCell = row.prefix + truncateStr(issue.Title, titleColW-len(pfxRunes))
 		} else {
-			content.WriteString(line)
+			titleCell = truncateStr(issue.Title, titleColW)
 		}
-		content.WriteString("\n")
+		entries[i] = rowEntry{
+			num:    fmt.Sprintf(" %-4d", issue.Number),
+			title:  titleCell,
+			status: status,
+			assign: truncateStr(formatAssignees(issue.Assignees), assignColW),
+			labels: truncateStr(strings.Join(issue.Labels, " "), labelsColW),
+		}
 	}
-	if len(issues) == 0 {
-		content.WriteString("  No issues found.\n")
+
+	// Capture styles outside StyleFunc to avoid repeated allocations.
+	selSt    := theme.GetStyle("selected-row")
+	normalSt := theme.GetStyle("_") // unknown key → default: Background(surface).Foreground(fg)
+	surfaceBg := normalSt.GetBackground()
+	normalFg  := normalSt.GetForeground()
+
+	colStyle := func(row, col int) lipgloss.Style {
+		var base lipgloss.Style
+		switch col {
+		case 0:
+			base = lipgloss.NewStyle().Width(numColW).AlignHorizontal(lipgloss.Left)
+		case 1:
+			base = lipgloss.NewStyle().Width(titleColW).AlignHorizontal(lipgloss.Left)
+		case 2:
+			base = lipgloss.NewStyle().Width(statusColW).AlignHorizontal(lipgloss.Right)
+		case 3:
+			base = lipgloss.NewStyle().Width(assignColW).AlignHorizontal(lipgloss.Right)
+		case 4:
+			base = lipgloss.NewStyle().Width(labelsColW).AlignHorizontal(lipgloss.Right)
+		default:
+			return lipgloss.NewStyle()
+		}
+		if row == libtable.HeaderRow {
+			return base.
+				Foreground(lipgloss.Color(theme.Muted())).
+				Bold(true)
+		}
+		if row+treeStartIdx == selectedTreeIdx {
+			return base.
+				Background(selSt.GetBackground()).
+				Foreground(selSt.GetForeground()).
+				Bold(true)
+		}
+		if col == 2 {
+			st := theme.StatusStyle(strings.ToLower(statusValues[row]))
+			return base.
+				Background(st.GetBackground()).
+				Foreground(st.GetForeground())
+		}
+		return base.Background(surfaceBg).Foreground(normalFg)
 	}
+
+	t := libtable.New().
+		Headers("#", "TITLE", "STATUS", "ASSIGNED", "LABELS").
+		BorderTop(false).BorderBottom(false).
+		BorderLeft(false).BorderRight(false).
+		BorderHeader(false).BorderColumn(false).BorderRow(false).
+		Wrap(false).
+		Width(listInner).
+		StyleFunc(colStyle)
+
+	for _, e := range entries {
+		t.Row(e.num, e.title, e.status, e.assign, e.labels)
+	}
+
 	st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
 	if !focused {
 		st = theme.MutedBorder(st)
@@ -467,38 +567,24 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(strings.TrimRight(content.String(), "\n"))
+	return st.Render(t.Render())
 }
 
 func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme, listInner, panelHeight int, focused bool) string {
-	var content strings.Builder
-	headerStyle := theme.GetStyle("table-header")
-	// Bug 2: drop AUTHOR column (visible in context panel) and reduce BRANCH to 14.
-	// Fixed overhead: 2(cursor) + 6(#) + 1(sp) + 1(sp) + 14(branch) + 1(sp) = 25,
-	// Dynamic branch width: ~15% of available space, clamped to [8, 18].
-	branchWidth := listInner * 15 / 100
-	if branchWidth < 8 {
-		branchWidth = 8
+	const (
+		prCursorW  = 2
+		prNumColW  = 6
+		prBranchColW = 20
+		prAssignColW = 12
+		prStatusColW = 8
+		prFixedTotal = prCursorW + prNumColW + prBranchColW + prAssignColW + prStatusColW
+	)
+	prTitleColW := listInner - prFixedTotal
+	if prTitleColW < 10 {
+		prTitleColW = 10
 	}
-	if branchWidth > 18 {
-		branchWidth = 18
-	}
-	// Fixed overhead: 2(cursor/spaces) + 6(#) + 1(sp) + 1(sp) + 1(sp) + 6(STATUS) = 17;
-	// plus branchWidth + 2 spaces around it = branchWidth + 2 → total fixed = 19 + branchWidth.
-	// Plus ASSIGNED column: 12 chars + 1 space = 13 → total fixed = 32 + branchWidth.
-	// titleWidth fills remaining so total row = listInner.
-	const prStatusMaxLen = 6
-	const prAssigneeWidth = 12
-	titleWidth := listInner - (11 + branchWidth + prStatusMaxLen + prAssigneeWidth + 2)
-	if titleWidth < 10 {
-		titleWidth = 10
-	}
-	headerRow := fmt.Sprintf("  %-6s %-*s %-*s %-12s %s", "#", titleWidth, "TITLE", branchWidth, "BRANCH", "ASSIGNED", "STATUS")
-	content.WriteString(headerStyle.Render(headerRow))
-	content.WriteString("\n")
 
-	// Cap rendered rows and virtual-scroll so selectedIdx is always in the window.
-	// The header row occupies 1 line, so at most panelHeight-1 data rows fit.
+	// Virtual-scroll so selectedIdx is always in the window.
 	prStartIdx := 0
 	visible := prs
 	if panelHeight > 0 {
@@ -516,26 +602,86 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 		visible = prs[prStartIdx:end]
 	}
 
+	type prEntry struct{ cursor, num, title, branch, assign, status string }
+	entries := make([]prEntry, len(visible))
+	stateValues := make([]string, len(visible))
 	for i, pr := range visible {
-		title := truncateStr(pr.Title, titleWidth)
-		branch := truncateStr(pr.Branch, branchWidth)
-		state := pr.State
-		if pr.IsDraft {
-			state = "DRAFT"
-		}
-		assigned := truncateStr(strings.Join(pr.Assignees, ","), prAssigneeWidth)
+		cursor := "  "
 		if i+prStartIdx == selectedIdx {
-			row := fmt.Sprintf("%-6d %-*s %-*s %-12s %s", pr.Number, titleWidth, title, branchWidth, branch, assigned, state)
-			content.WriteString(theme.GetStyle("selected-row").Width(listInner).Render("> " + row))
-		} else {
-			row := fmt.Sprintf("  %-6d %-*s %-*s %-12s %s", pr.Number, titleWidth, title, branchWidth, branch, assigned, state)
-			content.WriteString(row)
+			cursor = "> "
 		}
-		content.WriteString("\n")
+		status := prDisplayStatus(pr)
+		stateValues[i] = strings.ToLower(status)
+		entries[i] = prEntry{
+			cursor: cursor,
+			num:    fmt.Sprintf("%-6d", pr.Number),
+			title:  truncateStr(pr.Title, prTitleColW),
+			branch: truncateStr(pr.Branch, prBranchColW),
+			assign: truncateStr(strings.Join(pr.Assignees, ","), prAssignColW),
+			status: status,
+		}
 	}
+
+	selSt    := theme.GetStyle("selected-row")
+	normalSt := theme.GetStyle("_")
+	surfaceBg := normalSt.GetBackground()
+	normalFg  := normalSt.GetForeground()
+
+	colStyle := func(row, col int) lipgloss.Style {
+		var base lipgloss.Style
+		switch col {
+		case 0:
+			base = lipgloss.NewStyle().Width(prCursorW).AlignHorizontal(lipgloss.Left)
+		case 1:
+			base = lipgloss.NewStyle().Width(prNumColW).AlignHorizontal(lipgloss.Left)
+		case 2:
+			base = lipgloss.NewStyle().Width(prTitleColW).AlignHorizontal(lipgloss.Left)
+		case 3:
+			base = lipgloss.NewStyle().Width(prBranchColW).AlignHorizontal(lipgloss.Right)
+		case 4:
+			base = lipgloss.NewStyle().Width(prAssignColW).AlignHorizontal(lipgloss.Right)
+		case 5:
+			base = lipgloss.NewStyle().Width(prStatusColW).AlignHorizontal(lipgloss.Right)
+		default:
+			return lipgloss.NewStyle()
+		}
+		if row == libtable.HeaderRow {
+			return base.
+				Foreground(lipgloss.Color(theme.Muted())).
+				Bold(true)
+		}
+		if row+prStartIdx == selectedIdx {
+			return base.
+				Background(selSt.GetBackground()).
+				Foreground(selSt.GetForeground()).
+				Bold(true)
+		}
+		if col == 5 {
+			st := theme.StatusStyle(stateValues[row])
+			return base.
+				Background(st.GetBackground()).
+				Foreground(st.GetForeground())
+		}
+		return base.Background(surfaceBg).Foreground(normalFg)
+	}
+
+	t := libtable.New().
+		Headers("", "#", "TITLE", "BRANCH", "ASSIGNED", "STATUS").
+		BorderTop(false).BorderBottom(false).
+		BorderLeft(false).BorderRight(false).
+		BorderHeader(false).BorderColumn(false).BorderRow(false).
+		Wrap(false).
+		Width(listInner).
+		StyleFunc(colStyle)
+
+	for _, e := range entries {
+		t.Row(e.cursor, e.num, e.title, e.branch, e.assign, e.status)
+	}
+
 	if len(prs) == 0 {
-		content.WriteString("  No open PRs.\n")
+		t.Row("", "", "No open PRs.", "", "", "")
 	}
+
 	st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
 	if !focused {
 		st = theme.MutedBorder(st)
@@ -543,7 +689,7 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(strings.TrimRight(content.String(), "\n"))
+	return st.Render(t.Render())
 }
 
 // clipContent slices content lines for bounded panel rendering.
@@ -775,6 +921,23 @@ func prStateColor(state string) lipgloss.Color {
 	default:
 		return lipgloss.Color("#4A5568")
 	}
+}
+
+// prDisplayStatus returns the short status label shown in the PR list STATUS column.
+// Priority: DRAFT > review decision > raw state.
+func prDisplayStatus(pr domain.PullRequest) string {
+	if pr.IsDraft {
+		return "DRAFT"
+	}
+	switch pr.ReviewDecision {
+	case "APPROVED":
+		return "APPROVED"
+	case "CHANGES_REQUESTED":
+		return "CHANGES"
+	case "REVIEW_REQUIRED":
+		return "REVIEW"
+	}
+	return pr.State
 }
 
 // formatAssignees formats a slice of assignee logins into "@user1,@user2" format.

@@ -198,7 +198,7 @@ func (t Theme) GetStyle(component string) lipgloss.Style {
 	}
 }
 
-// StatusStyle returns a lipgloss.Style for a worktree status value.
+// StatusStyle returns a lipgloss.Style for a worktree or PR status value.
 // Background is always set to the surface color so padded cells don't bleed
 // terminal-default black into the panel background.
 func (t Theme) StatusStyle(status string) lipgloss.Style {
@@ -208,12 +208,16 @@ func (t Theme) StatusStyle(status string) lipgloss.Style {
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.accent))
 	case "in progress":
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.accent))
-	case "idle", "clean":
+	case "idle", "clean", "open":
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.success))
-	case "created", "dirty":
+	case "created", "dirty", "review":
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.warning))
-	case "locked":
+	case "locked", "changes":
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.danger))
+	case "approved":
+		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.success)).Bold(true)
+	case "draft", "merged", "closed":
+		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.muted))
 	default:
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.muted))
 	}
