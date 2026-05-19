@@ -996,16 +996,22 @@ func buildCopilotCmd(worktreePath, prompt string) *exec.Cmd {
 	return cmd
 }
 
-// spawnCopilotCmd returns a Cmd that runs gh copilot suggest in the worktree
-// directory and dispatches agentDoneMsg when the process exits.
+// spawnCopilotCmd opens a new terminal tab/window running gh copilot at
+// worktreePath and dispatches agentDoneMsg once the launch completes.
+// The TUI is not suspended — nexus keeps running in the current terminal.
 func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
 	startedAt := time.Now()
-	cmd := buildCopilotCmd(worktreePath, prompt)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+	var shellCmd string
+	if prompt != "" {
+		shellCmd = "gh copilot -i " + shellQuote(prompt)
+	} else {
+		shellCmd = "gh copilot"
+	}
+	return func() tea.Msg {
+		_, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
 		exitCode := 0
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
+		if spawnErr != nil {
+			exitCode = 1
 		}
 		return agentDoneMsg{
 			agentName: "copilot",
@@ -1013,7 +1019,7 @@ func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
 			exitCode:  exitCode,
 			startedAt: startedAt,
 		}
-	})
+	}
 }
 
 // resolveClaudeBinary returns the resolved path for the Claude binary.
@@ -1052,8 +1058,9 @@ func buildClaudeCmd(worktreePath, prompt, binaryPath string) *exec.Cmd {
 	return cmd
 }
 
-// spawnClaudeCmd returns a Cmd that runs the Claude binary in the worktree
-// directory and dispatches agentDoneMsg when the process exits.
+// spawnClaudeCmd opens a new terminal tab/window running the Claude binary at
+// worktreePath and dispatches agentDoneMsg once the launch completes.
+// The TUI is not suspended — nexus keeps running in the current terminal.
 func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 	binaryPath, err := resolveClaudeBinary(m.Config)
 	if err != nil {
@@ -1061,12 +1068,17 @@ func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 		return clearErrorCmd()
 	}
 	startedAt := time.Now()
-	cmd := buildClaudeCmd(worktreePath, prompt, binaryPath)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+	var shellCmd string
+	if prompt != "" {
+		shellCmd = binaryPath + " " + shellQuote(prompt)
+	} else {
+		shellCmd = binaryPath
+	}
+	return func() tea.Msg {
+		_, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
 		exitCode := 0
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
+		if spawnErr != nil {
+			exitCode = 1
 		}
 		return agentDoneMsg{
 			agentName: "claude",
@@ -1074,7 +1086,7 @@ func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 			exitCode:  exitCode,
 			startedAt: startedAt,
 		}
-	})
+	}
 }
 
 // fetchAiderFilesCmd returns a Cmd that lists modified files in the worktree
@@ -1095,8 +1107,9 @@ func buildAiderCmd(worktreePath string, files []string, binaryPath string) *exec
 	return cmd
 }
 
-// spawnAiderCmd returns a Cmd that runs aider with the selected files in the
-// worktree directory and dispatches agentDoneMsg when the process exits.
+// spawnAiderCmd opens a new terminal tab/window running aider with the selected
+// files at worktreePath and dispatches agentDoneMsg once the launch completes.
+// The TUI is not suspended — nexus keeps running in the current terminal.
 func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
 	binaryPath, err := resolveAiderBinary(m.Config)
 	if err != nil {
@@ -1104,19 +1117,24 @@ func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
 		return clearErrorCmd()
 	}
 	startedAt := time.Now()
-	cmd := buildAiderCmd(worktreePath, files, binaryPath)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+	parts := make([]string, 0, len(files)+1)
+	parts = append(parts, binaryPath)
+	for _, f := range files {
+		parts = append(parts, shellQuote(f))
+	}
+	shellCmd := strings.Join(parts, " ")
+	return func() tea.Msg {
+		_, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
 		exitCode := 0
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
+		if spawnErr != nil {
+			exitCode = 1
 		}
 		return agentDoneMsg{
 			agentName: "aider",
 			exitCode:  exitCode,
 			startedAt: startedAt,
 		}
-	})
+	}
 }
 
 // buildShellCmd constructs a platform-appropriate shell command for the given directory.
@@ -1197,6 +1215,136 @@ func buildNewTerminalCmd(path, goos string) *exec.Cmd {
 		// xterm is not installed either.
 		return exec.Command("xterm", "-e", fmt.Sprintf("cd %q; %s", path, shell))
 	}
+}
+
+// buildNewTerminalWithCmdCmd constructs a platform-specific command that opens
+// a new terminal window at path and runs agentCmd inside it. Used by the Unix
+// platform file to implement spawnAgentInTerminalWindow.
+//
+// Terminal detection order (env-var based):
+//
+//   - macOS: Ghostty → Terminal.app (osascript fallback)
+//   - Linux: Ghostty ($TERM=xterm-ghostty) → Alacritty ($TERM=alacritty) →
+//     Kitty ($KITTY_WINDOW_ID, no remote-control) → $TERMINAL → xterm
+func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
+	script := fmt.Sprintf("cd %q && %s", path, agentCmd)
+	switch goos {
+	case "darwin":
+		switch os.Getenv("TERM_PROGRAM") {
+		case "ghostty":
+			// Ghostty: pass command as positional args after --.
+			return exec.Command("ghostty", "--working-directory="+path, "--", "sh", "-c", agentCmd)
+		}
+		// macOS fallback: open a new Terminal.app window via osascript.
+		return exec.Command("osascript", "-e",
+			fmt.Sprintf(`tell app "Terminal" to do script "cd %q && %s"`, path, agentCmd))
+	default: // Linux
+		switch os.Getenv("TERM") {
+		case "xterm-ghostty":
+			return exec.Command("ghostty", "--working-directory="+path, "--", "sh", "-c", agentCmd)
+		case "alacritty":
+			// Alacritty without IPC socket: spawn a new window.
+			return exec.Command("alacritty", "--working-directory", path, "-e", "sh", "-c", agentCmd)
+		}
+		// Kitty without remote control: open a new kitty window.
+		if os.Getenv("KITTY_WINDOW_ID") != "" {
+			return exec.Command("kitty", "--directory", path, "sh", "-c", agentCmd)
+		}
+		if term := os.Getenv("TERMINAL"); term != "" {
+			return exec.Command(term, "-e", script)
+		}
+		for _, candidate := range []string{"x-terminal-emulator", "xterm"} {
+			if _, err := exec.LookPath(candidate); err == nil {
+				return exec.Command(candidate, "-e", script)
+			}
+		}
+		return exec.Command("xterm", "-e", script)
+	}
+}
+
+// buildNewTabWithCmdCmd tries to open agentCmd in a new tab of the current
+// terminal emulator. Returns (cmd, true) if a tab-capable emulator is detected,
+// or (nil, false) to signal the caller should fall back to a new window.
+//
+// Detection is env-var based. Priority:
+//
+//  1. Multiplexers (tmux, zellij) — checked first on all platforms so that
+//     users who layer a GUI terminal on top of a multiplexer still get the
+//     expected behaviour.
+//
+//  2. Kitty remote-control ($KITTY_WINDOW_ID).  Requires allow_remote_control
+//     in kitty.conf; falls back to a new kitty window on failure.
+//
+//  3. Alacritty IPC ($ALACRITTY_SOCKET, v0.13+).
+//
+//  4. Platform-specific: Windows Terminal, iTerm2, Terminal.app, Konsole.
+//
+// Ghostty does not yet expose a stable tab-open CLI; it is handled as a new
+// window in buildNewTerminalWithCmdCmd.
+func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
+	// 1. Multiplexers — take precedence over GUI terminal tabs.
+	if os.Getenv("TMUX") != "" {
+		return exec.Command("tmux", "new-window", "-c", path, agentCmd), true
+	}
+	if os.Getenv("ZELLIJ") != "" || os.Getenv("ZELLIJ_SESSION_NAME") != "" {
+		// zellij run opens a new pane in the current tab (closest to "new tab").
+		return exec.Command("zellij", "run", "--cwd", path, "--", "sh", "-c", agentCmd), true
+	}
+
+	// 2. Kitty remote-control (cross-platform, Linux + macOS).
+	if goos != "windows" && os.Getenv("KITTY_WINDOW_ID") != "" {
+		return exec.Command("kitty", "@", "new-window", "--new-tab",
+			"--cwd", path, "sh", "-c", agentCmd), true
+	}
+
+	// 3. Alacritty IPC — available when $ALACRITTY_SOCKET is set (v0.13+).
+	if os.Getenv("ALACRITTY_SOCKET") != "" {
+		return exec.Command("alacritty", "msg", "create-tab",
+			"--working-directory", path, "--", "sh", "-c", agentCmd), true
+	}
+
+	// 4. Platform-specific tab APIs.
+	switch goos {
+	case "windows":
+		// Windows Terminal sets $WT_SESSION in every shell it hosts.
+		if os.Getenv("WT_SESSION") != "" {
+			return exec.Command("wt", "new-tab",
+				"--startingDirectory", path, "cmd", "/K", agentCmd), true
+		}
+	case "darwin":
+		switch os.Getenv("TERM_PROGRAM") {
+		case "iTerm.app":
+			script := fmt.Sprintf(
+				`tell application "iTerm2" to tell current window to create tab with default profile command %s`,
+				shellQuote(fmt.Sprintf("bash -c %s", shellQuote(fmt.Sprintf("cd %q && %s", path, agentCmd)))),
+			)
+			return exec.Command("osascript", "-e", script), true
+		case "Apple_Terminal":
+			script := fmt.Sprintf(
+				`tell app "Terminal" to do script "cd %q && %s" in front window`,
+				path, agentCmd,
+			)
+			return exec.Command("osascript", "-e", script), true
+		// ghostty: no stable tab-open CLI yet — falls through to new window.
+		}
+	default: // Linux
+		if os.Getenv("KONSOLE_VERSION") != "" {
+			shell := os.Getenv("SHELL")
+			if shell == "" {
+				shell = "bash"
+			}
+			return exec.Command("konsole", "--new-tab", "-e", shell, "-c",
+				fmt.Sprintf("cd %q && %s", path, agentCmd)), true
+		}
+	}
+	return nil, false
+}
+
+// shellQuote wraps s in double quotes, escaping any double-quote characters
+// inside. Used when embedding user-supplied prompts into shell command strings
+// for spawning agent processes in new terminal windows.
+func shellQuote(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
 // spawnSessionCmd opens a new terminal window at worktreePath in the background
