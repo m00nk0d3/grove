@@ -1,0 +1,108 @@
+package updater
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestIsNewer(t *testing.T) {
+	tests := []struct {
+		name    string
+		latest  string
+		current string
+		want    bool
+		wantErr bool
+	}{
+		{name: "newer patch", latest: "v1.0.1", current: "v1.0.0", want: true},
+		{name: "newer minor", latest: "v1.1.0", current: "v1.0.5", want: true},
+		{name: "newer major", latest: "v2.0.0", current: "v1.9.9", want: true},
+		{name: "same version", latest: "v1.2.3", current: "v1.2.3", want: false},
+		{name: "older version", latest: "v1.0.0", current: "v1.2.3", want: false},
+		{name: "dev build current", latest: "v1.2.3", current: "dev", want: false},
+		{name: "invalid semver latest", latest: "not-a-version", current: "v1.0.0", wantErr: true},
+		{name: "invalid semver current", latest: "v1.2.3", current: "custom-build", want: false},
+		{name: "no v prefix", latest: "1.2.3", current: "1.0.0", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := IsNewer(tt.latest, tt.current)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCheckLatestRelease_Success(t *testing.T) {
+	want := ReleaseInfo{TagName: "v1.2.3", HTMLURL: "https://github.com/m00nk0d3/nexus/releases/tag/v1.2.3"}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(want)
+	}))
+	defer ts.Close()
+
+	old := githubAPIBase
+	githubAPIBase = ts.URL
+	defer func() { githubAPIBase = old }()
+
+	got, err := CheckLatestRelease(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, want.TagName, got.TagName)
+	assert.Equal(t, want.HTMLURL, got.HTMLURL)
+}
+
+func TestCheckLatestRelease_NonOK(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	old := githubAPIBase
+	githubAPIBase = ts.URL
+	defer func() { githubAPIBase = old }()
+
+	_, err := CheckLatestRelease(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "404")
+}
+
+func TestCheckLatestRelease_InvalidJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{invalid}`))
+	}))
+	defer ts.Close()
+
+	old := githubAPIBase
+	githubAPIBase = ts.URL
+	defer func() { githubAPIBase = old }()
+
+	_, err := CheckLatestRelease(t.Context())
+	require.Error(t, err)
+}
+
+func TestDownloadURL(t *testing.T) {
+	tag := "v1.2.3"
+	url := DownloadURL(tag)
+
+	assert.Contains(t, url, tag)
+	assert.Contains(t, url, runtime.GOOS)
+	assert.Contains(t, url, runtime.GOARCH)
+
+	if runtime.GOOS == "windows" {
+		assert.True(t, strings.HasSuffix(url, ".zip"), "windows should use .zip: %s", url)
+	} else {
+		assert.True(t, strings.HasSuffix(url, ".tar.gz"), "non-windows should use .tar.gz: %s", url)
+	}
+}

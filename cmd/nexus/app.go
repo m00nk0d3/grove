@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +21,8 @@ import (
 	internalexec "github.com/m00nk0d3/nexus/internal/exec"
 	"github.com/m00nk0d3/nexus/internal/tui/modal"
 	"github.com/m00nk0d3/nexus/internal/tui/styles"
+	"github.com/m00nk0d3/nexus/internal/updater"
+	"github.com/m00nk0d3/nexus/internal/version"
 )
 
 // issuesFetchedMsg carries the result of a background gh issue list call.
@@ -92,11 +95,47 @@ type aiderFilesFetchedMsg struct {
 // clearErrorMsg is dispatched after the 5-second auto-dismiss timer fires.
 type clearErrorMsg struct{}
 
+// updateCheckedMsg carries the result of the startup version check.
+type updateCheckedMsg struct {
+	info updater.ReleaseInfo
+	err  error
+}
+
+// selfUpdateProgressMsg carries a progress status string during self-update.
+type selfUpdateProgressMsg struct{ status string }
+
+// selfUpdateDoneMsg carries the result of a self-update attempt.
+type selfUpdateDoneMsg struct{ err error }
+
 // clearErrorCmd returns a Cmd that fires clearErrorMsg after 5 seconds.
 func clearErrorCmd() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 		return clearErrorMsg{}
 	})
+}
+
+// checkForUpdateCmd fires an async update check on startup.
+func checkForUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		info, err := updater.CheckLatestRelease(ctx)
+		return updateCheckedMsg{info: info, err: err}
+	}
+}
+
+// selfUpdateCmd runs the self-update in the background.
+func selfUpdateCmd(tagName string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		err := updater.SelfUpdate(ctx, tagName, func(status string) {
+			// Progress is reflected via selfUpdateProgressMsg — but since
+			// tea.Cmd returns a single Msg, we capture only the final outcome here.
+			_ = status
+		})
+		return selfUpdateDoneMsg{err: err}
+	}
 }
 
 // sessionTickCmd schedules a sessionTickMsg after 3 seconds.
@@ -246,6 +285,13 @@ type Model struct {
 	// sessions holds the last-known list of active terminal sessions.
 	sessions []domain.Session
 
+	// latestVersion holds the latest release version discovered on startup (empty if check failed).
+	latestVersion string
+	// selfUpdating is true while a self-update is in progress.
+	selfUpdating bool
+	// selfUpdateStatus holds the last progress message during a self-update.
+	selfUpdateStatus string
+
 	// issueTree caches the depth-first-ordered tree built from m.issues.
 	// Rebuilt whenever m.issues is updated (debouncedRenderMsg handler).
 	issueTree []issueTreeRow
@@ -290,7 +336,7 @@ func (m *Model) Init() tea.Cmd {
 	m.syncing = true
 	// Always start the session tick — it handles both nexus-spawned shell sessions
 	// (requires m.db) and externally-started Copilot CLI sessions (no DB needed).
-	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(), sessionTickCmd())
+	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(), sessionTickCmd(), checkForUpdateCmd())
 }
 
 // Update handles incoming messages and returns an updated model and command.
@@ -325,6 +371,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.spawnAiderCmd(selected.Path, msg.Files)
 			}
 			return m, nil
+		case modal.UpdateConfirmedMsg:
+			m.activeModal = nil
+			m.selfUpdating = true
+			m.selfUpdateStatus = "Starting update..."
+			return m, selfUpdateCmd(m.latestVersion)
 		case modal.SpawnAgentMsg:
 			m.activeModal = nil
 			switch msg.AgentName {
@@ -856,6 +907,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+	case updateCheckedMsg:
+		if msg.err != nil {
+			slog.Debug("update check failed", "err", msg.err)
+			return m, nil
+		}
+		newer, err := updater.IsNewer(msg.info.TagName, version.Version)
+		if err != nil || !newer {
+			return m, nil
+		}
+		m.latestVersion = msg.info.TagName
+		m.activeModal = modal.NewUpdateModal(version.Version, msg.info.TagName, msg.info.Body, msg.info.HTMLURL, len(m.sessions))
+		return m, nil
+
+	case selfUpdateProgressMsg:
+		m.selfUpdateStatus = msg.status
+		return m, nil
+
+	case selfUpdateDoneMsg:
+		m.selfUpdating = false
+		m.selfUpdateStatus = ""
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("Update failed: %v", msg.err)
+			return m, clearErrorCmd()
+		}
+		m.statusMsg = "✓ Updated successfully! Please restart nexus to use the new version."
+		return m, clearMsgCmd()
 	}
 
 	return m, nil
@@ -898,6 +976,10 @@ func (m *Model) View() string {
 	if m.claudePromptActive {
 		return overlay("Spawn Claude Code",
 			fmt.Sprintf("> %s\n\nEnter confirm (prompt optional)  •  Esc cancel", m.claudePromptInput.View()))
+	}
+
+	if m.selfUpdating {
+		return overlay("Updating nexus", fmt.Sprintf("%s\n\nPlease wait...", m.selfUpdateStatus))
 	}
 
 	if m.statusErr != "" {
