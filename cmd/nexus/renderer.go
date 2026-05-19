@@ -1074,11 +1074,19 @@ func renderErrorModal(msg string, termWidth, termHeight int, baseView string) st
 		termHeight = 24
 	}
 
+	maxW := termWidth - 4
+	if maxW < 40 {
+		maxW = 40
+	}
+	if maxW > 80 {
+		maxW = 80
+	}
+
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#FF0000")).
 		Padding(0, 1).
-		MaxWidth(60).
+		MaxWidth(maxW).
 		Render("✗ " + msg + "\n\nPress any key to dismiss  •  Auto-dismisses in 5s")
 
 	return overlayBottomRight(baseView, box, termWidth)
