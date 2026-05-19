@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.3.2] - 2026-05-19
+
+### Fixed
+
+- **Error modal had a fixed-width identity crisis** — it now reads the room and resizes itself based on your terminal width (clamped 40–80). No more modal that looks like it escaped from a 1998 dial-up connection. `fix(tui)` (64d884e)
+- **Self-update errors were playing dumb** — when a download failed, the error just said "download failed" with zero context. It now rats out the exact URL so you know *which* download decided to ruin your day. `fix(updater)` (0d0821f)
+- **Background sync messages were getting ghosted** — the modal's early-return guard was intercepting ALL messages instead of just key presses, silently swallowing sync updates like a black hole. Fixed so non-key messages fall through properly. `fix(app)` (019ff66)
+
 ## [v0.3.1] - 2026-05-19
 
 ### Fixed
