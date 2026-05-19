@@ -1151,7 +1151,13 @@ func buildNewTerminalCmd(path, goos string) *exec.Cmd {
 	switch goos {
 	case "windows":
 		// Quote the path so worktree paths that contain spaces are handled correctly.
-		return exec.Command("cmd", "/C", "start", "cmd", "/K", fmt.Sprintf(`cd /d "%s"`, path))
+		// setWindowsCmdLine overrides SysProcAttr.CmdLine on Windows to bypass
+		// Go's arg escaping, which would mangle the inner double-quotes and cause
+		// cmd.exe to report "filename, directory name, or volume label syntax is
+		// incorrect" (ERROR_INVALID_NAME / exit 1).
+		cmd := exec.Command("cmd", "/C", "start", "cmd", "/K", fmt.Sprintf(`cd /d "%s"`, path))
+		setWindowsCmdLine(cmd, path)
+		return cmd
 	case "darwin":
 		return exec.Command("open", "-a", "Terminal", path)
 	default:
