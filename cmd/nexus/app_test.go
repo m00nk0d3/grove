@@ -2883,17 +2883,25 @@ func TestUpdateSessionAgentPID_UpdatesSession(t *testing.T) {
 	assert.Equal(t, "copilot", *got.AgentName)
 }
 
-// TestUpdateSessionAgentPID_NoSession_NoError verifies that updateSessionAgentPID
-// does not panic when no session exists for the given worktree path.
-func TestUpdateSessionAgentPID_NoSession_NoError(t *testing.T) {
+// TestUpdateSessionAgentPID_NoSession_CreatesAgentOnlySession verifies that
+// updateSessionAgentPID creates a new agent-only session when no session exists
+// for the given worktree path (agent spawned without a prior terminal session).
+func TestUpdateSessionAgentPID_NoSession_CreatesAgentOnlySession(t *testing.T) {
 	db, err := data.NewDB(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	// Should not panic — just logs a warning.
-	assert.NotPanics(t, func() {
-		updateSessionAgentPID(db, "/repo/nonexistent", "copilot", 42)
-	})
+	updateSessionAgentPID(db, "/repo/agent-only", "copilot", 99)
+
+	got, err := data.GetSessionByWorktree(db, "/repo/agent-only")
+	require.NoError(t, err)
+	require.NotNil(t, got, "agent-only session must be created when no session exists")
+	assert.Nil(t, got.ShellPID, "ShellPID must be nil for agent-only session")
+	require.NotNil(t, got.AgentPID)
+	assert.Equal(t, 99, *got.AgentPID)
+	require.NotNil(t, got.AgentName)
+	assert.Equal(t, "copilot", *got.AgentName)
+	assert.Equal(t, domain.StatusAgentRunning, got.Status)
 }
 
 // TestCheckSessionsCmd_NilDB_DeadShellAliveAgent_KeepsSession verifies that an
@@ -3027,4 +3035,72 @@ func TestCheckSessionsCmd_DB_BothDeadPruned(t *testing.T) {
 	got, err := data.GetSessionByWorktree(db, "/repo/both-dead")
 	require.NoError(t, err)
 	assert.Nil(t, got, "session with both dead PIDs must be deleted from the DB")
+}
+
+// TestCheckSessionsCmd_DB_AgentOnlySession_PrunedWhenAgentDies verifies that a
+// DB-backed agent-only session (no ShellPID) is removed when the agent exits.
+func TestCheckSessionsCmd_DB_AgentOnlySession_PrunedWhenAgentDies(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	deadPID := 999999999
+	agentName := "copilot"
+	sess := domain.Session{
+		WorktreePath: "/repo/agent-only",
+		ShellPID:     nil,
+		AgentPID:     &deadPID,
+		AgentName:    &agentName,
+		Status:       domain.StatusAgentRunning,
+		StartedAt:    time.Now().UTC(),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "agent-only session must be pruned when agent exits")
+
+	got, err := data.GetSessionByWorktree(db, "/repo/agent-only")
+	require.NoError(t, err)
+	assert.Nil(t, got, "agent-only session must be deleted from DB when agent exits")
+}
+
+// TestCheckSessionsCmd_DB_AgentOnlySession_KeptWhileAgentAlive verifies that a
+// DB-backed agent-only session is kept alive while the agent process is running.
+func TestCheckSessionsCmd_DB_AgentOnlySession_KeptWhileAgentAlive(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	alivePID := os.Getpid()
+	agentName := "copilot"
+	sess := domain.Session{
+		WorktreePath: "/repo/agent-alive",
+		ShellPID:     nil,
+		AgentPID:     &alivePID,
+		AgentName:    &agentName,
+		Status:       domain.StatusAgentRunning,
+		StartedAt:    time.Now().UTC(),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	require.Len(t, result.sessions, 1, "agent-only session must be kept while agent is alive")
+	assert.Nil(t, result.sessions[0].ShellPID)
+	assert.Equal(t, alivePID, *result.sessions[0].AgentPID)
 }

@@ -1602,6 +1602,8 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 
 // updateSessionAgentPID looks up the active session for worktreePath and sets
 // the AgentPID and AgentName fields, then persists the update via UpsertSession.
+// If no session exists for the worktree (agent spawned without a prior terminal),
+// a new agent-only session is created with StatusAgentRunning and no ShellPID.
 // Errors are logged as warnings — the agent terminal is already running so this
 // is non-fatal.
 func updateSessionAgentPID(db *data.DB, worktreePath, agentName string, pid int) {
@@ -1611,7 +1613,18 @@ func updateSessionAgentPID(db *data.DB, worktreePath, agentName string, pid int)
 		return
 	}
 	if sess == nil {
-		slog.Warn("update session agent pid: session not found", "worktree", worktreePath)
+		// No terminal session exists — create an agent-only session so the badge
+		// appears in the sessions view and the health-check poller can track it.
+		newSess := domain.Session{
+			WorktreePath: worktreePath,
+			AgentName:    &agentName,
+			AgentPID:     &pid,
+			Status:       domain.StatusAgentRunning,
+			StartedAt:    time.Now().UTC().Truncate(time.Second),
+		}
+		if _, err := data.UpsertSession(db, newSess); err != nil {
+			slog.Warn("update session agent pid: create session failed", "worktree", worktreePath, "err", err)
+		}
 		return
 	}
 	sess.AgentName = &agentName
@@ -1638,6 +1651,10 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 			for _, s := range current {
 				if s.ShellPID == nil {
 					if s.Status == domain.StatusDead || time.Since(s.StartedAt) > 24*time.Hour {
+						continue
+					}
+					// Agent-only session: prune once the agent process exits.
+					if s.AgentPID != nil && !pidAlive(*s.AgentPID) {
 						continue
 					}
 					alive = append(alive, s)
@@ -1667,25 +1684,32 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 				}
 			} else {
 				for _, s := range all {
-					if s.ShellPID == nil {
-						// No PID to check (e.g. Windows Terminal tab spawns where the
-						// launcher exits immediately). Prune dead rows and sessions older
-						// than 24 h; keep everything else so the badge stays visible.
-						if s.Status == domain.StatusDead {
-							if err := data.DeleteSession(db, s.ID); err != nil {
-								slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
-							}
-							continue
+				if s.ShellPID == nil {
+					// No shell PID to check. This covers two cases:
+					// 1. Windows Terminal tab spawns where the launcher exits immediately.
+					// 2. Agent-only sessions created by updateSessionAgentPID.
+					if s.Status == domain.StatusDead {
+						if err := data.DeleteSession(db, s.ID); err != nil {
+							slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
 						}
-						if time.Since(s.StartedAt) > 24*time.Hour {
-							if err := data.DeleteSession(db, s.ID); err != nil {
-								slog.Warn("session health check: failed to delete stale session", "id", s.ID, "err", err)
-							}
-							continue
-						}
-						alive = append(alive, s)
 						continue
 					}
+					if time.Since(s.StartedAt) > 24*time.Hour {
+						if err := data.DeleteSession(db, s.ID); err != nil {
+							slog.Warn("session health check: failed to delete stale session", "id", s.ID, "err", err)
+						}
+						continue
+					}
+					// Agent-only session: prune once the agent process exits.
+					if s.AgentPID != nil && !pidAlive(*s.AgentPID) {
+						if err := data.DeleteSession(db, s.ID); err != nil {
+							slog.Warn("session health check: failed to delete finished agent session", "id", s.ID, "err", err)
+						}
+						continue
+					}
+					alive = append(alive, s)
+					continue
+				}
 					shellAlive := pidAlive(*s.ShellPID)
 					agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
 
