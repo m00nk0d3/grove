@@ -2438,7 +2438,7 @@ func TestBuildNewTerminalCmd(t *testing.T) {
 			t.Setenv("TERMINAL", tt.terminalEnv)
 			t.Setenv("SHELL", tt.shellEnv)
 
-			cmd := buildNewTerminalCmd(tt.path, tt.goos)
+			cmd := buildNewTerminalCmd(tt.path, "", tt.goos)
 			require.NotNil(t, cmd)
 			require.NotEmpty(t, cmd.Args)
 

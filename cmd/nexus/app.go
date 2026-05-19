@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +103,41 @@ func sessionTickCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		return sessionTickMsg{}
 	})
+}
+
+// pollPIDFile waits up to timeout for a file at path to appear and contain a
+// valid PID written by the spawned shell process. Returns the PID on success,
+// or 0 if the file is absent or unreadable within the timeout.
+func pollPIDFile(path string, timeout time.Duration) int {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil && pid > 0 {
+				return pid
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return 0
+}
+
+// pidInitUnixCmd returns a POSIX sh one-liner that writes the shell's PID to
+// pidFile and then exec-replaces itself with the user's default interactive
+// shell. The terminal tab stays interactive; the PID is stable across the exec.
+func pidInitUnixCmd(pidFile string) string {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	return fmt.Sprintf(`sh -c 'echo $$ > "%s"; exec "%s"'`, pidFile, shell)
+}
+
+// closeSessionDoneMsg carries the result of a close-session operation.
+type closeSessionDoneMsg struct {
+	worktreePath string
+	err          error
 }
 
 // msgAutoDismissDuration is how long the success/info toast stays visible before
@@ -561,6 +597,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, clearErrorCmd()
 				}
 				return m, m.fetchAiderFilesCmd(selected.Path)
+			case "x", "X":
+				if m.view != viewWorktrees {
+					return m, nil
+				}
+				selected, ok := m.selectedWorktree()
+				if !ok {
+					return m, nil
+				}
+				for _, s := range m.sessions {
+					if s.WorktreePath == selected.Path {
+						return m, m.closeSessionCmd(s)
+					}
+				}
+				m.statusErr = "No active session for this worktree"
+				return m, clearErrorCmd()
 			}
 		}
 
@@ -733,6 +784,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionStatusUpdatedMsg:
 		m.sessions = msg.sessions
 		return m, sessionTickCmd()
+
+	case closeSessionDoneMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("Close session: %v", msg.err)
+			return m, clearErrorCmd()
+		}
+		var updated []domain.Session
+		for _, s := range m.sessions {
+			if s.WorktreePath != msg.worktreePath {
+				updated = append(updated, s)
+			}
+		}
+		if updated == nil {
+			updated = []domain.Session{}
+		}
+		m.sessions = updated
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -1177,42 +1245,50 @@ func getShell() string {
 }
 
 // buildNewTerminalCmd constructs a platform-specific command that opens a new
-// terminal window rooted at path without blocking the caller.
+// terminal window rooted at path without blocking the caller. When pidFile is
+// non-empty the spawned shell writes its PID to the file before becoming
+// interactive, enabling the caller to track session lifetime.
 //
-//   - Windows: cmd /C start cmd /K "cd /d <path>"
-//   - macOS:   open -a Terminal <path>
-//   - Linux:   $TERMINAL --working-directory=<path>  (fallback: x-terminal-emulator, then xterm)
-func buildNewTerminalCmd(path, goos string) *exec.Cmd {
+//   - Windows: cmd /C start cmd /K "cd /d <path>"  (pidFile not supported)
+//   - macOS:   osascript do script with PID preamble, or open -a Terminal fallback
+//   - Linux:   $TERMINAL / x-terminal-emulator / xterm with PID preamble
+func buildNewTerminalCmd(path, pidFile, goos string) *exec.Cmd {
 	switch goos {
 	case "windows":
-		// Quote the path so worktree paths that contain spaces are handled correctly.
-		// setWindowsCmdLine overrides SysProcAttr.CmdLine on Windows to bypass
-		// Go's arg escaping, which would mangle the inner double-quotes and cause
-		// cmd.exe to report "filename, directory name, or volume label syntax is
-		// incorrect" (ERROR_INVALID_NAME / exit 1).
 		cmd := exec.Command("cmd", "/C", "start", "cmd", "/K", fmt.Sprintf(`cd /d "%s"`, path))
 		setWindowsCmdLine(cmd, path)
 		return cmd
 	case "darwin":
+		if pidFile != "" {
+			return exec.Command("osascript", "-e",
+				fmt.Sprintf(`tell app "Terminal" to do script "echo $$ > \"%s\"; cd %q"`, pidFile, path))
+		}
 		return exec.Command("open", "-a", "Terminal", path)
 	default:
-		// Linux: respect the $TERMINAL env var when set.
 		if term := os.Getenv("TERMINAL"); term != "" {
+			if pidFile != "" {
+				return exec.Command(term, "-e", "sh", "-c",
+					fmt.Sprintf(`echo $$ > "%s"; cd %q; exec "${SHELL:-sh}"`, pidFile, path))
+			}
 			return exec.Command(term, "--working-directory="+path)
 		}
 		shell := os.Getenv("SHELL")
 		if shell == "" {
 			shell = "/bin/sh"
 		}
-		// Try common terminal emulators in order; x-terminal-emulator is the
-		// Debian/Ubuntu update-alternatives symlink that works on most distros.
 		for _, candidate := range []string{"x-terminal-emulator", "xterm"} {
 			if _, err := exec.LookPath(candidate); err == nil {
+				if pidFile != "" {
+					return exec.Command(candidate, "-e", "sh", "-c",
+						fmt.Sprintf(`echo $$ > "%s"; cd %q; exec "${SHELL:-sh}"`, pidFile, path))
+				}
 				return exec.Command(candidate, "-e", fmt.Sprintf("cd %q; %s", path, shell))
 			}
 		}
-		// Last resort: return an xterm cmd; Start() will surface the error if
-		// xterm is not installed either.
+		if pidFile != "" {
+			return exec.Command("xterm", "-e", "sh", "-c",
+				fmt.Sprintf(`echo $$ > "%s"; cd %q; exec "${SHELL:-sh}"`, pidFile, path))
+		}
 		return exec.Command("xterm", "-e", fmt.Sprintf("cd %q; %s", path, shell))
 	}
 }
@@ -1264,8 +1340,12 @@ func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
 
 // buildNewTabWithCmdCmd tries to open agentCmd in a new tab/pane of the current
 // terminal emulator. When agentCmd is empty a plain interactive shell is opened
-// instead. Returns (cmd, true) if a tab-capable emulator is detected, or
-// (nil, false) to signal the caller should fall back to a new window.
+// instead. When pidFile is non-empty and agentCmd is empty the spawned shell is
+// wrapped to write its PID to pidFile before exec-replacing itself so the
+// caller can track when the tab is closed.
+//
+// Returns (cmd, true) if a tab-capable emulator is detected, or (nil, false)
+// to signal the caller should fall back to a new window.
 //
 // Detection is env-var based. Priority:
 //
@@ -1282,12 +1362,14 @@ func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
 //
 // Ghostty does not yet expose a stable tab-open CLI; it is handled as a new
 // window in buildNewTerminalWithCmdCmd.
-func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
+func buildNewTabWithCmdCmd(path, agentCmd, pidFile, goos string) (*exec.Cmd, bool) {
 	// 1. Multiplexers — take precedence over GUI terminal tabs.
 	if os.Getenv("TMUX") != "" {
 		args := []string{"new-window", "-c", path}
 		if agentCmd != "" {
 			args = append(args, agentCmd)
+		} else if pidFile != "" {
+			args = append(args, pidInitUnixCmd(pidFile))
 		}
 		return exec.Command("tmux", args...), true
 	}
@@ -1296,12 +1378,14 @@ func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
 		if shell == "" {
 			shell = "sh"
 		}
-		// zellij run opens a new pane in the current tab (closest to "new tab").
-		args := []string{"run", "--cwd", path, "--", shell}
 		if agentCmd != "" {
-			args = append(args, "-c", agentCmd)
+			return exec.Command("zellij", "run", "--cwd", path, "--", shell, "-c", agentCmd), true
 		}
-		return exec.Command("zellij", args...), true
+		if pidFile != "" {
+			return exec.Command("zellij", "run", "--cwd", path, "--",
+				"sh", "-c", fmt.Sprintf(`echo $$ > "%s"; exec "%s"`, pidFile, shell)), true
+		}
+		return exec.Command("zellij", "run", "--cwd", path, "--", shell), true
 	}
 
 	// 2. Kitty remote-control (cross-platform, Linux + macOS).
@@ -1309,6 +1393,8 @@ func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
 		args := []string{"@", "new-window", "--new-tab", "--cwd", path}
 		if agentCmd != "" {
 			args = append(args, "sh", "-c", agentCmd)
+		} else if pidFile != "" {
+			args = append(args, "sh", "-c", fmt.Sprintf(`echo $$ > "%s"; exec "${SHELL:-sh}"`, pidFile))
 		}
 		return exec.Command("kitty", args...), true
 	}
@@ -1318,6 +1404,8 @@ func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
 		args := []string{"msg", "create-tab", "--working-directory", path}
 		if agentCmd != "" {
 			args = append(args, "--", "sh", "-c", agentCmd)
+		} else if pidFile != "" {
+			args = append(args, "--", "sh", "-c", fmt.Sprintf(`echo $$ > "%s"; exec "${SHELL:-sh}"`, pidFile))
 		}
 		return exec.Command("alacritty", args...), true
 	}
@@ -1325,9 +1413,9 @@ func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
 	// 4. Platform-specific tab APIs.
 	switch goos {
 	case "windows":
-		// Windows Terminal sets $WT_SESSION in every shell it hosts.
-		// -w 0 targets the most-recently-used window so the tab opens in the
-		// existing window rather than spawning a new one.
+		// Windows Terminal: the spawnTerminalWindow function in terminal_windows.go
+		// intercepts WT_SESSION before calling here and uses a PowerShell PID-file
+		// instead. This branch handles agent commands only.
 		if os.Getenv("WT_SESSION") != "" {
 			args := []string{"-w", "0", "new-tab", "--startingDirectory", path}
 			if agentCmd != "" {
@@ -1339,7 +1427,12 @@ func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
 		switch os.Getenv("TERM_PROGRAM") {
 		case "iTerm.app":
 			var script string
-			if agentCmd == "" {
+			if agentCmd == "" && pidFile != "" {
+				script = fmt.Sprintf(
+					`tell application "iTerm2" to tell current window to create tab with default profile command %s`,
+					shellQuote(fmt.Sprintf(`bash -c 'echo $$ > "%s"; cd %q; exec "${SHELL:-bash}"'`, pidFile, path)),
+				)
+			} else if agentCmd == "" {
 				script = fmt.Sprintf(
 					`tell application "iTerm2" to tell current window to create tab with default profile command %s`,
 					shellQuote(fmt.Sprintf("bash -c 'cd %q; exec ${SHELL:-bash}'", path)),
@@ -1353,7 +1446,9 @@ func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
 			return exec.Command("osascript", "-e", script), true
 		case "Apple_Terminal":
 			var script string
-			if agentCmd == "" {
+			if agentCmd == "" && pidFile != "" {
+				script = fmt.Sprintf(`tell app "Terminal" to do script "echo $$ > \"%s\"; cd %q" in front window`, pidFile, path)
+			} else if agentCmd == "" {
 				script = fmt.Sprintf(`tell app "Terminal" to do script "cd %q" in front window`, path)
 			} else {
 				script = fmt.Sprintf(`tell app "Terminal" to do script "cd %q && %s" in front window`, path, agentCmd)
@@ -1363,6 +1458,10 @@ func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
 		}
 	default: // Linux
 		if os.Getenv("KONSOLE_VERSION") != "" {
+			if agentCmd == "" && pidFile != "" {
+				return exec.Command("konsole", "--new-tab", "-e", "sh", "-c",
+					fmt.Sprintf(`echo $$ > "%s"; cd %q; exec "${SHELL:-bash}"`, pidFile, path)), true
+			}
 			if agentCmd == "" {
 				return exec.Command("konsole", "--new-tab", "--workdir", path), true
 			}
@@ -1394,13 +1493,16 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 		if err != nil {
 			return sessionSpawnedMsg{err: fmt.Errorf("spawn session: %w", err)}
 		}
+		// pid == 0 means the launcher exited immediately (e.g. Windows Terminal
+		// new-tab) and there is no trackable long-lived PID. Store nil so the
+		// health-check loop keeps the session alive rather than pruning it.
+		var shellPID *int
+		if pid != 0 {
+			shellPID = &pid
+		}
 		session := domain.Session{
 			WorktreePath: worktreePath,
-			// NOTE: on Windows (cmd /C start) and macOS (open -a Terminal) the
-			// launcher process exits almost immediately, so this PID is best-effort
-			// — it will be dead by the time Mission Control queries it.
-			// On Linux the terminal emulator process stays alive, so PID is reliable.
-			ShellPID:  &pid,
+			ShellPID:     shellPID,
 			Status:       domain.StatusActive,
 			StartedAt:    time.Now().UTC().Truncate(time.Second),
 		}
@@ -1413,6 +1515,25 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 			session.ID = id
 		}
 		return sessionSpawnedMsg{session: session}
+	}
+}
+
+// closeSessionCmd kills the shell process for the given session (causing the
+// terminal tab to close) and removes the session record from the DB.
+func (m *Model) closeSessionCmd(session domain.Session) tea.Cmd {
+	db := m.db
+	return func() tea.Msg {
+		if session.ShellPID != nil {
+			if proc, err := os.FindProcess(*session.ShellPID); err == nil {
+				_ = proc.Kill()
+			}
+		}
+		if db != nil && session.ID != 0 {
+			if err := data.DeleteSession(db, session.ID); err != nil {
+				return closeSessionDoneMsg{worktreePath: session.WorktreePath, err: err}
+			}
+		}
+		return closeSessionDoneMsg{worktreePath: session.WorktreePath}
 	}
 }
 
@@ -1439,10 +1560,18 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 			} else {
 				for _, s := range all {
 					if s.ShellPID == nil {
-						// No PID to check — prune dead status rows, keep everything else.
+						// No PID to check (e.g. Windows Terminal tab spawns where the
+						// launcher exits immediately). Prune dead rows and sessions older
+						// than 24 h; keep everything else so the badge stays visible.
 						if s.Status == domain.StatusDead {
 							if err := data.DeleteSession(db, s.ID); err != nil {
 								slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
+							}
+							continue
+						}
+						if time.Since(s.StartedAt) > 24*time.Hour {
+							if err := data.DeleteSession(db, s.ID); err != nil {
+								slog.Warn("session health check: failed to delete stale session", "id", s.ID, "err", err)
 							}
 							continue
 						}

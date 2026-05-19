@@ -4,10 +4,13 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // setWindowsCmdLine overrides the raw Windows command line for the new-terminal
@@ -29,26 +32,53 @@ func setWindowsCmdLine(c *exec.Cmd, path string) {
 
 // spawnTerminalWindow opens a terminal at path, preferring a new tab in the
 // current terminal emulator when possible, falling back to a new standalone
-// cmd.exe window. Returns the PID of the spawned process.
+// cmd.exe window. Returns the PID of the spawned shell process, or 0 when no
+// trackable long-lived PID is available.
 func spawnTerminalWindow(path string) (int, error) {
-	// Prefer a new tab when the running terminal supports it.
-	if tabCmd, ok := buildNewTabWithCmdCmd(path, "", "windows"); ok {
+	// Windows Terminal: use a PID-file trick so we get the real PowerShell PID
+	// (which stays alive as long as the tab is open) instead of the wt.exe
+	// launcher PID (which exits immediately after creating the tab).
+	if os.Getenv("WT_SESSION") != "" {
+		pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-session-%d.pid", time.Now().UnixNano()))
+		// The PowerShell session writes its own PID to the temp file on start,
+		// then stays interactive. Deleting the file is handled by the caller.
+		psCmd := fmt.Sprintf(
+			`[System.Diagnostics.Process]::GetCurrentProcess().Id | Set-Content -LiteralPath '%s'`,
+			pidFile,
+		)
+		cmd := exec.Command("wt", "-w", "0", "new-tab", "--startingDirectory", path,
+			"powershell", "-NoExit", "-Command", psCmd)
+		if err := cmd.Start(); err == nil {
+			pid := pollPIDFile(pidFile, 3*time.Second)
+			os.Remove(pidFile)
+			return pid, nil
+		}
+		// Fall through to standalone window on error.
+	}
+
+	// Other tab-capable emulators (tmux, zellij under Windows/WSL) — use
+	// Unix-style PID-file injection via buildNewTabWithCmdCmd.
+	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-session-%d.pid", time.Now().UnixNano()))
+	if tabCmd, ok := buildNewTabWithCmdCmd(path, "", pidFile, "windows"); ok {
 		if err := tabCmd.Start(); err == nil {
-			return tabCmd.Process.Pid, nil
+			pid := pollPIDFile(pidFile, 3*time.Second)
+			os.Remove(pidFile)
+			return pid, nil
 		}
 		// Fall through to new standalone window on error.
 	}
+	os.Remove(pidFile)
 
 	// Fallback: open a standalone cmd.exe window via PowerShell.
 	// PowerShell Start-Process -PassThru returns a process object whose .Id is
 	// the actual cmd.exe /K shell — the one that stays alive while the user has
 	// the window open.
-	psCmd := fmt.Sprintf(
+	fallbackPsCmd := fmt.Sprintf(
 		`(Start-Process -FilePath 'cmd' -ArgumentList '/K','cd /d "%s"' -PassThru).Id`,
 		path,
 	)
 	out, err := exec.Command(
-		"powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd,
+		"powershell", "-NoProfile", "-NonInteractive", "-Command", fallbackPsCmd,
 	).Output()
 	if err != nil {
 		return 0, fmt.Errorf("spawn terminal: %w", err)
@@ -65,7 +95,7 @@ func spawnTerminalWindow(path string) (int, error) {
 // The TUI is not suspended — nexus keeps running in the original terminal.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
 	// Prefer a new tab when the running terminal supports it.
-	if tabCmd, ok := buildNewTabWithCmdCmd(path, agentCmd, "windows"); ok {
+	if tabCmd, ok := buildNewTabWithCmdCmd(path, agentCmd, "", "windows"); ok {
 		if err := tabCmd.Start(); err == nil {
 			return tabCmd.Process.Pid, nil
 		}
