@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.3.1] - 2026-05-19
+
+### Fixed
+- fix(updater): strip v prefix from filename in DownloadURL (9702ace)
+
 ## [v0.3.0] - 2026-05-19
 
 ### Added
