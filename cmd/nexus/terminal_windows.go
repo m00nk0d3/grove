@@ -5,6 +5,8 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -23,4 +25,29 @@ func setWindowsCmdLine(c *exec.Cmd, path string) {
 		// the window title instead of the command.
 		CmdLine: fmt.Sprintf(`cmd /C start "" cmd /K cd /d "%s"`, path),
 	}
+}
+
+// spawnTerminalWindow opens a new cmd.exe /K window at path and returns the
+// PID of the spawned shell process.
+//
+// The old approach (cmd /C start) launches a helper that exits immediately, so
+// the recorded PID is dead before the first health-check tick. PowerShell
+// Start-Process -PassThru returns a process object whose .Id is the actual
+// cmd.exe /K shell — the one that stays alive while the user has the window open.
+func spawnTerminalWindow(path string) (int, error) {
+	psCmd := fmt.Sprintf(
+		`(Start-Process -FilePath 'cmd' -ArgumentList '/K','cd /d "%s"' -PassThru).Id`,
+		path,
+	)
+	out, err := exec.Command(
+		"powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd,
+	).Output()
+	if err != nil {
+		return 0, fmt.Errorf("spawn terminal: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("parse terminal pid %q: %w", strings.TrimSpace(string(out)), err)
+	}
+	return pid, nil
 }

@@ -180,9 +180,9 @@ func TestModelIntegration(t *testing.T) {
 	}
 }
 
-// TestModel_Enter_TriggersSwitch verifies that pressing Enter on a selected worktree
-// returns a tea.Cmd to switch to that worktree
-func TestModel_Enter_TriggersSwitch(t *testing.T) {
+// TestModel_Enter_TriggersSpawn verifies that pressing Enter on a selected worktree
+// returns a tea.Cmd to spawn a new terminal session for that worktree.
+func TestModel_Enter_TriggersSpawn(t *testing.T) {
 	tests := []struct {
 		name          string
 		worktrees     []interface{} // Will be converted to domain.Worktree
@@ -191,23 +191,23 @@ func TestModel_Enter_TriggersSwitch(t *testing.T) {
 		wantCmdNotNil bool
 	}{
 		{
-			name: "enter on first worktree returns switch command",
+			name: "enter on first worktree returns spawn command",
 			worktrees: []interface{}{
 				map[string]interface{}{"Path": "/home/user/repos/wt1", "Branch": "main", "CommitSHA": "abc123", "IsClean": true, "IsLocked": false, "LinkedPR": nil},
 				map[string]interface{}{"Path": "/home/user/repos/wt2", "Branch": "feature", "CommitSHA": "def456", "IsClean": false, "IsLocked": false, "LinkedPR": nil},
 			},
 			selectedIdx:   0,
-			description:   "Should return a Cmd to switch to first worktree",
+			description:   "Should return a Cmd to spawn session for first worktree",
 			wantCmdNotNil: true,
 		},
 		{
-			name: "enter on second worktree returns switch command",
+			name: "enter on second worktree returns spawn command",
 			worktrees: []interface{}{
 				map[string]interface{}{"Path": "/home/user/repos/wt1", "Branch": "main", "CommitSHA": "abc123", "IsClean": true, "IsLocked": false, "LinkedPR": nil},
 				map[string]interface{}{"Path": "/home/user/repos/wt2", "Branch": "feature", "CommitSHA": "def456", "IsClean": false, "IsLocked": false, "LinkedPR": nil},
 			},
 			selectedIdx:   1,
-			description:   "Should return a Cmd to switch to second worktree",
+			description:   "Should return a Cmd to spawn session for second worktree",
 			wantCmdNotNil: true,
 		},
 	}
@@ -216,6 +216,7 @@ func TestModel_Enter_TriggersSwitch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup: Create model with populated Worktrees list
 			model := NewModel()
+			model.copilotDBPath = ""
 			require.NotNil(t, model, "Model creation should succeed")
 
 			// Convert test data to domain.Worktree
@@ -239,16 +240,16 @@ func TestModel_Enter_TriggersSwitch(t *testing.T) {
 			// Assert: Model is returned
 			assert.NotNil(t, updatedModel, "Update should return model: %s", tt.description)
 
-			// Assert: A Cmd is returned (for switching worktree)
+			// Assert: A Cmd is returned (for spawning a session)
 			if tt.wantCmdNotNil {
-				assert.NotNil(t, cmd, "Update should return a Cmd for switching worktree: %s", tt.description)
+				assert.NotNil(t, cmd, "Update should return a Cmd for spawning session: %s", tt.description)
 			}
 		})
 	}
 }
 
 // TestModel_Enter_EmptyList_NoOp verifies that pressing Enter on an empty worktree list
-// does not trigger a switch command
+// does not trigger a spawn command
 func TestModel_Enter_EmptyList_NoOp(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1857,10 +1858,11 @@ func TestModel_Enter_InViewPRs_EmptyList_NoOp(t *testing.T) {
 	assert.Nil(t, updatedModel.activeModal)
 }
 
-// TestModel_Enter_InViewWorktrees_SwitchesWorktree verifies that Enter still
-// switches to the selected worktree when in viewWorktrees (unchanged behavior).
-func TestModel_Enter_InViewWorktrees_SwitchesWorktree(t *testing.T) {
+// TestModel_Enter_InViewWorktrees_SpawnsSession verifies that Enter spawns a
+// session (same as the s key) when a worktree is selected.
+func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 	m := NewModel()
+	m.copilotDBPath = ""
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
 		{Path: "/repos/nexus", Branch: "main"},
@@ -1868,7 +1870,7 @@ func TestModel_Enter_InViewWorktrees_SwitchesWorktree(t *testing.T) {
 	m.selectedIdx = 0
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	assert.NotNil(t, cmd, "should return a switchWorktreeCmd")
+	assert.NotNil(t, cmd, "should return a spawnSessionCmd")
 }
 
 // ---------------------------------------------------------------------------
@@ -2540,10 +2542,11 @@ func TestModel_SKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
 	assert.NotNil(t, cmd, "clearErrorCmd should be returned")
 }
 
-// TestModel_EnterKey_StillUsesSwitchWorktreeCmd verifies that pressing Enter
-// still triggers switchWorktreeCmd (i.e. s-key rebind did not affect Enter).
-func TestModel_EnterKey_StillUsesSwitchWorktreeCmd(t *testing.T) {
+// TestModel_EnterKey_SpawnsSessionLikeSKey verifies that Enter and s both
+// trigger spawnSessionCmd (same behavior).
+func TestModel_EnterKey_SpawnsSessionLikeSKey(t *testing.T) {
 	m := NewModel()
+	m.copilotDBPath = ""
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
 		{Path: "/repos/nexus", Branch: "main"},
@@ -2551,7 +2554,7 @@ func TestModel_EnterKey_StillUsesSwitchWorktreeCmd(t *testing.T) {
 	m.selectedIdx = 0
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	assert.NotNil(t, cmd, "Enter key must still return a Cmd (switchWorktreeCmd)")
+	assert.NotNil(t, cmd, "Enter key must return a Cmd (spawnSessionCmd)")
 }
 
 // TestSessionTickMsg verifies that sessionTickMsg dispatches checkSessionsCmd.

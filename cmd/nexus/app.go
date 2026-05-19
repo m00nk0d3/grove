@@ -405,7 +405,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			default:
 				if selected, ok := m.selectedWorktree(); ok {
-					return m, m.switchWorktreeCmd(selected.Path)
+					return m, m.spawnSessionCmd(selected.Path)
 				}
 				return m, nil
 			}
@@ -1205,11 +1205,10 @@ func buildNewTerminalCmd(path, goos string) *exec.Cmd {
 func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 	db := m.db
 	return func() tea.Msg {
-		cmd := buildNewTerminalCmd(worktreePath, runtime.GOOS)
-		if err := cmd.Start(); err != nil {
+		pid, err := spawnTerminalWindow(worktreePath)
+		if err != nil {
 			return sessionSpawnedMsg{err: fmt.Errorf("spawn session: %w", err)}
 		}
-		pid := cmd.Process.Pid
 		session := domain.Session{
 			WorktreePath: worktreePath,
 			// NOTE: on Windows (cmd /C start) and macOS (open -a Terminal) the
