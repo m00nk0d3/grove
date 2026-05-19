@@ -27,14 +27,22 @@ func setWindowsCmdLine(c *exec.Cmd, path string) {
 	}
 }
 
-// spawnTerminalWindow opens a new cmd.exe /K window at path and returns the
-// PID of the spawned shell process.
-//
-// The old approach (cmd /C start) launches a helper that exits immediately, so
-// the recorded PID is dead before the first health-check tick. PowerShell
-// Start-Process -PassThru returns a process object whose .Id is the actual
-// cmd.exe /K shell — the one that stays alive while the user has the window open.
+// spawnTerminalWindow opens a terminal at path, preferring a new tab in the
+// current terminal emulator when possible, falling back to a new standalone
+// cmd.exe window. Returns the PID of the spawned process.
 func spawnTerminalWindow(path string) (int, error) {
+	// Prefer a new tab when the running terminal supports it.
+	if tabCmd, ok := buildNewTabWithCmdCmd(path, "", "windows"); ok {
+		if err := tabCmd.Start(); err == nil {
+			return tabCmd.Process.Pid, nil
+		}
+		// Fall through to new standalone window on error.
+	}
+
+	// Fallback: open a standalone cmd.exe window via PowerShell.
+	// PowerShell Start-Process -PassThru returns a process object whose .Id is
+	// the actual cmd.exe /K shell — the one that stays alive while the user has
+	// the window open.
 	psCmd := fmt.Sprintf(
 		`(Start-Process -FilePath 'cmd' -ArgumentList '/K','cd /d "%s"' -PassThru).Id`,
 		path,

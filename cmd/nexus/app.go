@@ -1262,9 +1262,10 @@ func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
 	}
 }
 
-// buildNewTabWithCmdCmd tries to open agentCmd in a new tab of the current
-// terminal emulator. Returns (cmd, true) if a tab-capable emulator is detected,
-// or (nil, false) to signal the caller should fall back to a new window.
+// buildNewTabWithCmdCmd tries to open agentCmd in a new tab/pane of the current
+// terminal emulator. When agentCmd is empty a plain interactive shell is opened
+// instead. Returns (cmd, true) if a tab-capable emulator is detected, or
+// (nil, false) to signal the caller should fall back to a new window.
 //
 // Detection is env-var based. Priority:
 //
@@ -1284,51 +1285,87 @@ func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
 func buildNewTabWithCmdCmd(path, agentCmd, goos string) (*exec.Cmd, bool) {
 	// 1. Multiplexers — take precedence over GUI terminal tabs.
 	if os.Getenv("TMUX") != "" {
-		return exec.Command("tmux", "new-window", "-c", path, agentCmd), true
+		args := []string{"new-window", "-c", path}
+		if agentCmd != "" {
+			args = append(args, agentCmd)
+		}
+		return exec.Command("tmux", args...), true
 	}
 	if os.Getenv("ZELLIJ") != "" || os.Getenv("ZELLIJ_SESSION_NAME") != "" {
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "sh"
+		}
 		// zellij run opens a new pane in the current tab (closest to "new tab").
-		return exec.Command("zellij", "run", "--cwd", path, "--", "sh", "-c", agentCmd), true
+		args := []string{"run", "--cwd", path, "--", shell}
+		if agentCmd != "" {
+			args = append(args, "-c", agentCmd)
+		}
+		return exec.Command("zellij", args...), true
 	}
 
 	// 2. Kitty remote-control (cross-platform, Linux + macOS).
 	if goos != "windows" && os.Getenv("KITTY_WINDOW_ID") != "" {
-		return exec.Command("kitty", "@", "new-window", "--new-tab",
-			"--cwd", path, "sh", "-c", agentCmd), true
+		args := []string{"@", "new-window", "--new-tab", "--cwd", path}
+		if agentCmd != "" {
+			args = append(args, "sh", "-c", agentCmd)
+		}
+		return exec.Command("kitty", args...), true
 	}
 
 	// 3. Alacritty IPC — available when $ALACRITTY_SOCKET is set (v0.13+).
 	if os.Getenv("ALACRITTY_SOCKET") != "" {
-		return exec.Command("alacritty", "msg", "create-tab",
-			"--working-directory", path, "--", "sh", "-c", agentCmd), true
+		args := []string{"msg", "create-tab", "--working-directory", path}
+		if agentCmd != "" {
+			args = append(args, "--", "sh", "-c", agentCmd)
+		}
+		return exec.Command("alacritty", args...), true
 	}
 
 	// 4. Platform-specific tab APIs.
 	switch goos {
 	case "windows":
 		// Windows Terminal sets $WT_SESSION in every shell it hosts.
+		// -w 0 targets the most-recently-used window so the tab opens in the
+		// existing window rather than spawning a new one.
 		if os.Getenv("WT_SESSION") != "" {
-			return exec.Command("wt", "new-tab",
-				"--startingDirectory", path, "cmd", "/K", agentCmd), true
+			args := []string{"-w", "0", "new-tab", "--startingDirectory", path}
+			if agentCmd != "" {
+				args = append(args, "cmd", "/K", agentCmd)
+			}
+			return exec.Command("wt", args...), true
 		}
 	case "darwin":
 		switch os.Getenv("TERM_PROGRAM") {
 		case "iTerm.app":
-			script := fmt.Sprintf(
-				`tell application "iTerm2" to tell current window to create tab with default profile command %s`,
-				shellQuote(fmt.Sprintf("bash -c %s", shellQuote(fmt.Sprintf("cd %q && %s", path, agentCmd)))),
-			)
+			var script string
+			if agentCmd == "" {
+				script = fmt.Sprintf(
+					`tell application "iTerm2" to tell current window to create tab with default profile command %s`,
+					shellQuote(fmt.Sprintf("bash -c 'cd %q; exec ${SHELL:-bash}'", path)),
+				)
+			} else {
+				script = fmt.Sprintf(
+					`tell application "iTerm2" to tell current window to create tab with default profile command %s`,
+					shellQuote(fmt.Sprintf("bash -c %s", shellQuote(fmt.Sprintf("cd %q && %s", path, agentCmd)))),
+				)
+			}
 			return exec.Command("osascript", "-e", script), true
 		case "Apple_Terminal":
-			script := fmt.Sprintf(
-				`tell app "Terminal" to do script "cd %q && %s" in front window`,
-				path, agentCmd,
-			)
+			var script string
+			if agentCmd == "" {
+				script = fmt.Sprintf(`tell app "Terminal" to do script "cd %q" in front window`, path)
+			} else {
+				script = fmt.Sprintf(`tell app "Terminal" to do script "cd %q && %s" in front window`, path, agentCmd)
+			}
 			return exec.Command("osascript", "-e", script), true
 		// ghostty: no stable tab-open CLI yet — falls through to new window.
 		}
 	default: // Linux
 		if os.Getenv("KONSOLE_VERSION") != "" {
+			if agentCmd == "" {
+				return exec.Command("konsole", "--new-tab", "--workdir", path), true
+			}
 			shell := os.Getenv("SHELL")
 			if shell == "" {
 				shell = "bash"
