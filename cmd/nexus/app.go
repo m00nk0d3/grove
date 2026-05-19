@@ -1104,6 +1104,7 @@ func buildCopilotCmd(worktreePath, prompt string) *exec.Cmd {
 // The TUI is not suspended — nexus keeps running in the current terminal.
 func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
 	startedAt := time.Now()
+	db := m.db
 	var shellCmd string
 	if prompt != "" {
 		shellCmd = "gh copilot -i " + shellQuote(prompt)
@@ -1111,10 +1112,13 @@ func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
 		shellCmd = "gh copilot"
 	}
 	return func() tea.Msg {
-		_, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
+		pid, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
 		exitCode := 0
 		if spawnErr != nil {
 			exitCode = 1
+		}
+		if spawnErr == nil && pid != 0 && db != nil {
+			updateSessionAgentPID(db, worktreePath, "copilot", pid)
 		}
 		return agentDoneMsg{
 			agentName: "copilot",
@@ -1171,6 +1175,7 @@ func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 		return clearErrorCmd()
 	}
 	startedAt := time.Now()
+	db := m.db
 	var shellCmd string
 	if prompt != "" {
 		shellCmd = binaryPath + " " + shellQuote(prompt)
@@ -1178,10 +1183,13 @@ func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 		shellCmd = binaryPath
 	}
 	return func() tea.Msg {
-		_, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
+		pid, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
 		exitCode := 0
 		if spawnErr != nil {
 			exitCode = 1
+		}
+		if spawnErr == nil && pid != 0 && db != nil {
+			updateSessionAgentPID(db, worktreePath, "claude", pid)
 		}
 		return agentDoneMsg{
 			agentName: "claude",
@@ -1220,6 +1228,7 @@ func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
 		return clearErrorCmd()
 	}
 	startedAt := time.Now()
+	db := m.db
 	parts := make([]string, 0, len(files)+1)
 	parts = append(parts, binaryPath)
 	for _, f := range files {
@@ -1227,10 +1236,13 @@ func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
 	}
 	shellCmd := strings.Join(parts, " ")
 	return func() tea.Msg {
-		_, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
+		pid, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
 		exitCode := 0
 		if spawnErr != nil {
 			exitCode = 1
+		}
+		if spawnErr == nil && pid != 0 && db != nil {
+			updateSessionAgentPID(db, worktreePath, "aider", pid)
 		}
 		return agentDoneMsg{
 			agentName: "aider",
@@ -1585,6 +1597,27 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 		}
 		err := focusSessionWindow(pid)
 		return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
+	}
+}
+
+// updateSessionAgentPID looks up the active session for worktreePath and sets
+// the AgentPID and AgentName fields, then persists the update via UpsertSession.
+// Errors are logged as warnings — the agent terminal is already running so this
+// is non-fatal.
+func updateSessionAgentPID(db *data.DB, worktreePath, agentName string, pid int) {
+	sess, err := data.GetSessionByWorktree(db, worktreePath)
+	if err != nil {
+		slog.Warn("update session agent pid: lookup failed", "worktree", worktreePath, "err", err)
+		return
+	}
+	if sess == nil {
+		slog.Warn("update session agent pid: session not found", "worktree", worktreePath)
+		return
+	}
+	sess.AgentName = &agentName
+	sess.AgentPID = &pid
+	if _, err := data.UpsertSession(db, *sess); err != nil {
+		slog.Warn("update session agent pid: upsert failed", "worktree", worktreePath, "err", err)
 	}
 }
 

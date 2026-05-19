@@ -2852,3 +2852,179 @@ func TestModel_SessionFocusedMsg_Error_ShowsBestEffortMsg(t *testing.T) {
 	assert.Contains(t, m2.statusMsg, "/wt/a")
 	assert.NotNil(t, cmd, "should return clearMsgCmd even on error")
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6: Non-blocking agents — agent PID persistence (issue #67)
+// ---------------------------------------------------------------------------
+
+// TestUpdateSessionAgentPID_UpdatesSession verifies that updateSessionAgentPID
+// sets AgentPID and AgentName on an existing session row in the DB.
+func TestUpdateSessionAgentPID_UpdatesSession(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	sess := domain.Session{
+		WorktreePath: "/repo/wt1",
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	updateSessionAgentPID(db, "/repo/wt1", "copilot", 12345)
+
+	got, err := data.GetSessionByWorktree(db, "/repo/wt1")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.NotNil(t, got.AgentPID, "AgentPID must be set after updateSessionAgentPID")
+	assert.Equal(t, 12345, *got.AgentPID)
+	require.NotNil(t, got.AgentName, "AgentName must be set after updateSessionAgentPID")
+	assert.Equal(t, "copilot", *got.AgentName)
+}
+
+// TestUpdateSessionAgentPID_NoSession_NoError verifies that updateSessionAgentPID
+// does not panic when no session exists for the given worktree path.
+func TestUpdateSessionAgentPID_NoSession_NoError(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Should not panic — just logs a warning.
+	assert.NotPanics(t, func() {
+		updateSessionAgentPID(db, "/repo/nonexistent", "copilot", 42)
+	})
+}
+
+// TestCheckSessionsCmd_NilDB_DeadShellAliveAgent_KeepsSession verifies that an
+// in-memory session with a dead shell PID but a live agent PID is preserved
+// and transitions to StatusAgentRunning.
+func TestCheckSessionsCmd_NilDB_DeadShellAliveAgent_KeepsSession(t *testing.T) {
+	deadPID := 999999999
+	alivePID := os.Getpid()
+
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{
+			ID:           1,
+			WorktreePath: "/repo/agent-running",
+			ShellPID:     &deadPID,
+			AgentPID:     &alivePID,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC(),
+		},
+	}
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok, "expected sessionStatusUpdatedMsg, got %T", msg)
+	require.Len(t, result.sessions, 1, "session with alive agent PID must be kept")
+	assert.Equal(t, domain.StatusAgentRunning, result.sessions[0].Status,
+		"session must transition to StatusAgentRunning when shell is dead but agent is alive")
+}
+
+// TestCheckSessionsCmd_NilDB_BothDeadPruned verifies that an in-memory session
+// with both shell and agent PIDs dead is removed from the alive list.
+func TestCheckSessionsCmd_NilDB_BothDeadPruned(t *testing.T) {
+	deadPID := 999999999
+	anotherDeadPID := 999999998
+
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{
+			ID:           1,
+			WorktreePath: "/repo/both-dead",
+			ShellPID:     &deadPID,
+			AgentPID:     &anotherDeadPID,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC(),
+		},
+	}
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "session with both dead PIDs must be pruned")
+}
+
+// TestCheckSessionsCmd_DB_DeadShellAliveAgent_KeepsSession verifies that a
+// DB-backed session with a dead shell but a live agent PID is preserved and
+// transitioned to StatusAgentRunning.
+func TestCheckSessionsCmd_DB_DeadShellAliveAgent_KeepsSession(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	deadPID := 999999999
+	alivePID := os.Getpid()
+
+	sess := domain.Session{
+		WorktreePath: "/repo/agent-running",
+		ShellPID:     &deadPID,
+		AgentPID:     &alivePID,
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	require.Len(t, result.sessions, 1, "session with alive agent PID must be kept")
+	assert.Equal(t, domain.StatusAgentRunning, result.sessions[0].Status,
+		"session must transition to StatusAgentRunning when shell is dead but agent is alive")
+
+	// Confirm status was persisted to DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/agent-running")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, domain.StatusAgentRunning, got.Status,
+		"StatusAgentRunning must be written back to the DB")
+}
+
+// TestCheckSessionsCmd_DB_BothDeadPruned verifies that a DB-backed session
+// with both shell and agent PIDs dead is deleted from the DB and excluded from
+// the returned session list.
+func TestCheckSessionsCmd_DB_BothDeadPruned(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	deadPID := 999999999
+	anotherDeadPID := 999999998
+
+	sess := domain.Session{
+		WorktreePath: "/repo/both-dead",
+		ShellPID:     &deadPID,
+		AgentPID:     &anotherDeadPID,
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "session with both dead PIDs must be pruned")
+
+	// Confirm it was deleted from the DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/both-dead")
+	require.NoError(t, err)
+	assert.Nil(t, got, "session with both dead PIDs must be deleted from the DB")
+}
