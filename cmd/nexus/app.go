@@ -451,7 +451,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// If a session already exists for this worktree, focus it instead of
 					// spawning a new one.
 					for _, s := range m.sessions {
-						if s.WorktreePath == selected.Path {
+						if pathsEqual(s.WorktreePath, selected.Path) {
 							return m, m.focusSessionCmd(s)
 						}
 					}
@@ -620,7 +620,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				for _, s := range m.sessions {
-					if s.WorktreePath == selected.Path {
+					if pathsEqual(s.WorktreePath, selected.Path) {
 						return m, m.killSessionCmd(s)
 					}
 				}
