@@ -58,8 +58,7 @@ func TestUpsertSession_Replace(t *testing.T) {
 	s2 := domain.Session{
 		WorktreePath: "/repo/feat",
 		AgentName:    strPtr("copilot"),
-		AgentPID:     intPtr(9999),
-		Status:       domain.StatusAgentRunning,
+		Status:       domain.StatusActive,
 		StartedAt:    time.Now().UTC().Truncate(time.Second),
 	}
 	_, err = data.UpsertSession(db, s2)
@@ -68,11 +67,9 @@ func TestUpsertSession_Replace(t *testing.T) {
 	got, err := data.GetSessionByWorktree(db, "/repo/feat")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, domain.StatusAgentRunning, got.Status)
+	assert.Equal(t, domain.StatusActive, got.Status)
 	require.NotNil(t, got.AgentName)
 	assert.Equal(t, "copilot", *got.AgentName)
-	require.NotNil(t, got.AgentPID)
-	assert.Equal(t, 9999, *got.AgentPID)
 }
 
 // TestGetSessions_Empty verifies that an empty database returns an empty slice
@@ -104,7 +101,7 @@ func TestGetSessions_Multiple(t *testing.T) {
 	s2 := domain.Session{
 		WorktreePath: "/repo/beta",
 		ShellPID:     intPtr(1002),
-		Status:       domain.StatusAgentDone,
+		Status:       domain.StatusActive,
 		StartedAt:    time.Now().UTC().Truncate(time.Second),
 	}
 
@@ -119,7 +116,7 @@ func TestGetSessions_Multiple(t *testing.T) {
 
 	// Ordered DESC by started_at: s2 is newer so comes first.
 	assert.Equal(t, "/repo/beta", sessions[0].WorktreePath)
-	assert.Equal(t, domain.StatusAgentDone, sessions[0].Status)
+	assert.Equal(t, domain.StatusActive, sessions[0].Status)
 	assert.Equal(t, "/repo/alpha", sessions[1].WorktreePath)
 	require.NotNil(t, sessions[1].Prompt)
 	assert.Equal(t, "fix the bug", *sessions[1].Prompt)

@@ -2898,3 +2898,63 @@ func TestModel_SessionFocusedMsg_Error_ShowsBestEffortMsg(t *testing.T) {
 	assert.Contains(t, m2.statusMsg, "/wt/a")
 	assert.NotNil(t, cmd, "should return clearMsgCmd even on error")
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6: Non-blocking agents — session detection (issue #67)
+// ---------------------------------------------------------------------------
+
+// TestCheckSessionsCmd_NilDB_DeadShellPruned verifies that an in-memory session
+// with a dead shell PID is removed from the alive list.
+func TestCheckSessionsCmd_NilDB_DeadShellPruned(t *testing.T) {
+	deadPID := 999999999
+
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{
+			ID:           1,
+			WorktreePath: "/repo/dead-shell",
+			ShellPID:     &deadPID,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC(),
+		},
+	}
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "session with dead shell PID must be pruned")
+}
+
+// TestCheckSessionsCmd_DB_DeadShellPruned verifies that a DB-backed session
+// with a dead shell PID is deleted from the DB and excluded from the returned list.
+func TestCheckSessionsCmd_DB_DeadShellPruned(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	deadPID := 999999999
+	sess := domain.Session{
+		WorktreePath: "/repo/dead-shell",
+		ShellPID:     &deadPID,
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "session with dead shell PID must be pruned")
+
+	got, err := data.GetSessionByWorktree(db, "/repo/dead-shell")
+	require.NoError(t, err)
+	assert.Nil(t, got, "session with dead shell PID must be deleted from the DB")
+}

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,7 +12,27 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf16"
 )
+
+// agentPIDPollTimeout is the maximum time to wait for the PID-file written by
+// the PowerShell process before giving up. 3 s is generous for a local spawn;
+// increase if slow machines miss the window under load.
+const agentPIDPollTimeout = 3 * time.Second
+
+// encodePSCommand encodes a PowerShell command string as UTF-16LE base64,
+// suitable for the powershell.exe -EncodedCommand flag. This sidesteps Windows
+// Terminal's own argument parser, which treats unquoted ';' characters as
+// tab-command separators even when they appear inside a quoted -Command value.
+func encodePSCommand(s string) string {
+	words := utf16.Encode([]rune(s))
+	b := make([]byte, len(words)*2)
+	for i, w := range words {
+		b[2*i] = byte(w)
+		b[2*i+1] = byte(w >> 8)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
 
 // setWindowsCmdLine overrides the raw Windows command line for the new-terminal
 // command so that cmd.exe receives an unescaped string.
@@ -49,7 +70,7 @@ func spawnTerminalWindow(path string) (int, error) {
 		cmd := exec.Command("wt", "-w", "0", "new-tab", "--startingDirectory", path,
 			"powershell", "-NoExit", "-Command", psCmd)
 		if err := cmd.Start(); err == nil {
-			pid := pollPIDFile(pidFile, 3*time.Second)
+			pid := pollPIDFile(pidFile, agentPIDPollTimeout)
 			os.Remove(pidFile)
 			return pid, nil
 		}
@@ -61,7 +82,7 @@ func spawnTerminalWindow(path string) (int, error) {
 	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-session-%d.pid", time.Now().UnixNano()))
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, "", pidFile, "windows"); ok {
 		if err := tabCmd.Start(); err == nil {
-			pid := pollPIDFile(pidFile, 3*time.Second)
+			pid := pollPIDFile(pidFile, agentPIDPollTimeout)
 			os.Remove(pidFile)
 			return pid, nil
 		}
@@ -94,6 +115,26 @@ func spawnTerminalWindow(path string) (int, error) {
 // current terminal emulator when possible, falling back to a new cmd.exe window.
 // The TUI is not suspended — nexus keeps running in the original terminal.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
+	// Windows Terminal: use the PID-file trick to capture the real PowerShell PID
+	// (wt.exe exits immediately after launching the tab, so tabCmd.Process.Pid
+	// would be dead by the time the health-check poller runs).
+	if os.Getenv("WT_SESSION") != "" {
+		pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-agent-%d.pid", time.Now().UnixNano()))
+		psCmd := fmt.Sprintf(
+			`[System.Diagnostics.Process]::GetCurrentProcess().Id | Set-Content -LiteralPath '%s'; %s`,
+			pidFile, agentCmd,
+		)
+		cmd := exec.Command("wt", "-w", "0", "new-tab", "--startingDirectory", path,
+			"powershell", "-NoExit", "-EncodedCommand", encodePSCommand(psCmd))
+		if err := cmd.Start(); err == nil {
+			pid := pollPIDFile(pidFile, agentPIDPollTimeout)
+			os.Remove(pidFile)
+			return pid, nil
+		}
+		os.Remove(pidFile)
+		// Fall through to standalone window on error.
+	}
+
 	// Prefer a new tab when the running terminal supports it.
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, agentCmd, "", "windows"); ok {
 		if err := tabCmd.Start(); err == nil {

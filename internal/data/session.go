@@ -22,12 +22,11 @@ func UpsertSession(db *DB, s domain.Session) (int64, error) {
 
 	res, err := db.Conn.Exec(
 		`INSERT OR REPLACE INTO active_sessions
-		 (worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (worktree_path, shell_pid, agent_name, prompt, status, started_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		s.WorktreePath,
 		s.ShellPID,
 		s.AgentName,
-		s.AgentPID,
 		s.Prompt,
 		string(s.Status),
 		startedAt,
@@ -47,7 +46,7 @@ func UpsertSession(db *DB, s domain.Session) (int64, error) {
 // An empty database returns an empty slice and no error.
 func GetSessions(db *DB) ([]domain.Session, error) {
 	rows, err := db.Conn.Query(
-		`SELECT id, worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at, updated_at
+		`SELECT id, worktree_path, shell_pid, agent_name, prompt, status, started_at, updated_at
 		 FROM active_sessions
 		 ORDER BY started_at DESC`,
 	)
@@ -77,7 +76,7 @@ func GetSessions(db *DB) ([]domain.Session, error) {
 // when no row matches.
 func GetSessionByWorktree(db *DB, worktreePath string) (*domain.Session, error) {
 	row := db.Conn.QueryRow(
-		`SELECT id, worktree_path, shell_pid, agent_name, agent_pid, prompt, status, started_at, updated_at
+		`SELECT id, worktree_path, shell_pid, agent_name, prompt, status, started_at, updated_at
 		 FROM active_sessions
 		 WHERE worktree_path = ?`,
 		worktreePath,
@@ -123,7 +122,6 @@ func scanSession(s rowScanner) (domain.Session, error) {
 		sess      domain.Session
 		shellPID  sql.NullInt64
 		agentName sql.NullString
-		agentPID  sql.NullInt64
 		prompt    sql.NullString
 		startedAt sql.NullString
 		updatedAt sql.NullString
@@ -133,7 +131,6 @@ func scanSession(s rowScanner) (domain.Session, error) {
 		&sess.WorktreePath,
 		&shellPID,
 		&agentName,
-		&agentPID,
 		&prompt,
 		&sess.Status,
 		&startedAt,
@@ -148,10 +145,6 @@ func scanSession(s rowScanner) (domain.Session, error) {
 	}
 	if agentName.Valid {
 		sess.AgentName = &agentName.String
-	}
-	if agentPID.Valid {
-		v := int(agentPID.Int64)
-		sess.AgentPID = &v
 	}
 	if prompt.Valid {
 		sess.Prompt = &prompt.String
