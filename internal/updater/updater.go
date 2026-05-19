@@ -155,7 +155,7 @@ func SelfUpdate(ctx context.Context, tagName string) error {
 
 	if err := downloadToFile(ctx, url, archiveFile); err != nil {
 		archiveFile.Close()
-		return fmt.Errorf("self-update: download: %w", err)
+		return fmt.Errorf("self-update: download %s: %w", url, err)
 	}
 	archiveFile.Close()
 
