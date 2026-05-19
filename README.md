@@ -147,9 +147,9 @@ Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
 1. `cd` into any Git repository
 2. Run `nexus`
 3. Nexus opens in the **Worktrees** view — use `j`/`k` to navigate the list
-4. Press `Ctrl+N` to create a new worktree (optionally linked to a GitHub issue)
+4. Press `i` to switch to the Issues view, select an issue, and press `Enter` to create a new worktree for it
 5. Press `Enter` or `s` to open a shell inside the selected worktree
-6. Press `a`, `c`, or `Space` to launch an AI agent in that worktree's context
+6. Press `a`, `c`, `f`, or `Space` to launch an AI agent in that worktree's context
 
 ---
 
@@ -168,9 +168,12 @@ Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
 
 | Key | Action |
 |---|---|
-| `Ctrl+N` | Create new worktree |
+| `Enter` (Issues view) | Create worktree from selected issue |
+| `Enter` (PRs view) | Checkout PR into a new worktree |
+| `Enter` (Worktrees view) | Open / focus shell in worktree |
 | `Ctrl+D` | Delete selected worktree |
 | `s` | Open shell in worktree |
+| `x` | Kill session and close terminal tab |
 
 ### AI Agents
 
@@ -178,6 +181,7 @@ Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
 |---|---|
 | `a` | Spawn Claude Code |
 | `c` | Spawn GitHub Copilot |
+| `f` | Spawn Aider |
 | `Space` | Unified agent launcher (shows all agents and availability) |
 
 ### Views
@@ -187,8 +191,7 @@ Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
 | `w` / `W` | Worktrees view |
 | `i` / `I` | Issues view (with sub-issue hierarchy!) |
 | `p` / `P` | PRs view |
-| `S` | Active Sessions — mission control for your worktrees |
-| `t` | Cycle themes (Digital Noir → Matrix → Light) |
+| `t` | Open settings (theme, sync config, AI agents) |
 
 ### Global
 
@@ -238,7 +241,10 @@ worktree_root = "../worktrees"
 
 ## Active Sessions
 
-Press **`S`** to open the Sessions view — your real-time mission control for everything happening across worktrees. See which agents are running, which shells are alive, and which worktrees are just sitting there pretending to be productive.
+Active sessions are displayed inline in the **Worktrees** view — no separate view needed. See which agents are running, which shells are alive, and which worktrees are just sitting there pretending to be productive.
+
+- **`s`** — open a new shell session in the selected worktree
+- **`x`** — kill the active session for the selected worktree
 
 No more `ps aux | grep claude` crimes. It's all in one place.
 
@@ -286,7 +292,7 @@ The binary must be named `claude` (or set `claude_binary` to its full path). Ena
 pip install aider-chat
 ```
 
-Set `aider_enabled = true` in `~/.nexus/config.toml`. Trigger in Nexus: **`Space`** → select Aider in the unified launcher.
+Set `aider_enabled = true` in `~/.nexus/config.toml`. Trigger in Nexus: **`f`** for direct launch, or **`Space`** → select Aider in the unified launcher.
 
 ---
 
