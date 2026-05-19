@@ -2587,20 +2587,48 @@ func TestSessionStatusUpdatedMsg_Empty(t *testing.T) {
 	assert.Empty(t, m2.sessions)
 }
 
-// TestCheckSessionsCmd_NilDB verifies that checkSessionsCmd is a no-op when db is nil.
+// TestCheckSessionsCmd_NilDB verifies that checkSessionsCmd performs PID health
+// checks on in-memory sessions even when db is nil, keeping live sessions and
+// dropping stale ones rather than blindly preserving all entries.
 func TestCheckSessionsCmd_NilDB(t *testing.T) {
 	m := NewModel()
 	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	m.sessions = []domain.Session{
-		{ID: 1, WorktreePath: "/repo/existing", Status: domain.StatusActive},
+		{ID: 1, WorktreePath: "/repo/existing", Status: domain.StatusActive, StartedAt: time.Now().UTC()},
 	}
 	cmd := m.checkSessionsCmd()
 	require.NotNil(t, cmd)
 	msg := cmd()
 	result, ok := msg.(sessionStatusUpdatedMsg)
 	require.True(t, ok, "expected sessionStatusUpdatedMsg, got %T", msg)
+	// Session has no ShellPID and is not dead/old, so it must be preserved.
 	require.Len(t, result.sessions, 1)
 	assert.Equal(t, "/repo/existing", result.sessions[0].WorktreePath)
+}
+
+// TestCheckSessionsCmd_NilDB_PrunesDeadPID verifies that checkSessionsCmd drops
+// in-memory sessions whose shell PID is no longer alive when db is nil.
+// This is the fix for the bug where closed terminals kept showing as active.
+func TestCheckSessionsCmd_NilDB_PrunesDeadPID(t *testing.T) {
+	deadPID := 999999999 // extremely unlikely to be a live PID
+
+	m := NewModel()
+	m.copilotDBPath = ""
+	m.sessions = []domain.Session{
+		{
+			ID:           1,
+			WorktreePath: "/repo/dead",
+			ShellPID:     &deadPID,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC(),
+		},
+	}
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok, "expected sessionStatusUpdatedMsg, got %T", msg)
+	assert.Empty(t, result.sessions, "session with dead PID must be pruned from in-memory list")
 }
 
 // TestCheckSessionsCmd_EmptyDB verifies that checkSessionsCmd returns empty sessions when DB is empty.
@@ -2857,6 +2885,30 @@ func TestModel_Enter_NoSession_TriggersSpawn(t *testing.T) {
 
 	// A Cmd must be returned — it is the spawn command.
 	assert.NotNil(t, cmd, "Enter on worktree with no session should return a spawn Cmd")
+}
+
+// TestModel_Enter_StaleSession_TriggersSpawn verifies that pressing Enter on a
+// worktree whose only tracked session has a dead shell PID spawns a new terminal
+// rather than calling focusSessionCmd (which would just show a misleading toast).
+func TestModel_Enter_StaleSession_TriggersSpawn(t *testing.T) {
+	worktreePath := "/home/user/repos/wt1"
+	deadPID := 999999999 // extremely unlikely to be a real running PID
+
+	m := NewModel()
+	m.copilotDBPath = ""
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	// Session is stale: has a PID that's dead.
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &deadPID, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Must return a spawn Cmd, not nil (which would mean nothing happened).
+	assert.NotNil(t, cmd, "Enter on worktree with stale session should return a spawn Cmd")
 }
 
 // TestModel_X_WithSession_TriggersKill verifies that pressing x on a worktree

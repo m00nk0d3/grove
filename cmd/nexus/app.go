@@ -448,12 +448,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			default:
 				if selected, ok := m.selectedWorktree(); ok {
-					// If a session already exists for this worktree, focus it instead of
-					// spawning a new one.
+					// If a live session already exists for this worktree, focus it
+					// instead of spawning a new one. Skip any stale entry whose
+					// shell PID is confirmed dead (and whose agent PID is also
+					// gone), so that closed terminals don't block re-spawning.
 					for _, s := range m.sessions {
-						if pathsEqual(s.WorktreePath, selected.Path) {
-							return m, m.focusSessionCmd(s)
+						if !pathsEqual(s.WorktreePath, selected.Path) {
+							continue
 						}
+						if s.ShellPID != nil && !pidAlive(*s.ShellPID) {
+							agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
+							if !agentAlive {
+								break // stale — fall through to spawn
+							}
+						}
+						return m, m.focusSessionCmd(s)
 					}
 					return m, m.spawnSessionCmd(selected.Path)
 				}
@@ -1589,8 +1598,30 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 
 		// Part 1: reconcile nexus-spawned shell sessions from the nexus DB.
 		if db == nil {
-			// No nexus DB — preserve whatever sessions are already in memory.
-			alive = append(alive, current...)
+			// No nexus DB — perform PID health checks on in-memory sessions so
+			// that terminals the user has closed are removed rather than kept
+			// as stale badges that block re-spawning.
+			for _, s := range current {
+				if s.ShellPID == nil {
+					if s.Status == domain.StatusDead || time.Since(s.StartedAt) > 24*time.Hour {
+						continue
+					}
+					alive = append(alive, s)
+					continue
+				}
+				shellAlive := pidAlive(*s.ShellPID)
+				agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
+				if shellAlive {
+					alive = append(alive, s)
+					continue
+				}
+				if agentAlive {
+					s.Status = domain.StatusAgentRunning
+					alive = append(alive, s)
+					continue
+				}
+				// Both dead — drop from alive (prunes the stale in-memory entry).
+			}
 		} else {
 			all, err := data.GetSessions(db)
 			if err != nil {
