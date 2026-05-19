@@ -199,6 +199,11 @@ type Model struct {
 	// DB is optional; when non-nil, agent runs are logged to agent_history.
 	db *data.DB
 
+	// copilotDBPath is the path to the Copilot CLI session-store database.
+	// Defaults to ~/.copilot/session-store.db. Used to surface Copilot
+	// sessions as badges even when they weren't launched from Nexus.
+	copilotDBPath string
+
 	// sessions holds the last-known list of active terminal sessions.
 	sessions []domain.Session
 
@@ -234,21 +239,20 @@ func NewModel() *Model {
 	}
 
 	return &Model{
-		Config:    cfg,
-		themeIdx:  themeIdx,
-		statusErr: configErr,
-		focused:   panelList,
+		Config:        cfg,
+		themeIdx:      themeIdx,
+		statusErr:     configErr,
+		focused:       panelList,
+		copilotDBPath: data.DefaultCopilotDBPath(),
 	}
 }
 
 // Init initializes the model and triggers an initial worktree list load and GitHub sync.
 func (m *Model) Init() tea.Cmd {
 	m.syncing = true
-	cmds := []tea.Cmd{m.refreshWorktreesCmd(), m.syncGitHubCmd()}
-	if m.db != nil {
-		cmds = append(cmds, sessionTickCmd())
-	}
-	return tea.Batch(cmds...)
+	// Always start the session tick — it handles both nexus-spawned shell sessions
+	// (requires m.db) and externally-started Copilot CLI sessions (no DB needed).
+	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(), sessionTickCmd())
 }
 
 // Update handles incoming messages and returns an updated model and command.
@@ -600,6 +604,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.statusErr = fmt.Sprintf("Failed to spawn session: %v", msg.err)
 			return m, clearErrorCmd()
+		}
+		// Immediately reflect the new session in m.sessions so the badge appears
+		// without waiting for the next health-check tick.
+		found := false
+		for i := range m.sessions {
+			if m.sessions[i].WorktreePath == msg.session.WorktreePath {
+				m.sessions[i] = msg.session
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.sessions = append(m.sessions, msg.session)
 		}
 		pid := 0
 		if msg.session.ShellPID != nil {
@@ -1215,57 +1232,95 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 	}
 }
 
-// checkSessionsCmd reads all tracked sessions from the DB, checks whether each
-// PID is still alive, updates session status for agent-only survivors, and
-// removes fully dead sessions. Returns sessionStatusUpdatedMsg with the updated list.
-// When db is nil it is a no-op that returns the current sessions unchanged.
+// checkSessionsCmd reads all tracked sessions from the nexus DB, checks whether
+// each PID is still alive, and also merges active Copilot CLI sessions discovered
+// from the Copilot session-store database. Returns sessionStatusUpdatedMsg with
+// the combined live session list.
 func (m *Model) checkSessionsCmd() tea.Cmd {
 	db := m.db
 	current := m.sessions
+	copilotDBPath := m.copilotDBPath
 	return func() tea.Msg {
-		if db == nil {
-			return sessionStatusUpdatedMsg{sessions: current}
-		}
-		all, err := data.GetSessions(db)
-		if err != nil {
-			slog.Warn("session health check: failed to read sessions from DB", "err", err)
-			return sessionStatusUpdatedMsg{sessions: current}
-		}
 		var alive []domain.Session
-		for _, s := range all {
-			if s.ShellPID == nil {
-				// No PID to check — prune dead status rows, keep everything else.
-				if s.Status == domain.StatusDead {
+
+		// Part 1: reconcile nexus-spawned shell sessions from the nexus DB.
+		if db == nil {
+			// No nexus DB — preserve whatever sessions are already in memory.
+			alive = append(alive, current...)
+		} else {
+			all, err := data.GetSessions(db)
+			if err != nil {
+				slog.Warn("session health check: failed to read sessions from DB", "err", err)
+				alive = append(alive, current...)
+			} else {
+				for _, s := range all {
+					if s.ShellPID == nil {
+						// No PID to check — prune dead status rows, keep everything else.
+						if s.Status == domain.StatusDead {
+							if err := data.DeleteSession(db, s.ID); err != nil {
+								slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
+							}
+							continue
+						}
+						alive = append(alive, s)
+						continue
+					}
+					shellAlive := pidAlive(*s.ShellPID)
+					agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
+
+					if shellAlive {
+						alive = append(alive, s)
+						continue
+					}
+					// Shell is dead.
+					if agentAlive {
+						// Agent is still running — transition to agent_running.
+						s.Status = domain.StatusAgentRunning
+						if _, err := data.UpsertSession(db, s); err != nil {
+							slog.Warn("session health check: failed to update session status", "id", s.ID, "err", err)
+						}
+						alive = append(alive, s)
+						continue
+					}
+					// Both are dead — remove from DB.
 					if err := data.DeleteSession(db, s.ID); err != nil {
 						slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
 					}
-					continue
 				}
-				alive = append(alive, s)
-				continue
-			}
-			shellAlive := pidAlive(*s.ShellPID)
-			agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
-
-			if shellAlive {
-				alive = append(alive, s)
-				continue
-			}
-			// Shell is dead.
-			if agentAlive {
-				// Agent is still running — transition to agent_running.
-				s.Status = domain.StatusAgentRunning
-				if _, err := data.UpsertSession(db, s); err != nil {
-					slog.Warn("session health check: failed to update session status", "id", s.ID, "err", err)
-				}
-				alive = append(alive, s)
-				continue
-			}
-			// Both are dead — remove from DB.
-			if err := data.DeleteSession(db, s.ID); err != nil {
-				slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
 			}
 		}
+
+		// Part 2: merge externally-started Copilot CLI sessions.
+		// These are sessions visible in the Copilot session-store that were not
+		// launched by Nexus. We show them as agent_running badges on the matching
+		// worktree row. Sessions older than 8 hours are ignored.
+		if copilotDBPath != "" {
+			copilotSessions, err := data.GetActiveCopilotSessions(copilotDBPath, 8*time.Hour)
+			if err != nil {
+				slog.Warn("session health check: failed to read copilot sessions", "err", err)
+			} else {
+				for _, cs := range copilotSessions {
+					// If nexus already tracks a session for this worktree, enrich it
+					// with agent info rather than adding a duplicate entry.
+					matched := false
+					for i := range alive {
+						if strings.EqualFold(alive[i].WorktreePath, cs.WorktreePath) {
+							if alive[i].AgentName == nil {
+								alive[i].AgentName = cs.AgentName
+								alive[i].Prompt = cs.Prompt
+								alive[i].Status = domain.StatusAgentRunning
+							}
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						alive = append(alive, cs)
+					}
+				}
+			}
+		}
+
 		if alive == nil {
 			alive = []domain.Session{}
 		}
