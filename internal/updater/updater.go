@@ -126,7 +126,11 @@ func DownloadURL(tagName string) string {
 	if runtime.GOOS == "windows" {
 		ext = "zip"
 	}
-	filename := fmt.Sprintf("nexus_%s_%s_%s.%s", tagName, runtime.GOOS, runtime.GOARCH, ext)
+	// GoReleaser's name_template uses {{ .Version }} which strips the "v" prefix,
+	// so the archive filename is e.g. "nexus_1.2.3_linux_amd64.tar.gz" while the
+	// release directory (tag) path still uses the full "v1.2.3".
+	version := strings.TrimPrefix(tagName, "v")
+	filename := fmt.Sprintf("nexus_%s_%s_%s.%s", version, runtime.GOOS, runtime.GOARCH, ext)
 	return fmt.Sprintf("%s/%s/%s", githubReleaseBase, tagName, filename)
 }
 

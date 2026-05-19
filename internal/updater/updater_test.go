@@ -120,7 +120,7 @@ func TestDownloadURL(t *testing.T) {
 }
 
 func TestFetchChecksum_Success(t *testing.T) {
-	const filename = "nexus_v1.2.3_linux_amd64.tar.gz"
+	const filename = "nexus_1.2.3_linux_amd64.tar.gz"
 	const wantHash = "abc123def456"
 	body := wantHash + "  " + filename + "\ndeadbeef  other_file.tar.gz\n"
 
@@ -149,7 +149,7 @@ func TestFetchChecksum_NotFound(t *testing.T) {
 	githubReleaseBase = ts.URL
 	defer func() { githubReleaseBase = old }()
 
-	_, err := fetchChecksum(t.Context(), "v1.2.3", "nexus_v1.2.3_linux_amd64.tar.gz")
+	_, err := fetchChecksum(t.Context(), "v1.2.3", "nexus_1.2.3_linux_amd64.tar.gz")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
 }
@@ -164,7 +164,7 @@ func TestFetchChecksum_MissingEntry(t *testing.T) {
 	githubReleaseBase = ts.URL
 	defer func() { githubReleaseBase = old }()
 
-	_, err := fetchChecksum(t.Context(), "v1.2.3", "nexus_v1.2.3_linux_amd64.tar.gz")
+	_, err := fetchChecksum(t.Context(), "v1.2.3", "nexus_1.2.3_linux_amd64.tar.gz")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no entry for")
 }
