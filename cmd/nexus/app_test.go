@@ -2472,7 +2472,7 @@ func TestBuildNewTerminalCmd(t *testing.T) {
 			goos:     "linux",
 			shellEnv: "/bin/bash",
 			wantExe:  "xterm",
-			wantArgs: []string{"xterm", "-e", `cd "/home/dev/repo/wt"; /bin/bash`},
+			wantArgs: []string{"xterm", "-e", "cd '/home/dev/repo/wt'; /bin/bash"},
 		},
 	}
 
@@ -2957,4 +2957,98 @@ func TestCheckSessionsCmd_DB_DeadShellPruned(t *testing.T) {
 	got, err := data.GetSessionByWorktree(db, "/repo/dead-shell")
 	require.NoError(t, err)
 	assert.Nil(t, got, "session with dead shell PID must be deleted from the DB")
+}
+
+// TestPollPIDFile_HappyPath verifies that pollPIDFile returns the PID when
+// the file already contains a valid integer before the first poll.
+func TestPollPIDFile_HappyPath(t *testing.T) {
+	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Remove(f.Name()) })
+
+	_, err = fmt.Fprintf(f, "12345\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	pid := pollPIDFile(f.Name(), 500*time.Millisecond)
+	assert.Equal(t, 12345, pid)
+}
+
+// TestPollPIDFile_DelayedWrite verifies that pollPIDFile waits and returns
+// the PID when the file is written after a short delay.
+func TestPollPIDFile_DelayedWrite(t *testing.T) {
+	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	require.NoError(t, err)
+	pidPath := f.Name()
+	require.NoError(t, f.Close())
+	require.NoError(t, os.Remove(pidPath)) // start with no file
+	t.Cleanup(func() { os.Remove(pidPath) })
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = os.WriteFile(pidPath, []byte("99999\n"), 0600)
+	}()
+
+	pid := pollPIDFile(pidPath, time.Second)
+	assert.Equal(t, 99999, pid)
+}
+
+// TestPollPIDFile_Timeout verifies that pollPIDFile returns 0 when the
+// file never appears within the timeout.
+func TestPollPIDFile_Timeout(t *testing.T) {
+	pid := pollPIDFile(os.TempDir()+"/nexus-pid-test-nonexistent.pid", 200*time.Millisecond)
+	assert.Equal(t, 0, pid, "should return 0 on timeout")
+}
+
+// TestPollPIDFile_InvalidContent verifies that pollPIDFile returns 0 when
+// the file exists but does not contain a valid positive integer.
+func TestPollPIDFile_InvalidContent(t *testing.T) {
+	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Remove(f.Name()) })
+
+	_, err = fmt.Fprintf(f, "not-a-pid\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	pid := pollPIDFile(f.Name(), 200*time.Millisecond)
+	assert.Equal(t, 0, pid, "invalid content should time out and return 0")
+}
+
+// TestShellSingleQuote verifies that shellSingleQuote wraps paths in single
+// quotes and escapes embedded single-quotes with the '\” idiom.
+func TestShellSingleQuote(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"/simple/path", "'/simple/path'"},
+		{"/path with spaces", "'/path with spaces'"},
+		{"/path/with'quote", `'/path/with'\''quote'`},
+		{"", "''"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, shellSingleQuote(tt.input))
+		})
+	}
+}
+
+// TestEscapeAppleScriptStr verifies that escapeAppleScriptStr escapes
+// backslashes and double-quotes for safe embedding in AppleScript strings.
+func TestEscapeAppleScriptStr(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{`aider file.go`, `aider file.go`},
+		{`aider "file.go"`, `aider \"file.go\"`},
+		{`aider back\slash`, `aider back\\slash`},
+		{`aider "a" 'b'`, `aider \"a\" 'b'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, escapeAppleScriptStr(tt.input))
+		})
+	}
 }

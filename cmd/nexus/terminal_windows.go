@@ -143,10 +143,14 @@ func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
 		// Fall through to new window on error.
 	}
 
-	// Fall back: open a new standalone cmd.exe window via PowerShell.
+	// Fall back: open a new standalone PowerShell window.
+	// -EncodedCommand avoids injection from agentCmd or path containing
+	// single-quotes, ampersands, or other characters PowerShell would parse.
+	innerCmd := fmt.Sprintf("Set-Location '%s'\n%s",
+		strings.ReplaceAll(path, "'", "''"), agentCmd)
 	psCmd := fmt.Sprintf(
-		`(Start-Process -FilePath 'cmd' -ArgumentList '/K','cd /d "%s" & %s' -PassThru).Id`,
-		path, agentCmd,
+		`(Start-Process -FilePath 'powershell' -ArgumentList '-NoExit','-EncodedCommand','%s' -PassThru).Id`,
+		encodePSCommand(innerCmd),
 	)
 	out, err := exec.Command(
 		"powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd,

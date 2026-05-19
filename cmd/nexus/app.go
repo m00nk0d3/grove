@@ -1360,14 +1360,14 @@ func buildNewTerminalCmd(path, pidFile, goos string) *exec.Cmd {
 	case "darwin":
 		if pidFile != "" {
 			return exec.Command("osascript", "-e",
-				fmt.Sprintf(`tell app "Terminal" to do script "echo $$ > \"%s\"; cd %q"`, pidFile, path))
+				fmt.Sprintf(`tell app "Terminal" to do script "echo $$ > \"%s\"; cd %s"`, pidFile, shellSingleQuote(path)))
 		}
 		return exec.Command("open", "-a", "Terminal", path)
 	default:
 		if term := os.Getenv("TERMINAL"); term != "" {
 			if pidFile != "" {
 				return exec.Command(term, "-e", "sh", "-c",
-					fmt.Sprintf(`echo $$ > "%s"; cd %q; exec "${SHELL:-sh}"`, pidFile, path))
+					fmt.Sprintf(`echo $$ > "%s"; cd %s; exec "${SHELL:-sh}"`, pidFile, shellSingleQuote(path)))
 			}
 			return exec.Command(term, "--working-directory="+path)
 		}
@@ -1379,16 +1379,16 @@ func buildNewTerminalCmd(path, pidFile, goos string) *exec.Cmd {
 			if _, err := exec.LookPath(candidate); err == nil {
 				if pidFile != "" {
 					return exec.Command(candidate, "-e", "sh", "-c",
-						fmt.Sprintf(`echo $$ > "%s"; cd %q; exec "${SHELL:-sh}"`, pidFile, path))
+						fmt.Sprintf(`echo $$ > "%s"; cd %s; exec "${SHELL:-sh}"`, pidFile, shellSingleQuote(path)))
 				}
-				return exec.Command(candidate, "-e", fmt.Sprintf("cd %q; %s", path, shell))
+				return exec.Command(candidate, "-e", fmt.Sprintf("cd %s; %s", shellSingleQuote(path), shell))
 			}
 		}
 		if pidFile != "" {
 			return exec.Command("xterm", "-e", "sh", "-c",
-				fmt.Sprintf(`echo $$ > "%s"; cd %q; exec "${SHELL:-sh}"`, pidFile, path))
+				fmt.Sprintf(`echo $$ > "%s"; cd %s; exec "${SHELL:-sh}"`, pidFile, shellSingleQuote(path)))
 		}
-		return exec.Command("xterm", "-e", fmt.Sprintf("cd %q; %s", path, shell))
+		return exec.Command("xterm", "-e", fmt.Sprintf("cd %s; %s", shellSingleQuote(path), shell))
 	}
 }
 
@@ -1402,7 +1402,7 @@ func buildNewTerminalCmd(path, pidFile, goos string) *exec.Cmd {
 //   - Linux: Ghostty ($TERM=xterm-ghostty) → Alacritty ($TERM=alacritty) →
 //     Kitty ($KITTY_WINDOW_ID, no remote-control) → $TERMINAL → xterm
 func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
-	script := fmt.Sprintf("cd %q && %s", path, agentCmd)
+	script := fmt.Sprintf("cd %s && %s", shellSingleQuote(path), agentCmd)
 	switch goos {
 	case "darwin":
 		switch os.Getenv("TERM_PROGRAM") {
@@ -1412,7 +1412,7 @@ func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
 		}
 		// macOS fallback: open a new Terminal.app window via osascript.
 		return exec.Command("osascript", "-e",
-			fmt.Sprintf(`tell app "Terminal" to do script "cd %q && %s"`, path, agentCmd))
+			fmt.Sprintf(`tell app "Terminal" to do script "cd %s && %s"`, shellSingleQuote(path), escapeAppleScriptStr(agentCmd)))
 	default: // Linux
 		switch os.Getenv("TERM") {
 		case "xterm-ghostty":
@@ -1584,6 +1584,23 @@ func shellQuote(s string) string {
 	s = strings.ReplaceAll(s, `$`, `\$`)
 	s = strings.ReplaceAll(s, "`", "\\`")
 	return `"` + s + `"`
+}
+
+// shellSingleQuote returns s wrapped in POSIX single quotes, safe for use in
+// any sh/bash command string and inside AppleScript do-script double-quoted
+// strings (single quotes are transparent to AppleScript's string parser).
+// Embedded single-quotes are escaped with the '\” idiom.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// escapeAppleScriptStr escapes s for embedding inside an AppleScript
+// double-quoted string. Backslashes and double-quotes are escaped so
+// AppleScript does not interpret them as string delimiters.
+func escapeAppleScriptStr(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
 }
 
 // spawnSessionCmd opens a new terminal window at worktreePath in the background
