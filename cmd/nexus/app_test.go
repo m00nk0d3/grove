@@ -3431,3 +3431,37 @@ func TestEscapeAppleScriptStr(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Regression: update modal must not swallow background sync messages
+// ---------------------------------------------------------------------------
+
+// TestUpdateModal_DoesNotSwallowGithubSyncedMsg verifies that when the update
+// modal is open, a githubSyncedMsg still populates m.issues and m.prs.
+// Previously the modal's default case consumed all non-modal messages,
+// silently discarding the sync result and leaving the issues view empty.
+func TestUpdateModal_DoesNotSwallowGithubSyncedMsg(t *testing.T) {
+	m := NewModel()
+	m.activeModal = modal.NewUpdateModal("v0.1.0", "v0.2.0", "", "", 0)
+
+	issues := []domain.Issue{{Number: 1, Title: "fix everything"}}
+	prs := []domain.PullRequest{{Number: 42, Title: "big PR"}}
+
+	// Fire githubSyncedMsg while the update modal is open.
+	updated, _ := m.Update(githubSyncedMsg{issues: issues, prs: prs, syncedAt: time.Now()})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	// The modal should still be open (key message wasn't sent).
+	assert.NotNil(t, m2.activeModal, "update modal should still be open")
+
+	// Drain the debounce render message so pendingSync is applied.
+	updated2, _ := m2.Update(debouncedRenderMsg{})
+	m3, ok := updated2.(*Model)
+	require.True(t, ok)
+
+	require.Len(t, m3.issues, 1, "issues must be populated even when modal is open")
+	assert.Equal(t, 1, m3.issues[0].Number)
+	require.Len(t, m3.prs, 1, "prs must be populated even when modal is open")
+	assert.Equal(t, 42, m3.prs[0].Number)
+}

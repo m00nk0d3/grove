@@ -390,11 +390,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		default:
-			updated, cmd := m.activeModal.Update(msg)
-			if next, ok := updated.(modal.Modal); ok {
-				m.activeModal = next
+			// Only key events are consumed by the modal. Non-key messages
+			// (e.g. githubSyncedMsg, debouncedRenderMsg, syncTickMsg) must fall
+			// through to the main switch so background events are never silently
+			// swallowed while a modal is open.
+			if _, ok := msg.(tea.KeyMsg); ok {
+				updated, cmd := m.activeModal.Update(msg)
+				if next, ok := updated.(modal.Modal); ok {
+					m.activeModal = next
+				}
+				return m, cmd
 			}
-			return m, cmd
 		}
 	}
 
