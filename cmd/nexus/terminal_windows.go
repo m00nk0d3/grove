@@ -94,6 +94,28 @@ func spawnTerminalWindow(path string) (int, error) {
 // current terminal emulator when possible, falling back to a new cmd.exe window.
 // The TUI is not suspended — nexus keeps running in the original terminal.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
+	// Windows Terminal: use the PID-file trick to capture the real PowerShell PID
+	// (wt.exe exits immediately after launching the tab, so tabCmd.Process.Pid
+	// would be dead by the time the health-check poller runs).
+	if os.Getenv("WT_SESSION") != "" {
+		pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-agent-%d.pid", time.Now().UnixNano()))
+		psCmd := fmt.Sprintf(
+			`[System.Diagnostics.Process]::GetCurrentProcess().Id | Set-Content -LiteralPath '%s'; %s`,
+			pidFile, agentCmd,
+		)
+		cmd := exec.Command("wt", "-w", "0", "new-tab", "--startingDirectory", path,
+			"powershell", "-NoExit", "-Command", psCmd)
+		if err := cmd.Start(); err == nil {
+			pid := pollPIDFile(pidFile, 3*time.Second)
+			os.Remove(pidFile)
+			if pid > 0 {
+				return pid, nil
+			}
+		}
+		os.Remove(pidFile)
+		// Fall through to standalone window on error.
+	}
+
 	// Prefer a new tab when the running terminal supports it.
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, agentCmd, "", "windows"); ok {
 		if err := tabCmd.Start(); err == nil {
