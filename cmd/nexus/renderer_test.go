@@ -1933,3 +1933,281 @@ func TestBuildPRHint_NonIssueBranch(t *testing.T) {
 hint := buildPRHint("main", []domain.Issue{}, []domain.Worktree{})
 assert.Empty(t, hint)
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 (Issue #65): Session badges, header count, context panel session block
+// ---------------------------------------------------------------------------
+
+func ptr[T any](v T) *T { return &v }
+
+// TestSessionBadge_AllStates verifies sessionBadge returns correct badge text
+// for every session status, including the nil (no session) case.
+func TestSessionBadge_AllStates(t *testing.T) {
+	tests := []struct {
+		name    string
+		session *domain.Session
+		want    string
+	}{
+		{
+			name:    "nil session returns empty string",
+			session: nil,
+			want:    "",
+		},
+		{
+			name:    "StatusActive returns [shell]",
+			session: &domain.Session{Status: domain.StatusActive},
+			want:    "[shell]",
+		},
+		{
+			name: "StatusAgentRunning returns [shell][agent running]",
+			session: &domain.Session{
+				Status:    domain.StatusAgentRunning,
+				AgentName: ptr("copilot"),
+			},
+			want: "[shell][copilot running]",
+		},
+		{
+			name: "StatusAgentRunning with no agent name uses 'agent'",
+			session: &domain.Session{
+				Status: domain.StatusAgentRunning,
+			},
+			want: "[shell][agent running]",
+		},
+		{
+			name: "StatusAgentDone returns [shell][done agent]",
+			session: &domain.Session{
+				Status:    domain.StatusAgentDone,
+				AgentName: ptr("claude"),
+			},
+			want: "[shell][done claude]",
+		},
+		{
+			name: "StatusAgentFailed returns [shell][failed agent]",
+			session: &domain.Session{
+				Status:    domain.StatusAgentFailed,
+				AgentName: ptr("aider"),
+			},
+			want: "[shell][failed aider]",
+		},
+		{
+			name:    "StatusDead returns [dead]",
+			session: &domain.Session{Status: domain.StatusDead},
+			want:    "[dead]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sessionBadge(tt.session)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestCountActiveSessions verifies that only non-dead sessions are counted.
+func TestCountActiveSessions(t *testing.T) {
+	sessions := []domain.Session{
+		{Status: domain.StatusActive},
+		{Status: domain.StatusAgentRunning},
+		{Status: domain.StatusAgentDone},
+		{Status: domain.StatusDead},
+	}
+	assert.Equal(t, 3, countActiveSessions(sessions))
+	assert.Equal(t, 0, countActiveSessions(nil))
+}
+
+// TestRenderFull_SessionCountInHeader verifies that when active sessions exist,
+// the header reports the count; when none exist, no count is shown.
+func TestRenderFull_SessionCountInHeader(t *testing.T) {
+	tests := []struct {
+		name     string
+		sessions []domain.Session
+		wantIn   []string
+		wantOut  []string
+	}{
+		{
+			name: "header shows session count when sessions are active",
+			sessions: []domain.Session{
+				{WorktreePath: "/tmp/wt1", Status: domain.StatusActive},
+				{WorktreePath: "/tmp/wt2", Status: domain.StatusAgentRunning, AgentName: ptr("copilot")},
+				{WorktreePath: "/tmp/wt3", Status: domain.StatusDead},
+			},
+			wantIn:  []string{"2 active session(s)"},
+			wantOut: []string{},
+		},
+		{
+			name:     "header does not show session count when no sessions",
+			sessions: nil,
+			wantOut:  []string{"active session"},
+		},
+		{
+			name: "header does not show count when all sessions are dead",
+			sessions: []domain.Session{
+				{WorktreePath: "/tmp/wt1", Status: domain.StatusDead},
+			},
+			wantOut: []string{"active session"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewModel()
+			require.NotNil(t, model)
+			model.sessions = tt.sessions
+
+			view := model.View()
+
+			for _, want := range tt.wantIn {
+				assert.Contains(t, view, want)
+			}
+			for _, notWant := range tt.wantOut {
+				assert.NotContains(t, view, notWant)
+			}
+		})
+	}
+}
+
+// TestRenderFull_SessionBadgesInWorktreeRow verifies that session badges appear
+// inline in the worktree name cell for every badge state.
+func TestRenderFull_SessionBadgesInWorktreeRow(t *testing.T) {
+	wt := domain.Worktree{
+		Path:    "/tmp/feat-work",
+		Branch:  "feat/work",
+		IsClean: true,
+	}
+
+	tests := []struct {
+		name    string
+		session *domain.Session
+		wantIn  string
+	}{
+		{
+			name:    "no session — no badge rendered",
+			session: nil,
+			wantIn:  "feat-work",
+		},
+		{
+			name:    "shell-only session shows [shell]",
+			session: &domain.Session{WorktreePath: "/tmp/feat-work", Status: domain.StatusActive},
+			wantIn:  "[shell]",
+		},
+		{
+			name: "agent running shows running badge",
+			session: &domain.Session{
+				WorktreePath: "/tmp/feat-work",
+				Status:       domain.StatusAgentRunning,
+				AgentName:    ptr("copilot"),
+			},
+			wantIn: "[copilot running]",
+		},
+		{
+			name: "agent done shows done badge",
+			session: &domain.Session{
+				WorktreePath: "/tmp/feat-work",
+				Status:       domain.StatusAgentDone,
+				AgentName:    ptr("claude"),
+			},
+			wantIn: "[done claude]",
+		},
+		{
+			name: "agent failed shows failed badge",
+			session: &domain.Session{
+				WorktreePath: "/tmp/feat-work",
+				Status:       domain.StatusAgentFailed,
+				AgentName:    ptr("aider"),
+			},
+			wantIn: "[failed aider]",
+		},
+		{
+			name:    "dead session shows [dead]",
+			session: &domain.Session{WorktreePath: "/tmp/feat-work", Status: domain.StatusDead},
+			wantIn:  "[dead]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewModel()
+			require.NotNil(t, model)
+			model.view = viewWorktrees
+			model.Worktrees = []domain.Worktree{wt}
+			model.selectedIdx = 0
+			model.width = 300 // wide terminal so names aren't truncated
+			if tt.session != nil {
+				model.sessions = []domain.Session{*tt.session}
+			}
+
+			view := model.View()
+
+			assert.Contains(t, view, tt.wantIn)
+		})
+	}
+}
+
+// TestRenderFull_SessionBlockInContextPanel verifies that when a selected worktree
+// has a session, the SESSION block appears in the right context panel.
+func TestRenderFull_SessionBlockInContextPanel(t *testing.T) {
+	wt := domain.Worktree{Path: "/tmp/wt-session", Branch: "feat/session", IsClean: true}
+	pid := 8821
+	prompt := "implement JWT auth"
+
+	tests := []struct {
+		name    string
+		session domain.Session
+		wantIn  []string
+	}{
+		{
+			name: "session block shows status and shell pid",
+			session: domain.Session{
+				WorktreePath: "/tmp/wt-session",
+				Status:       domain.StatusActive,
+				ShellPID:     &pid,
+			},
+			wantIn: []string{"SESSION", "Status:  active", "Shell:   pid 8821 alive"},
+		},
+		{
+			name: "session block shows agent name and prompt",
+			session: domain.Session{
+				WorktreePath: "/tmp/wt-session",
+				Status:       domain.StatusAgentRunning,
+				ShellPID:     &pid,
+				AgentName:    ptr("Copilot"),
+				Prompt:       &prompt,
+			},
+			wantIn: []string{"SESSION", "Agent:   Copilot", "Prompt:  implement JWT auth"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewModel()
+			require.NotNil(t, model)
+			model.view = viewWorktrees
+			model.Worktrees = []domain.Worktree{wt}
+			model.selectedIdx = 0
+			model.sessions = []domain.Session{tt.session}
+
+			view := model.View()
+
+			for _, want := range tt.wantIn {
+				assert.Contains(t, view, want)
+			}
+		})
+	}
+}
+
+// TestRenderFull_NoSessionBlock_WhenNoSession verifies the SESSION block is absent
+// when the selected worktree has no associated session.
+func TestRenderFull_NoSessionBlock_WhenNoSession(t *testing.T) {
+	wt := domain.Worktree{Path: "/tmp/wt-empty", Branch: "feat/empty", IsClean: true}
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewWorktrees
+	model.Worktrees = []domain.Worktree{wt}
+	model.selectedIdx = 0
+	// no sessions set
+
+	view := model.View()
+
+	assert.NotContains(t, view, "SESSION")
+}
