@@ -445,8 +445,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if selected, ok := m.selectedWorktree(); ok {
 					// If a live session already exists for this worktree, focus it
 					// instead of spawning a new one. Skip any stale entry whose
-					// shell PID is confirmed dead (and whose agent PID is also
-					// gone), so that closed terminals don't block re-spawning.
+					// shell PID is confirmed dead so that closed terminals don't
+					// block re-spawning. We no longer track AgentPID, so we accept
+					// the small risk of a duplicate spawn if the agent outlived its
+					// terminal window.
 					for _, s := range m.sessions {
 						if !pathsEqual(s.WorktreePath, selected.Path) {
 							continue
@@ -1111,12 +1113,40 @@ func buildCopilotCmd(worktreePath, prompt string) *exec.Cmd {
 	return cmd
 }
 
+// buildSpawnSession constructs a domain.Session for a newly-launched agent
+// terminal and persists it to db when db is non-nil. prompt may be empty
+// (Aider does not take a pre-loaded prompt).
+func buildSpawnSession(db *data.DB, worktreePath, agentName string, pid int, prompt string, startedAt time.Time) domain.Session {
+	agentNameVal := agentName
+	var shellPID *int
+	if pid != 0 {
+		shellPID = &pid
+	}
+	sess := domain.Session{
+		WorktreePath: worktreePath,
+		ShellPID:     shellPID,
+		AgentName:    &agentNameVal,
+		Status:       domain.StatusActive,
+		StartedAt:    startedAt.UTC().Truncate(time.Second),
+	}
+	if prompt != "" {
+		promptVal := prompt
+		sess.Prompt = &promptVal
+	}
+	if db != nil {
+		id, err := data.UpsertSession(db, sess)
+		if err == nil {
+			sess.ID = id
+		}
+	}
+	return sess
+}
 // spawnCopilotCmd opens a new terminal tab/window running gh copilot at
 // worktreePath and dispatches agentDoneMsg once the launch completes.
 // The TUI is not suspended — nexus keeps running in the current terminal.
 func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
 	startedAt := time.Now()
-	db := m.db
+	db := m.db // capture m.db so the closure does not close over m (data race)
 	var shellCmd string
 	if prompt != "" {
 		shellCmd = "gh copilot -i " + shellQuote(prompt)
@@ -1131,28 +1161,7 @@ func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
 		}
 		var sess domain.Session
 		if spawnErr == nil {
-			agentNameVal := "copilot"
-			var shellPID *int
-			if pid != 0 {
-				shellPID = &pid
-			}
-			sess = domain.Session{
-				WorktreePath: worktreePath,
-				ShellPID:     shellPID,
-				AgentName:    &agentNameVal,
-				Status:       domain.StatusActive,
-				StartedAt:    startedAt.UTC().Truncate(time.Second),
-			}
-			if prompt != "" {
-				promptVal := prompt
-				sess.Prompt = &promptVal
-			}
-			if db != nil {
-				id, err := data.UpsertSession(db, sess)
-				if err == nil {
-					sess.ID = id
-				}
-			}
+			sess = buildSpawnSession(db, worktreePath, "copilot", pid, prompt, startedAt)
 		}
 		return agentDoneMsg{
 			agentName: "copilot",
@@ -1210,7 +1219,7 @@ func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 		return clearErrorCmd()
 	}
 	startedAt := time.Now()
-	db := m.db
+	db := m.db // capture m.db so the closure does not close over m (data race)
 	var shellCmd string
 	if prompt != "" {
 		shellCmd = binaryPath + " " + shellQuote(prompt)
@@ -1225,28 +1234,7 @@ func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 		}
 		var sess domain.Session
 		if spawnErr == nil {
-			agentNameVal := "claude"
-			var shellPID *int
-			if pid != 0 {
-				shellPID = &pid
-			}
-			sess = domain.Session{
-				WorktreePath: worktreePath,
-				ShellPID:     shellPID,
-				AgentName:    &agentNameVal,
-				Status:       domain.StatusActive,
-				StartedAt:    startedAt.UTC().Truncate(time.Second),
-			}
-			if prompt != "" {
-				promptVal := prompt
-				sess.Prompt = &promptVal
-			}
-			if db != nil {
-				id, err := data.UpsertSession(db, sess)
-				if err == nil {
-					sess.ID = id
-				}
-			}
+			sess = buildSpawnSession(db, worktreePath, "claude", pid, prompt, startedAt)
 		}
 		return agentDoneMsg{
 			agentName: "claude",
@@ -1286,7 +1274,7 @@ func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
 		return clearErrorCmd()
 	}
 	startedAt := time.Now()
-	db := m.db
+	db := m.db // capture m.db so the closure does not close over m (data race)
 	parts := make([]string, 0, len(files)+1)
 	parts = append(parts, binaryPath)
 	for _, f := range files {
@@ -1301,24 +1289,7 @@ func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
 		}
 		var sess domain.Session
 		if spawnErr == nil {
-			agentNameVal := "aider"
-			var shellPID *int
-			if pid != 0 {
-				shellPID = &pid
-			}
-			sess = domain.Session{
-				WorktreePath: worktreePath,
-				ShellPID:     shellPID,
-				AgentName:    &agentNameVal,
-				Status:       domain.StatusActive,
-				StartedAt:    startedAt.UTC().Truncate(time.Second),
-			}
-			if db != nil {
-				id, err := data.UpsertSession(db, sess)
-				if err == nil {
-					sess.ID = id
-				}
-			}
+			sess = buildSpawnSession(db, worktreePath, "aider", pid, "", startedAt)
 		}
 		return agentDoneMsg{
 			agentName: "aider",
@@ -1673,7 +1644,6 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 		return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
 	}
 }
-
 
 // checkSessionsCmd reads all tracked sessions from the nexus DB and checks
 // whether each PID is still alive. Returns sessionStatusUpdatedMsg with the

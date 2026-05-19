@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+// agentPIDPollTimeout is the maximum time to wait for the PID-file written by
+// the PowerShell process before giving up. 3 s is generous for a local spawn;
+// increase if slow machines miss the window under load.
+const agentPIDPollTimeout = 3 * time.Second
+
 // setWindowsCmdLine overrides the raw Windows command line for the new-terminal
 // command so that cmd.exe receives an unescaped string.
 //
@@ -49,7 +54,7 @@ func spawnTerminalWindow(path string) (int, error) {
 		cmd := exec.Command("wt", "-w", "0", "new-tab", "--startingDirectory", path,
 			"powershell", "-NoExit", "-Command", psCmd)
 		if err := cmd.Start(); err == nil {
-			pid := pollPIDFile(pidFile, 3*time.Second)
+			pid := pollPIDFile(pidFile, agentPIDPollTimeout)
 			os.Remove(pidFile)
 			return pid, nil
 		}
@@ -61,7 +66,7 @@ func spawnTerminalWindow(path string) (int, error) {
 	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-session-%d.pid", time.Now().UnixNano()))
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, "", pidFile, "windows"); ok {
 		if err := tabCmd.Start(); err == nil {
-			pid := pollPIDFile(pidFile, 3*time.Second)
+			pid := pollPIDFile(pidFile, agentPIDPollTimeout)
 			os.Remove(pidFile)
 			return pid, nil
 		}
@@ -106,7 +111,7 @@ func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
 		cmd := exec.Command("wt", "-w", "0", "new-tab", "--startingDirectory", path,
 			"powershell", "-NoExit", "-Command", psCmd)
 		if err := cmd.Start(); err == nil {
-			pid := pollPIDFile(pidFile, 3*time.Second)
+			pid := pollPIDFile(pidFile, agentPIDPollTimeout)
 			os.Remove(pidFile)
 			return pid, nil
 		}
