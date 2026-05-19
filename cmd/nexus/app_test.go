@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -216,7 +215,6 @@ func TestModel_Enter_TriggersSpawn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup: Create model with populated Worktrees list
 			model := NewModel()
-			model.copilotDBPath = ""
 			require.NotNil(t, model, "Model creation should succeed")
 
 			// Convert test data to domain.Worktree
@@ -1862,7 +1860,6 @@ func TestModel_Enter_InViewPRs_EmptyList_NoOp(t *testing.T) {
 // session (same as the s key) when a worktree is selected.
 func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 	m := NewModel()
-	m.copilotDBPath = ""
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
 		{Path: "/repos/nexus", Branch: "main"},
@@ -2546,7 +2543,6 @@ func TestModel_SKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
 // trigger spawnSessionCmd (same behavior).
 func TestModel_EnterKey_SpawnsSessionLikeSKey(t *testing.T) {
 	m := NewModel()
-	m.copilotDBPath = ""
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
 		{Path: "/repos/nexus", Branch: "main"},
@@ -2587,20 +2583,46 @@ func TestSessionStatusUpdatedMsg_Empty(t *testing.T) {
 	assert.Empty(t, m2.sessions)
 }
 
-// TestCheckSessionsCmd_NilDB verifies that checkSessionsCmd is a no-op when db is nil.
+// TestCheckSessionsCmd_NilDB verifies that checkSessionsCmd performs PID health
+// checks on in-memory sessions even when db is nil, keeping live sessions and
+// dropping stale ones rather than blindly preserving all entries.
 func TestCheckSessionsCmd_NilDB(t *testing.T) {
 	m := NewModel()
-	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	m.sessions = []domain.Session{
-		{ID: 1, WorktreePath: "/repo/existing", Status: domain.StatusActive},
+		{ID: 1, WorktreePath: "/repo/existing", Status: domain.StatusActive, StartedAt: time.Now().UTC()},
 	}
 	cmd := m.checkSessionsCmd()
 	require.NotNil(t, cmd)
 	msg := cmd()
 	result, ok := msg.(sessionStatusUpdatedMsg)
 	require.True(t, ok, "expected sessionStatusUpdatedMsg, got %T", msg)
+	// Session has no ShellPID and is not dead/old, so it must be preserved.
 	require.Len(t, result.sessions, 1)
 	assert.Equal(t, "/repo/existing", result.sessions[0].WorktreePath)
+}
+
+// TestCheckSessionsCmd_NilDB_PrunesDeadPID verifies that checkSessionsCmd drops
+// in-memory sessions whose shell PID is no longer alive when db is nil.
+// This is the fix for the bug where closed terminals kept showing as active.
+func TestCheckSessionsCmd_NilDB_PrunesDeadPID(t *testing.T) {
+	deadPID := 999999999 // extremely unlikely to be a live PID
+
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{
+			ID:           1,
+			WorktreePath: "/repo/dead",
+			ShellPID:     &deadPID,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC(),
+		},
+	}
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok, "expected sessionStatusUpdatedMsg, got %T", msg)
+	assert.Empty(t, result.sessions, "session with dead PID must be pruned from in-memory list")
 }
 
 // TestCheckSessionsCmd_EmptyDB verifies that checkSessionsCmd returns empty sessions when DB is empty.
@@ -2611,7 +2633,6 @@ func TestCheckSessionsCmd_EmptyDB(t *testing.T) {
 
 	m := NewModel()
 	m.db = db
-	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	cmd := m.checkSessionsCmd()
 	require.NotNil(t, cmd)
 	msg := cmd()
@@ -2639,7 +2660,6 @@ func TestCheckSessionsCmd_DeadNilPIDPruned(t *testing.T) {
 
 	m := NewModel()
 	m.db = db
-	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	cmd := m.checkSessionsCmd()
 	require.NotNil(t, cmd)
 	msg := cmd()
@@ -2653,153 +2673,7 @@ func TestCheckSessionsCmd_DeadNilPIDPruned(t *testing.T) {
 	assert.Nil(t, got, "dead+nil-PID session must be deleted from the database")
 }
 
-// TestCheckSessionsCmd_CopilotSessions verifies that Copilot CLI sessions from the
-// session-store database are merged into the live sessions list as agent_running entries.
-func TestCheckSessionsCmd_CopilotSessions(t *testing.T) {
-	// Build a minimal Copilot session-store in a temp SQLite file.
-	tmpDir := t.TempDir()
-	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
-	csDB, err := data.NewDB(copilotDBPath)
-	require.NoError(t, err)
-	// Seed the Copilot schema (just what GetActiveCopilotSessions queries).
-	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		cwd TEXT NOT NULL,
-		summary TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	)`)
-	require.NoError(t, err)
-	recentTime := time.Now().UTC().Add(-30 * time.Minute).Format(time.RFC3339)
-	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		"abc-123", "/repo/copilot-worktree", "implement auth", recentTime, recentTime)
-	require.NoError(t, err)
-	csDB.Close()
-
-	m := NewModel()
-	m.copilotDBPath = copilotDBPath
-
-	cmd := m.checkSessionsCmd()
-	require.NotNil(t, cmd)
-	msg := cmd()
-	result, ok := msg.(sessionStatusUpdatedMsg)
-	require.True(t, ok)
-	require.Len(t, result.sessions, 1)
-	sess := result.sessions[0]
-	assert.Equal(t, filepath.FromSlash("/repo/copilot-worktree"), sess.WorktreePath)
-	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
-	require.NotNil(t, sess.AgentName)
-	assert.Equal(t, "copilot", *sess.AgentName)
-	require.NotNil(t, sess.Prompt)
-	assert.Equal(t, "implement auth", *sess.Prompt)
-}
-
-// TestCheckSessionsCmd_CopilotEnrichesExisting verifies that a Copilot session for the same
-// worktree as a nexus-tracked shell session enriches it rather than creating a duplicate.
-func TestCheckSessionsCmd_CopilotEnrichesExisting(t *testing.T) {
-	nexusDB, err := data.NewDB(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = nexusDB.Close() })
-
-	// Insert a nexus-tracked session with no agent info.
-	shellSess := domain.Session{
-		WorktreePath: "/repo/shared-worktree",
-		Status:       domain.StatusActive,
-		StartedAt:    time.Now().UTC().Truncate(time.Second),
-	}
-	_, err = data.UpsertSession(nexusDB, shellSess)
-	require.NoError(t, err)
-
-	// Build a Copilot session-store pointing at the same worktree.
-	tmpDir := t.TempDir()
-	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
-	csDB, err := data.NewDB(copilotDBPath)
-	require.NoError(t, err)
-	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		cwd TEXT NOT NULL,
-		summary TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	)`)
-	require.NoError(t, err)
-	recentTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		"xyz-456", "/repo/shared-worktree", "add tests", recentTime, recentTime)
-	require.NoError(t, err)
-	csDB.Close()
-
-	m := NewModel()
-	m.db = nexusDB
-	m.copilotDBPath = copilotDBPath
-
-	cmd := m.checkSessionsCmd()
-	require.NotNil(t, cmd)
-	msg := cmd()
-	result, ok := msg.(sessionStatusUpdatedMsg)
-	require.True(t, ok)
-	// Should be exactly ONE session (enriched, not duplicated).
-	require.Len(t, result.sessions, 1)
-	sess := result.sessions[0]
-	assert.Equal(t, "/repo/shared-worktree", sess.WorktreePath)
-	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
-	require.NotNil(t, sess.AgentName)
-	assert.Equal(t, "copilot", *sess.AgentName)
-}
-
-// TestCheckSessionsCmd_CopilotSessions_MixedSeparators verifies that Copilot
-// sessions whose cwd uses different path separators than the nexus-tracked
-// worktree path still merge correctly (Windows forward-slash vs backslash).
-func TestCheckSessionsCmd_CopilotSessions_MixedSeparators(t *testing.T) {
-	nexusDB, err := data.NewDB(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = nexusDB.Close() })
-
-	// Insert a nexus session with OS-native separators.
-	nativePath := filepath.FromSlash("/repo/feat-auth")
-	shellSess := domain.Session{
-		WorktreePath: nativePath,
-		Status:       domain.StatusActive,
-		StartedAt:    time.Now().UTC().Truncate(time.Second),
-	}
-	_, err = data.UpsertSession(nexusDB, shellSess)
-	require.NoError(t, err)
-
-	// Insert a Copilot session with forward-slash CWD (as stored by the Copilot CLI).
-	tmpDir := t.TempDir()
-	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
-	csDB, err := data.NewDB(copilotDBPath)
-	require.NoError(t, err)
-	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		cwd TEXT NOT NULL,
-		summary TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	)`)
-	require.NoError(t, err)
-	recentTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-	// Use forward-slash path — Copilot CLI on Windows stores these.
-	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		"abc-999", filepath.ToSlash(nativePath), "auth work", recentTime, recentTime)
-	require.NoError(t, err)
-	csDB.Close()
-
-	m := NewModel()
-	m.db = nexusDB
-	m.copilotDBPath = copilotDBPath
-
-	msg := m.checkSessionsCmd()()
-	result, ok := msg.(sessionStatusUpdatedMsg)
-	require.True(t, ok)
-	// Must merge into ONE session — no duplicate.
-	require.Len(t, result.sessions, 1)
-	sess := result.sessions[0]
-	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
-	require.NotNil(t, sess.AgentName)
-	assert.Equal(t, "copilot", *sess.AgentName)
-}
-
+// TestPidAlive_CurrentProcess verifies that pidAlive returns true for the current process.
 func TestPidAlive_CurrentProcess(t *testing.T) {
 	assert.True(t, pidAlive(os.Getpid()), "current process should be alive")
 }
@@ -2809,4 +2683,172 @@ func TestPidAlive_InvalidPID(t *testing.T) {
 	// PID 0 is the idle process on Windows and typically reserved on Unix.
 	// A very high PID is extremely unlikely to exist.
 	assert.False(t, pidAlive(999999999), "PID 999999999 should not be alive")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: Session management (attach / kill)
+// ---------------------------------------------------------------------------
+
+// TestModel_Enter_ExistingSession_TriggersFocus verifies that when a session
+// already exists for the selected worktree, pressing Enter dispatches a focus
+// command rather than spawning a new session.
+func TestModel_Enter_ExistingSession_TriggersFocus(t *testing.T) {
+	pid := os.Getpid() // use current PID so the session looks alive
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &pid, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// A Cmd must be returned — it is the focus command.
+	assert.NotNil(t, cmd, "Enter on worktree with existing session should return a focus Cmd")
+}
+
+// TestModel_Enter_NoSession_TriggersSpawn verifies that pressing Enter on a
+// worktree with no tracked session dispatches a spawn command.
+func TestModel_Enter_NoSession_TriggersSpawn(t *testing.T) {
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	// No session for this worktree.
+	m.sessions = []domain.Session{}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// A Cmd must be returned — it is the spawn command.
+	assert.NotNil(t, cmd, "Enter on worktree with no session should return a spawn Cmd")
+}
+
+// TestModel_Enter_StaleSession_TriggersSpawn verifies that pressing Enter on a
+// worktree whose only tracked session has a dead shell PID spawns a new terminal
+// rather than calling focusSessionCmd (which would just show a misleading toast).
+func TestModel_Enter_StaleSession_TriggersSpawn(t *testing.T) {
+	worktreePath := "/home/user/repos/wt1"
+	deadPID := 999999999 // extremely unlikely to be a real running PID
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	// Session is stale: has a PID that's dead.
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &deadPID, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Must return a spawn Cmd, not nil (which would mean nothing happened).
+	assert.NotNil(t, cmd, "Enter on worktree with stale session should return a spawn Cmd")
+}
+
+// TestModel_X_WithSession_TriggersKill verifies that pressing x on a worktree
+// with an active session dispatches a kill command.
+func TestModel_X_WithSession_TriggersKill(t *testing.T) {
+	pid := os.Getpid()
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &pid, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+	m.view = viewWorktrees
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	assert.NotNil(t, cmd, "x on worktree with session should return a kill Cmd")
+}
+
+// TestModel_X_WithoutSession_ShowsError verifies that pressing x on a worktree
+// with no active session sets a friendly error message.
+func TestModel_X_WithoutSession_ShowsError(t *testing.T) {
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: "/home/user/repos/wt1", Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{} // no sessions
+	m.selectedIdx = 0
+	m.view = viewWorktrees
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Equal(t, "No active session for this worktree", m2.statusErr)
+	assert.NotNil(t, cmd, "should return clearError cmd")
+}
+
+// TestModel_SessionKilledMsg_Success_RemovesSession verifies that receiving a
+// successful sessionKilledMsg removes the session from m.sessions.
+func TestModel_SessionKilledMsg_Success_RemovesSession(t *testing.T) {
+	pid := os.Getpid()
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: "/wt/a", ShellPID: &pid, Status: domain.StatusActive},
+		{ID: 2, WorktreePath: "/wt/b", ShellPID: &pid, Status: domain.StatusActive},
+	}
+
+	updated, cmd := m.Update(sessionKilledMsg{worktreePath: "/wt/a"})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	require.Len(t, m2.sessions, 1, "killed session should be removed")
+	assert.Equal(t, "/wt/b", m2.sessions[0].WorktreePath)
+	assert.Nil(t, cmd, "successful kill should return nil Cmd")
+}
+
+// TestModel_SessionKilledMsg_Error_SetsStatusErr verifies that a
+// sessionKilledMsg with an error sets m.statusErr.
+func TestModel_SessionKilledMsg_Error_SetsStatusErr(t *testing.T) {
+	m := NewModel()
+	m.sessions = []domain.Session{}
+
+	updated, cmd := m.Update(sessionKilledMsg{worktreePath: "/wt/a", err: errors.New("db error")})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusErr, "Close session")
+	assert.Contains(t, m2.statusErr, "db error")
+	assert.NotNil(t, cmd, "error should schedule clearErrorCmd")
+}
+
+// TestModel_SessionFocusedMsg_Success_ShowsStatusMsg verifies that a successful
+// sessionFocusedMsg sets m.statusMsg.
+func TestModel_SessionFocusedMsg_Success_ShowsStatusMsg(t *testing.T) {
+	m := NewModel()
+
+	updated, cmd := m.Update(sessionFocusedMsg{worktreePath: "/wt/a"})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusMsg, "/wt/a")
+	assert.NotNil(t, cmd, "should return clearMsgCmd")
+}
+
+// TestModel_SessionFocusedMsg_Error_ShowsBestEffortMsg verifies that a failed
+// sessionFocusedMsg still shows a user-friendly message (best-effort focus).
+func TestModel_SessionFocusedMsg_Error_ShowsBestEffortMsg(t *testing.T) {
+	m := NewModel()
+
+	updated, cmd := m.Update(sessionFocusedMsg{worktreePath: "/wt/a", err: errors.New("no wmctrl")})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusMsg, "/wt/a")
+	assert.NotNil(t, cmd, "should return clearMsgCmd even on error")
 }
