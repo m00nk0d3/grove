@@ -79,6 +79,7 @@ type agentDoneMsg struct {
 	prompt    string
 	exitCode  int
 	startedAt time.Time
+	session   domain.Session // non-zero WorktreePath means a session was recorded
 }
 
 // aiderFilesFetchedMsg carries the result of listing modified files for the Aider file picker.
@@ -451,10 +452,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							continue
 						}
 						if s.ShellPID != nil && !pidAlive(*s.ShellPID) {
-							agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
-							if !agentAlive {
-								break // stale — fall through to spawn
-							}
+							break // stale — fall through to spawn
 						}
 						return m, m.focusSessionCmd(s)
 					}
@@ -725,6 +723,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if err := data.LogAgentRun(m.db, entry); err != nil {
 				m.statusErr = fmt.Sprintf("failed to log agent run: %v", err)
+			}
+		}
+		// Sync the recorded session into m.sessions so the badge appears immediately.
+		if msg.session.WorktreePath != "" {
+			updated := false
+			for i := range m.sessions {
+				if pathsEqual(m.sessions[i].WorktreePath, msg.session.WorktreePath) {
+					m.sessions[i] = msg.session
+					updated = true
+					break
+				}
+			}
+			if !updated {
+				m.sessions = append(m.sessions, msg.session)
 			}
 		}
 		if msg.exitCode > 1 {
@@ -1117,14 +1129,37 @@ func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
 		if spawnErr != nil {
 			exitCode = 1
 		}
-		if spawnErr == nil && pid != 0 && db != nil {
-			updateSessionAgentPID(db, worktreePath, "copilot", pid)
+		var sess domain.Session
+		if spawnErr == nil {
+			agentNameVal := "copilot"
+			var shellPID *int
+			if pid != 0 {
+				shellPID = &pid
+			}
+			sess = domain.Session{
+				WorktreePath: worktreePath,
+				ShellPID:     shellPID,
+				AgentName:    &agentNameVal,
+				Status:       domain.StatusActive,
+				StartedAt:    startedAt.UTC().Truncate(time.Second),
+			}
+			if prompt != "" {
+				promptVal := prompt
+				sess.Prompt = &promptVal
+			}
+			if db != nil {
+				id, err := data.UpsertSession(db, sess)
+				if err == nil {
+					sess.ID = id
+				}
+			}
 		}
 		return agentDoneMsg{
 			agentName: "copilot",
 			prompt:    prompt,
 			exitCode:  exitCode,
 			startedAt: startedAt,
+			session:   sess,
 		}
 	}
 }
@@ -1188,14 +1223,37 @@ func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 		if spawnErr != nil {
 			exitCode = 1
 		}
-		if spawnErr == nil && pid != 0 && db != nil {
-			updateSessionAgentPID(db, worktreePath, "claude", pid)
+		var sess domain.Session
+		if spawnErr == nil {
+			agentNameVal := "claude"
+			var shellPID *int
+			if pid != 0 {
+				shellPID = &pid
+			}
+			sess = domain.Session{
+				WorktreePath: worktreePath,
+				ShellPID:     shellPID,
+				AgentName:    &agentNameVal,
+				Status:       domain.StatusActive,
+				StartedAt:    startedAt.UTC().Truncate(time.Second),
+			}
+			if prompt != "" {
+				promptVal := prompt
+				sess.Prompt = &promptVal
+			}
+			if db != nil {
+				id, err := data.UpsertSession(db, sess)
+				if err == nil {
+					sess.ID = id
+				}
+			}
 		}
 		return agentDoneMsg{
 			agentName: "claude",
 			prompt:    prompt,
 			exitCode:  exitCode,
 			startedAt: startedAt,
+			session:   sess,
 		}
 	}
 }
@@ -1241,13 +1299,32 @@ func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
 		if spawnErr != nil {
 			exitCode = 1
 		}
-		if spawnErr == nil && pid != 0 && db != nil {
-			updateSessionAgentPID(db, worktreePath, "aider", pid)
+		var sess domain.Session
+		if spawnErr == nil {
+			agentNameVal := "aider"
+			var shellPID *int
+			if pid != 0 {
+				shellPID = &pid
+			}
+			sess = domain.Session{
+				WorktreePath: worktreePath,
+				ShellPID:     shellPID,
+				AgentName:    &agentNameVal,
+				Status:       domain.StatusActive,
+				StartedAt:    startedAt.UTC().Truncate(time.Second),
+			}
+			if db != nil {
+				id, err := data.UpsertSession(db, sess)
+				if err == nil {
+					sess.ID = id
+				}
+			}
 		}
 		return agentDoneMsg{
 			agentName: "aider",
 			exitCode:  exitCode,
 			startedAt: startedAt,
+			session:   sess,
 		}
 	}
 }
@@ -1575,9 +1652,6 @@ func (m *Model) killSessionCmd(session domain.Session) tea.Cmd {
 		if session.ShellPID != nil {
 			gracefulKillPID(*session.ShellPID)
 		}
-		if session.AgentPID != nil {
-			gracefulKillPID(*session.AgentPID)
-		}
 		if db != nil && session.ID != 0 {
 			if err := data.DeleteSession(db, session.ID); err != nil {
 				return sessionKilledMsg{worktreePath: session.WorktreePath, err: err}
@@ -1600,39 +1674,6 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 	}
 }
 
-// updateSessionAgentPID looks up the active session for worktreePath and sets
-// the AgentPID and AgentName fields, then persists the update via UpsertSession.
-// If no session exists for the worktree (agent spawned without a prior terminal),
-// a new agent-only session is created with StatusAgentRunning and no ShellPID.
-// Errors are logged as warnings — the agent terminal is already running so this
-// is non-fatal.
-func updateSessionAgentPID(db *data.DB, worktreePath, agentName string, pid int) {
-	sess, err := data.GetSessionByWorktree(db, worktreePath)
-	if err != nil {
-		slog.Warn("update session agent pid: lookup failed", "worktree", worktreePath, "err", err)
-		return
-	}
-	if sess == nil {
-		// No terminal session exists — create an agent-only session so the badge
-		// appears in the sessions view and the health-check poller can track it.
-		newSess := domain.Session{
-			WorktreePath: worktreePath,
-			AgentName:    &agentName,
-			AgentPID:     &pid,
-			Status:       domain.StatusAgentRunning,
-			StartedAt:    time.Now().UTC().Truncate(time.Second),
-		}
-		if _, err := data.UpsertSession(db, newSess); err != nil {
-			slog.Warn("update session agent pid: create session failed", "worktree", worktreePath, "err", err)
-		}
-		return
-	}
-	sess.AgentName = &agentName
-	sess.AgentPID = &pid
-	if _, err := data.UpsertSession(db, *sess); err != nil {
-		slog.Warn("update session agent pid: upsert failed", "worktree", worktreePath, "err", err)
-	}
-}
 
 // checkSessionsCmd reads all tracked sessions from the nexus DB and checks
 // whether each PID is still alive. Returns sessionStatusUpdatedMsg with the
@@ -1643,35 +1684,24 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
 		var alive []domain.Session
 
-		// Part 1: reconcile nexus-spawned shell sessions from the nexus DB.
 		if db == nil {
-			// No nexus DB — perform PID health checks on in-memory sessions so
-			// that terminals the user has closed are removed rather than kept
-			// as stale badges that block re-spawning.
+			// No nexus DB — perform PID health checks on in-memory sessions.
 			for _, s := range current {
+				if s.Status == domain.StatusDead {
+					continue
+				}
 				if s.ShellPID == nil {
-					if s.Status == domain.StatusDead || time.Since(s.StartedAt) > 24*time.Hour {
-						continue
-					}
-					// Agent-only session: prune once the agent process exits.
-					if s.AgentPID != nil && !pidAlive(*s.AgentPID) {
+					// No PID — keep alive up to 24 hours.
+					if time.Since(s.StartedAt) > 24*time.Hour {
 						continue
 					}
 					alive = append(alive, s)
 					continue
 				}
-				shellAlive := pidAlive(*s.ShellPID)
-				agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
-				if shellAlive {
+				if pidAlive(*s.ShellPID) {
 					alive = append(alive, s)
-					continue
 				}
-				if agentAlive {
-					s.Status = domain.StatusAgentRunning
-					alive = append(alive, s)
-					continue
-				}
-				// Both dead — drop from alive (prunes the stale in-memory entry).
+				// Shell dead — drop from alive.
 			}
 		} else {
 			all, err := data.GetSessions(db)
@@ -1684,54 +1714,32 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 				}
 			} else {
 				for _, s := range all {
-				if s.ShellPID == nil {
-					// No shell PID to check. This covers two cases:
-					// 1. Windows Terminal tab spawns where the launcher exits immediately.
-					// 2. Agent-only sessions created by updateSessionAgentPID.
-					if s.Status == domain.StatusDead {
-						if err := data.DeleteSession(db, s.ID); err != nil {
-							slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
-						}
-						continue
+				if s.Status == domain.StatusDead {
+					if err := data.DeleteSession(db, s.ID); err != nil {
+						slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
 					}
+					continue
+				}
+				if s.ShellPID == nil {
+					// No PID — keep alive up to 24 hours (e.g. WT tabs without PID tracking).
 					if time.Since(s.StartedAt) > 24*time.Hour {
 						if err := data.DeleteSession(db, s.ID); err != nil {
 							slog.Warn("session health check: failed to delete stale session", "id", s.ID, "err", err)
 						}
 						continue
 					}
-					// Agent-only session: prune once the agent process exits.
-					if s.AgentPID != nil && !pidAlive(*s.AgentPID) {
-						if err := data.DeleteSession(db, s.ID); err != nil {
-							slog.Warn("session health check: failed to delete finished agent session", "id", s.ID, "err", err)
-						}
-						continue
-					}
 					alive = append(alive, s)
 					continue
 				}
-					shellAlive := pidAlive(*s.ShellPID)
-					agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
-
-					if shellAlive {
-						alive = append(alive, s)
-						continue
-					}
-					// Shell is dead.
-					if agentAlive {
-						// Agent is still running — transition to agent_running.
-						s.Status = domain.StatusAgentRunning
-						if _, err := data.UpsertSession(db, s); err != nil {
-							slog.Warn("session health check: failed to update session status", "id", s.ID, "err", err)
-						}
-						alive = append(alive, s)
-						continue
-					}
-					// Both are dead — remove from DB.
+				if pidAlive(*s.ShellPID) {
+					alive = append(alive, s)
+				} else {
+					// Shell is dead — remove from DB.
 					if err := data.DeleteSession(db, s.ID); err != nil {
 						slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
 					}
 				}
+			}
 			}
 		}
 

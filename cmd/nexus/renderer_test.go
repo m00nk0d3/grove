@@ -1959,37 +1959,6 @@ func TestSessionBadge_AllStates(t *testing.T) {
 			want:    "[session open]",
 		},
 		{
-			name: "StatusAgentRunning returns [session open]",
-			session: &domain.Session{
-				Status:    domain.StatusAgentRunning,
-				AgentName: ptr("copilot"),
-			},
-			want: "[session open]",
-		},
-		{
-			name: "StatusAgentRunning with no agent name returns [session open]",
-			session: &domain.Session{
-				Status: domain.StatusAgentRunning,
-			},
-			want: "[session open]",
-		},
-		{
-			name: "StatusAgentDone returns [session open]",
-			session: &domain.Session{
-				Status:    domain.StatusAgentDone,
-				AgentName: ptr("claude"),
-			},
-			want: "[session open]",
-		},
-		{
-			name: "StatusAgentFailed returns [session open]",
-			session: &domain.Session{
-				Status:    domain.StatusAgentFailed,
-				AgentName: ptr("aider"),
-			},
-			want: "[session open]",
-		},
-		{
 			name:    "StatusDead returns empty string",
 			session: &domain.Session{Status: domain.StatusDead},
 			want:    "",
@@ -2008,11 +1977,9 @@ func TestSessionBadge_AllStates(t *testing.T) {
 func TestCountActiveSessions(t *testing.T) {
 	sessions := []domain.Session{
 		{Status: domain.StatusActive},
-		{Status: domain.StatusAgentRunning},
-		{Status: domain.StatusAgentDone},
 		{Status: domain.StatusDead},
 	}
-	assert.Equal(t, 3, countActiveSessions(sessions))
+	assert.Equal(t, 1, countActiveSessions(sessions))
 	assert.Equal(t, 0, countActiveSessions(nil))
 }
 
@@ -2029,10 +1996,9 @@ func TestRenderFull_SessionCountInHeader(t *testing.T) {
 			name: "header shows session count when sessions are active",
 			sessions: []domain.Session{
 				{WorktreePath: "/tmp/wt1", Status: domain.StatusActive},
-				{WorktreePath: "/tmp/wt2", Status: domain.StatusAgentRunning, AgentName: ptr("copilot")},
 				{WorktreePath: "/tmp/wt3", Status: domain.StatusDead},
 			},
-			wantIn:  []string{"2 active session(s)"},
+			wantIn:  []string{"1 active session(s)"},
 			wantOut: []string{},
 		},
 		{
@@ -2092,33 +2058,6 @@ func TestRenderFull_SessionBadgesInWorktreeRow(t *testing.T) {
 			wantIn:  "[session open]",
 		},
 		{
-			name: "agent running shows [session open]",
-			session: &domain.Session{
-				WorktreePath: "/tmp/feat-work",
-				Status:       domain.StatusAgentRunning,
-				AgentName:    ptr("copilot"),
-			},
-			wantIn: "[session open]",
-		},
-		{
-			name: "agent done shows [session open]",
-			session: &domain.Session{
-				WorktreePath: "/tmp/feat-work",
-				Status:       domain.StatusAgentDone,
-				AgentName:    ptr("claude"),
-			},
-			wantIn: "[session open]",
-		},
-		{
-			name: "agent failed shows [session open]",
-			session: &domain.Session{
-				WorktreePath: "/tmp/feat-work",
-				Status:       domain.StatusAgentFailed,
-				AgentName:    ptr("aider"),
-			},
-			wantIn: "[session open]",
-		},
-		{
 			name:    "dead session shows no badge",
 			session: &domain.Session{WorktreePath: "/tmp/feat-work", Status: domain.StatusDead},
 			wantIn:  "feat-work",
@@ -2169,7 +2108,7 @@ func TestRenderFull_SessionBlockInContextPanel(t *testing.T) {
 			name: "session block shows agent name and prompt",
 			session: domain.Session{
 				WorktreePath: "/tmp/wt-session",
-				Status:       domain.StatusAgentRunning,
+				Status:       domain.StatusActive,
 				ShellPID:     &pid,
 				AgentName:    ptr("Copilot"),
 				Prompt:       &prompt,
@@ -2221,7 +2160,7 @@ func TestSessionForWorktree_PathNormalisation(t *testing.T) {
 	sessions := []domain.Session{
 		{
 			WorktreePath: filepath.FromSlash("/repo/feat-work"),
-			Status:       domain.StatusAgentRunning,
+			Status:       domain.StatusActive,
 			AgentName:    &agentName,
 		},
 	}
@@ -2229,7 +2168,7 @@ func TestSessionForWorktree_PathNormalisation(t *testing.T) {
 	// Same path with opposite separator style — must still match.
 	got := sessionForWorktree(sessions, filepath.ToSlash(filepath.FromSlash("/repo/feat-work")))
 	require.NotNil(t, got, "expected a session match despite different separators")
-	assert.Equal(t, domain.StatusAgentRunning, got.Status)
+	assert.Equal(t, domain.StatusActive, got.Status)
 }
 
 // TestPathsEqual_NormalisedComparison verifies the pathsEqual helper handles

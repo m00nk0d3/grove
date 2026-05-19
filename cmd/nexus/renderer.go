@@ -107,7 +107,7 @@ func renderSessionBlock(s *domain.Session) string {
 		b.WriteString("  Shell:   none\n")
 	}
 	if s.AgentName != nil {
-		b.WriteString(fmt.Sprintf("  Agent:   %s %s\n", *s.AgentName, s.Status))
+		b.WriteString(fmt.Sprintf("  Agent:   %s\n", *s.AgentName))
 	}
 	if s.Prompt != nil && *s.Prompt != "" {
 		b.WriteString(fmt.Sprintf("  Prompt:  %s\n", *s.Prompt))

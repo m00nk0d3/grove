@@ -108,9 +108,7 @@ func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
 		if err := cmd.Start(); err == nil {
 			pid := pollPIDFile(pidFile, 3*time.Second)
 			os.Remove(pidFile)
-			if pid > 0 {
-				return pid, nil
-			}
+			return pid, nil
 		}
 		os.Remove(pidFile)
 		// Fall through to standalone window on error.
