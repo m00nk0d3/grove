@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.3.0] - 2026-05-19
+
+### Added
+- feat: create worktree from selected issue (#88) (63ad193)
+
+### Documentation
+- docs(readme): fix keybindings to match actual app behavior (d382dad)
+- docs(readme): replace version placeholders with dynamic installs (21c9966)
+- docs(readme): update for v0.2.0 features (9dfd3cc)
+
 ## [v0.2.0] - 2026-05-19
 
 ### Added
