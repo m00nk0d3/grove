@@ -149,7 +149,8 @@ type sessionFocusedMsg struct {
 }
 
 // msgAutoDismissDuration is how long the success/info toast stays visible before
-// being cleared by clearMsgCmd. Must stay in sync with the label in renderInfoModal.
+// being cleared by clearMsgCmd. renderInfoModal reads this constant directly so
+// the displayed countdown is always accurate.
 const msgAutoDismissDuration = 3 * time.Second
 
 // clearMsgMsg is dispatched after the success-notification timer fires.
@@ -679,7 +680,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// without waiting for the next health-check tick.
 		found := false
 		for i := range m.sessions {
-			if m.sessions[i].WorktreePath == msg.session.WorktreePath {
+			if pathsEqual(m.sessions[i].WorktreePath, msg.session.WorktreePath) {
 				m.sessions[i] = msg.session
 				found = true
 				break
@@ -843,7 +844,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var updated []domain.Session
 		for _, s := range m.sessions {
-			if s.WorktreePath != msg.worktreePath {
+			if !pathsEqual(s.WorktreePath, msg.worktreePath) {
 				updated = append(updated, s)
 			}
 		}

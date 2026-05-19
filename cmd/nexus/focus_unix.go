@@ -31,7 +31,8 @@ func focusSessionWindow(pid int) error {
 // running nexus. Because macOS does not easily let us map a shell PID to a
 // specific window without scripting bridges, we activate the whole app which
 // brings its frontmost window forward — good enough for most single-window
-// workflows.
+// workflows. In multi-window setups this may bring the wrong window to front;
+// the PID parameter is intentionally not used here for this reason.
 func focusWindowDarwin() error {
 	var appName string
 	switch os.Getenv("TERM_PROGRAM") {

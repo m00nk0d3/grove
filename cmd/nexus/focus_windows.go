@@ -12,6 +12,9 @@ import (
 // using PowerShell and the Win32 SetForegroundWindow API. The function is
 // best-effort: if no window handle is found for the given PID, a descriptive
 // error is returned.
+//
+// Note: Add-Type compiles the C# shim on every invocation, which can take
+// 500ms–2s. This is acceptable for an infrequent, user-triggered action.
 func focusSessionWindow(pid int) error {
 	if pid <= 0 {
 		return fmt.Errorf("no trackable PID for this session")
