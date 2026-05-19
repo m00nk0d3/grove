@@ -2,6 +2,7 @@
 
 > Manage Git worktrees, track GitHub PRs and Issues, launch AI coding agents, and keep tabs on every active session — all from a single terminal interface. No browser. No tab soup. Just vibes.
 
+![Latest Release](https://img.shields.io/github/v/release/m00nk0d3/nexus?logo=github&label=latest)
 ![Go version](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
@@ -63,27 +64,39 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 
 Grab the latest release from the [GitHub Releases page](https://github.com/m00nk0d3/nexus/releases).
 
+Assets follow the naming pattern `nexus_{version}_{os}_{arch}[.tar.gz|.zip]`:
+
 | Platform | Archive |
 |---|---|
-| Linux (amd64) | `nexus_<version>_linux_amd64.tar.gz` |
-| Linux (arm64) | `nexus_<version>_linux_arm64.tar.gz` |
-| macOS (Intel) | `nexus_<version>_darwin_amd64.tar.gz` |
-| macOS (Apple Silicon) | `nexus_<version>_darwin_arm64.tar.gz` |
-| Windows (amd64) | `nexus_<version>_windows_amd64.zip` |
+| Linux (amd64) | `nexus_{version}_linux_amd64.tar.gz` |
+| Linux (arm64) | `nexus_{version}_linux_arm64.tar.gz` |
+| macOS (Intel) | `nexus_{version}_darwin_amd64.tar.gz` |
+| macOS (Apple Silicon) | `nexus_{version}_darwin_arm64.tar.gz` |
+| Windows (amd64) | `nexus_{version}_windows_amd64.zip` |
 
 > **Pre-releases** (alpha / beta / RC) are also published on the Releases page and clearly marked. Use them to try upcoming features early.
 
 #### Linux / macOS
 
+The snippet below fetches the latest version automatically — no manual version hunting required:
+
 ```bash
-tar -xzf nexus_<version>_linux_amd64.tar.gz
+VERSION=$(curl -s https://api.github.com/repos/m00nk0d3/nexus/releases/latest \
+  | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
+curl -L "https://github.com/m00nk0d3/nexus/releases/latest/download/nexus_${VERSION}_linux_amd64.tar.gz" \
+  | tar -xz
 sudo mv nexus /usr/local/bin/
 ```
+
+> Replace `linux_amd64` with `darwin_amd64` or `darwin_arm64` for macOS.
 
 #### Windows (PowerShell)
 
 ```powershell
-Expand-Archive nexus_<version>_windows_amd64.zip -DestinationPath "$env:USERPROFILE\nexus"
+$version = (Invoke-RestMethod https://api.github.com/repos/m00nk0d3/nexus/releases/latest).tag_name.TrimStart('v')
+Invoke-WebRequest "https://github.com/m00nk0d3/nexus/releases/latest/download/nexus_${version}_windows_amd64.zip" `
+  -OutFile nexus.zip
+Expand-Archive nexus.zip -DestinationPath "$env:USERPROFILE\nexus"
 # Add to PATH for the current user (run once):
 [System.Environment]::SetEnvironmentVariable(
   "PATH",
