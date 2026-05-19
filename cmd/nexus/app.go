@@ -1143,6 +1143,7 @@ func buildSpawnSession(db *data.DB, worktreePath, agentName string, pid int, pro
 	}
 	return sess
 }
+
 // spawnCopilotCmd opens a new terminal tab/window running gh copilot at
 // worktreePath and dispatches agentDoneMsg once the launch completes.
 // The TUI is not suspended — nexus keeps running in the current terminal.
@@ -1551,7 +1552,7 @@ func buildNewTabWithCmdCmd(path, agentCmd, pidFile, goos string) (*exec.Cmd, boo
 				script = fmt.Sprintf(`tell app "Terminal" to do script "cd %q && %s" in front window`, path, agentCmd)
 			}
 			return exec.Command("osascript", "-e", script), true
-		// ghostty: no stable tab-open CLI yet — falls through to new window.
+			// ghostty: no stable tab-open CLI yet — falls through to new window.
 		}
 	default: // Linux
 		if os.Getenv("KONSOLE_VERSION") != "" {
@@ -1573,11 +1574,15 @@ func buildNewTabWithCmdCmd(path, agentCmd, pidFile, goos string) (*exec.Cmd, boo
 	return nil, false
 }
 
-// shellQuote wraps s in double quotes, escaping any double-quote characters
-// inside. Used when embedding user-supplied prompts into shell command strings
-// for spawning agent processes in new terminal windows.
+// shellQuote wraps s in double quotes with escaping for safe embedding in a
+// POSIX shell command string. Escapes \, ", $, and backtick to prevent
+// command substitution or variable expansion inside the quoted argument.
 func shellQuote(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `$`, `\$`)
+	s = strings.ReplaceAll(s, "`", "\\`")
+	return `"` + s + `"`
 }
 
 // spawnSessionCmd opens a new terminal window at worktreePath in the background
@@ -1686,32 +1691,32 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 				}
 			} else {
 				for _, s := range all {
-				if s.Status == domain.StatusDead {
-					if err := data.DeleteSession(db, s.ID); err != nil {
-						slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
-					}
-					continue
-				}
-				if s.ShellPID == nil {
-					// No PID — keep alive up to 24 hours (e.g. WT tabs without PID tracking).
-					if time.Since(s.StartedAt) > 24*time.Hour {
+					if s.Status == domain.StatusDead {
 						if err := data.DeleteSession(db, s.ID); err != nil {
-							slog.Warn("session health check: failed to delete stale session", "id", s.ID, "err", err)
+							slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
 						}
 						continue
 					}
-					alive = append(alive, s)
-					continue
-				}
-				if pidAlive(*s.ShellPID) {
-					alive = append(alive, s)
-				} else {
-					// Shell is dead — remove from DB.
-					if err := data.DeleteSession(db, s.ID); err != nil {
-						slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
+					if s.ShellPID == nil {
+						// No PID — keep alive up to 24 hours (e.g. WT tabs without PID tracking).
+						if time.Since(s.StartedAt) > 24*time.Hour {
+							if err := data.DeleteSession(db, s.ID); err != nil {
+								slog.Warn("session health check: failed to delete stale session", "id", s.ID, "err", err)
+							}
+							continue
+						}
+						alive = append(alive, s)
+						continue
+					}
+					if pidAlive(*s.ShellPID) {
+						alive = append(alive, s)
+					} else {
+						// Shell is dead — remove from DB.
+						if err := data.DeleteSession(db, s.ID); err != nil {
+							slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
+						}
 					}
 				}
-			}
 			}
 		}
 

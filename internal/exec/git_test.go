@@ -229,7 +229,7 @@ func TestGitCommand_ListWorktrees(t *testing.T) {
 			expectErr: "git failed",
 		},
 		{
-			name: "returns parse error with context",
+			name:     "returns parse error with context",
 			repoPath: "/repo/main",
 			listOutput: "HEAD badbadbadbadbadbadbadbadbadbadbadbadbadb\n" +
 				"worktree /repo/main\n",
@@ -340,15 +340,15 @@ func TestGitCommand_AddWorktree(t *testing.T) {
 
 func TestGitCommand_AddWorktreeNewBranch(t *testing.T) {
 	tests := []struct {
-		name         string
-		repoPath     string
-		path         string
-		branchName   string
-		baseBranch   string
-		fetchErr     error
-		worktreeErr  error
-		wantCallSeq  [][]string
-		expectErr    string
+		name        string
+		repoPath    string
+		path        string
+		branchName  string
+		baseBranch  string
+		fetchErr    error
+		worktreeErr error
+		wantCallSeq [][]string
+		expectErr   string
 	}{
 		{
 			name:       "fetches base branch then creates worktree from origin/<base>",
@@ -1239,4 +1239,3 @@ func TestGitCommand_ListModifiedFiles(t *testing.T) {
 		})
 	}
 }
-

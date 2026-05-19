@@ -51,8 +51,8 @@ func TestRenderFull_ContainsHeader(t *testing.T) {
 
 func TestRenderFull_ContainsNavRailItems(t *testing.T) {
 	tests := []struct {
-		name    string
-		wantIn  []string
+		name   string
+		wantIn []string
 	}{
 		{
 			name:   "nav rail contains all navigation keys",
@@ -583,10 +583,10 @@ func TestRenderContextPanel_IssueContext(t *testing.T) {
 // author, state, and an "[g] Open in GitHub" hint.
 func TestRenderContextPanel_PRContext(t *testing.T) {
 	tests := []struct {
-		name      string
-		prs       []domain.PullRequest
-		prIdx     int
-		wantIn    []string
+		name   string
+		prs    []domain.PullRequest
+		prIdx  int
+		wantIn []string
 	}{
 		{
 			name: "shows PR context header with number and title",
@@ -776,8 +776,8 @@ func TestRenderer_ContextPanel_WithLinkedPR(t *testing.T) {
 		{
 			name: "shows PR context header with number",
 			worktree: domain.Worktree{
-				Path:   "/tmp/feat-login",
-				Branch: "feat/login",
+				Path:    "/tmp/feat-login",
+				Branch:  "feat/login",
 				IsClean: true,
 				LinkedPR: &domain.PullRequest{
 					Number: 42,
@@ -792,8 +792,8 @@ func TestRenderer_ContextPanel_WithLinkedPR(t *testing.T) {
 		{
 			name: "shows PR title in context",
 			worktree: domain.Worktree{
-				Path:   "/tmp/feat-login",
-				Branch: "feat/login",
+				Path:    "/tmp/feat-login",
+				Branch:  "feat/login",
 				IsClean: true,
 				LinkedPR: &domain.PullRequest{
 					Number: 42,
@@ -808,8 +808,8 @@ func TestRenderer_ContextPanel_WithLinkedPR(t *testing.T) {
 		{
 			name: "shows GH Title label and author with @ prefix",
 			worktree: domain.Worktree{
-				Path:   "/tmp/feat-login",
-				Branch: "feat/login",
+				Path:    "/tmp/feat-login",
+				Branch:  "feat/login",
 				IsClean: true,
 				LinkedPR: &domain.PullRequest{
 					Number: 42,
@@ -824,8 +824,8 @@ func TestRenderer_ContextPanel_WithLinkedPR(t *testing.T) {
 		{
 			name: "shows status dot and state",
 			worktree: domain.Worktree{
-				Path:   "/tmp/feat-login",
-				Branch: "feat/login",
+				Path:    "/tmp/feat-login",
+				Branch:  "feat/login",
 				IsClean: true,
 				LinkedPR: &domain.PullRequest{
 					Number: 42,
@@ -840,8 +840,8 @@ func TestRenderer_ContextPanel_WithLinkedPR(t *testing.T) {
 		{
 			name: "shows labels in bracket format",
 			worktree: domain.Worktree{
-				Path:   "/tmp/feat-auth",
-				Branch: "feat/auth",
+				Path:    "/tmp/feat-auth",
+				Branch:  "feat/auth",
 				IsClean: true,
 				LinkedPR: &domain.PullRequest{
 					Number: 99,
@@ -856,8 +856,8 @@ func TestRenderer_ContextPanel_WithLinkedPR(t *testing.T) {
 		{
 			name: "shows agent commands section",
 			worktree: domain.Worktree{
-				Path:   "/tmp/feat-login",
-				Branch: "feat/login",
+				Path:    "/tmp/feat-login",
+				Branch:  "feat/login",
 				IsClean: true,
 				LinkedPR: &domain.PullRequest{
 					Number: 42,
@@ -1046,9 +1046,9 @@ func TestRenderer_GHIDColumn_NoLinkedPR(t *testing.T) {
 // LinkedPR, the GH:ID column shows the PR number.
 func TestRenderer_GHIDColumn_WithLinkedPR(t *testing.T) {
 	tests := []struct {
-		name        string
-		worktree    domain.Worktree
-		wantPRNum   string
+		name      string
+		worktree  domain.Worktree
+		wantPRNum string
 	}{
 		{
 			name: "GH:ID shows PR number for linked PR (non-selected row)",
@@ -1262,28 +1262,27 @@ func TestPrStateColor(t *testing.T) {
 	}
 }
 
-
 // TestRenderer_ContextPanel_LongPathTruncated verifies that a worktree path
 // longer than the dynamic ctxInner does not overflow and is truncated with ellipsis.
 func TestRenderer_ContextPanel_LongPathTruncated(t *testing.T) {
-longPath := "/development/worktrees/feat-issue-9-config-file-parsing-very-long-name"
-wt := domain.Worktree{
-Path:    longPath,
-Branch:  "feat-issue-9",
-IsClean: true,
-}
-model := NewModel()
-require.NotNil(t, model)
-model.view = viewWorktrees
-model.Worktrees = []domain.Worktree{wt}
-model.selectedIdx = 0
+	longPath := "/development/worktrees/feat-issue-9-config-file-parsing-very-long-name"
+	wt := domain.Worktree{
+		Path:    longPath,
+		Branch:  "feat-issue-9",
+		IsClean: true,
+	}
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewWorktrees
+	model.Worktrees = []domain.Worktree{wt}
+	model.selectedIdx = 0
 
-view := model.View()
+	view := model.View()
 
-// Path must not appear raw (it would overflow the panel when the terminal is narrow).
-assert.NotContains(t, view, longPath, "raw long path must not appear; it should be truncated")
-// The truncated path must contain the ellipsis sentinel.
-assert.Contains(t, view, "Path: ")
+	// Path must not appear raw (it would overflow the panel when the terminal is narrow).
+	assert.NotContains(t, view, longPath, "raw long path must not appear; it should be truncated")
+	// The truncated path must contain the ellipsis sentinel.
+	assert.Contains(t, view, "Path: ")
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,8 +1399,8 @@ func TestMoveUp_ResetsCtxScrollOffset(t *testing.T) {
 // resets the context scroll offset so the new view starts from the top.
 func TestViewSwitch_ResetsCtxScrollOffset(t *testing.T) {
 	tests := []struct {
-		name    string
-		key     string
+		name     string
+		key      string
 		wantView activeView
 	}{
 		{"switch to worktrees resets scroll", "w", viewWorktrees},
@@ -1795,143 +1794,143 @@ func TestRenderFooterBar_NoPageInfo_WhenListFitsOnOnePage(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildIssueTree_TopLevelOnly(t *testing.T) {
-issues := []domain.Issue{
-{Number: 1, Title: "First"},
-{Number: 2, Title: "Second"},
-{Number: 3, Title: "Third"},
-}
-tree := buildIssueTree(issues)
-require.Len(t, tree, 3)
-assert.Equal(t, 1, tree[0].issue.Number)
-assert.Equal(t, 2, tree[1].issue.Number)
-assert.Equal(t, 3, tree[2].issue.Number)
-for _, r := range tree {
-assert.Empty(t, r.prefix)
-}
+	issues := []domain.Issue{
+		{Number: 1, Title: "First"},
+		{Number: 2, Title: "Second"},
+		{Number: 3, Title: "Third"},
+	}
+	tree := buildIssueTree(issues)
+	require.Len(t, tree, 3)
+	assert.Equal(t, 1, tree[0].issue.Number)
+	assert.Equal(t, 2, tree[1].issue.Number)
+	assert.Equal(t, 3, tree[2].issue.Number)
+	for _, r := range tree {
+		assert.Empty(t, r.prefix)
+	}
 }
 
 func TestBuildIssueTree_ParentWithChildren(t *testing.T) {
-parent := 10
-issues := []domain.Issue{
-{Number: 1, Title: "Parent", SubIssueNumbers: []int{2, 3}},
-{Number: 2, Title: "Child A", ParentNumber: &parent},
-{Number: 3, Title: "Child B", ParentNumber: &parent},
-}
-// Fix: set parent refs to match parent issue number (1, not 10)
-one := 1
-issues[1].ParentNumber = &one
-issues[2].ParentNumber = &one
+	parent := 10
+	issues := []domain.Issue{
+		{Number: 1, Title: "Parent", SubIssueNumbers: []int{2, 3}},
+		{Number: 2, Title: "Child A", ParentNumber: &parent},
+		{Number: 3, Title: "Child B", ParentNumber: &parent},
+	}
+	// Fix: set parent refs to match parent issue number (1, not 10)
+	one := 1
+	issues[1].ParentNumber = &one
+	issues[2].ParentNumber = &one
 
-tree := buildIssueTree(issues)
-require.Len(t, tree, 3)
-assert.Equal(t, 1, tree[0].issue.Number)
-assert.Empty(t, tree[0].prefix)
-assert.Equal(t, 2, tree[1].issue.Number)
-assert.Equal(t, "├─ ", tree[1].prefix)
-assert.Equal(t, 3, tree[2].issue.Number)
-assert.Equal(t, "└─ ", tree[2].prefix, "last child gets └─ prefix")
+	tree := buildIssueTree(issues)
+	require.Len(t, tree, 3)
+	assert.Equal(t, 1, tree[0].issue.Number)
+	assert.Empty(t, tree[0].prefix)
+	assert.Equal(t, 2, tree[1].issue.Number)
+	assert.Equal(t, "├─ ", tree[1].prefix)
+	assert.Equal(t, 3, tree[2].issue.Number)
+	assert.Equal(t, "└─ ", tree[2].prefix, "last child gets └─ prefix")
 }
 
 func TestBuildIssueTree_OrphanedSubIssue(t *testing.T) {
-missingParent := 99
-issues := []domain.Issue{
-{Number: 1, Title: "Regular"},
-{Number: 2, Title: "Orphan", ParentNumber: &missingParent},
-}
-tree := buildIssueTree(issues)
-require.Len(t, tree, 2)
-assert.Equal(t, 1, tree[0].issue.Number)
-// Orphan is appended at bottom with no prefix.
-assert.Equal(t, 2, tree[1].issue.Number)
-assert.Empty(t, tree[1].prefix)
+	missingParent := 99
+	issues := []domain.Issue{
+		{Number: 1, Title: "Regular"},
+		{Number: 2, Title: "Orphan", ParentNumber: &missingParent},
+	}
+	tree := buildIssueTree(issues)
+	require.Len(t, tree, 2)
+	assert.Equal(t, 1, tree[0].issue.Number)
+	// Orphan is appended at bottom with no prefix.
+	assert.Equal(t, 2, tree[1].issue.Number)
+	assert.Empty(t, tree[1].prefix)
 }
 
 func TestBuildIssueTree_OriginalIdxPreserved(t *testing.T) {
-one := 1
-issues := []domain.Issue{
-{Number: 1, Title: "Parent", SubIssueNumbers: []int{2}},
-{Number: 2, Title: "Child", ParentNumber: &one},
-}
-tree := buildIssueTree(issues)
-require.Len(t, tree, 2)
-assert.Equal(t, 0, tree[0].originalIdx)
-assert.Equal(t, 1, tree[1].originalIdx)
+	one := 1
+	issues := []domain.Issue{
+		{Number: 1, Title: "Parent", SubIssueNumbers: []int{2}},
+		{Number: 2, Title: "Child", ParentNumber: &one},
+	}
+	tree := buildIssueTree(issues)
+	require.Len(t, tree, 2)
+	assert.Equal(t, 0, tree[0].originalIdx)
+	assert.Equal(t, 1, tree[1].originalIdx)
 }
 
 func TestExtractIssueNumber_Valid(t *testing.T) {
-cases := []struct {
-branch string
-want   int
-}{
-{"feat/issue-42-some-feature", 42},
-{"fix/issue-7-bug-fix", 7},
-{"issue-100-other", 100},
-}
-for _, tc := range cases {
-assert.Equal(t, tc.want, extractIssueNumber(tc.branch), tc.branch)
-}
+	cases := []struct {
+		branch string
+		want   int
+	}{
+		{"feat/issue-42-some-feature", 42},
+		{"fix/issue-7-bug-fix", 7},
+		{"issue-100-other", 100},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, extractIssueNumber(tc.branch), tc.branch)
+	}
 }
 
 func TestExtractIssueNumber_NoMatch(t *testing.T) {
-cases := []string{"main", "feat/no-number", "hotfix-something", ""}
-for _, branch := range cases {
-assert.Equal(t, 0, extractIssueNumber(branch), "should return 0 for %q", branch)
-}
+	cases := []string{"main", "feat/no-number", "hotfix-something", ""}
+	for _, branch := range cases {
+		assert.Equal(t, 0, extractIssueNumber(branch), "should return 0 for %q", branch)
+	}
 }
 
 func TestBuildIssueHierarchyStr_ParentIssue(t *testing.T) {
-parentNum := 5
-issue := domain.Issue{Number: 10, Title: "Child", ParentNumber: &parentNum}
-parent := domain.Issue{Number: 5, Title: "The Parent"}
-result := buildIssueHierarchyStr(issue, []domain.Issue{parent, issue}, 80)
-assert.Contains(t, result, "Parent: #5")
-assert.Contains(t, result, "The Parent")
+	parentNum := 5
+	issue := domain.Issue{Number: 10, Title: "Child", ParentNumber: &parentNum}
+	parent := domain.Issue{Number: 5, Title: "The Parent"}
+	result := buildIssueHierarchyStr(issue, []domain.Issue{parent, issue}, 80)
+	assert.Contains(t, result, "Parent: #5")
+	assert.Contains(t, result, "The Parent")
 }
 
 func TestBuildIssueHierarchyStr_SubIssues(t *testing.T) {
-issue := domain.Issue{Number: 5, Title: "Parent", SubIssueNumbers: []int{10, 11}}
-child1 := domain.Issue{Number: 10, Title: "Child One"}
-child2 := domain.Issue{Number: 11, Title: "Child Two"}
-result := buildIssueHierarchyStr(issue, []domain.Issue{issue, child1, child2}, 80)
-assert.Contains(t, result, "Sub-issues:")
-assert.Contains(t, result, "#10")
-assert.Contains(t, result, "#11")
-assert.Contains(t, result, "Child One")
-assert.Contains(t, result, "Child Two")
+	issue := domain.Issue{Number: 5, Title: "Parent", SubIssueNumbers: []int{10, 11}}
+	child1 := domain.Issue{Number: 10, Title: "Child One"}
+	child2 := domain.Issue{Number: 11, Title: "Child Two"}
+	result := buildIssueHierarchyStr(issue, []domain.Issue{issue, child1, child2}, 80)
+	assert.Contains(t, result, "Sub-issues:")
+	assert.Contains(t, result, "#10")
+	assert.Contains(t, result, "#11")
+	assert.Contains(t, result, "Child One")
+	assert.Contains(t, result, "Child Two")
 }
 
 func TestBuildIssueHierarchyStr_NeitherParentNorChildren(t *testing.T) {
-issue := domain.Issue{Number: 1, Title: "Standalone"}
-result := buildIssueHierarchyStr(issue, []domain.Issue{issue}, 80)
-assert.Empty(t, result)
+	issue := domain.Issue{Number: 1, Title: "Standalone"}
+	result := buildIssueHierarchyStr(issue, []domain.Issue{issue}, 80)
+	assert.Empty(t, result)
 }
 
 func TestBuildPRHint_SubIssueWithParentWorktree(t *testing.T) {
-parentNum := 5
-issues := []domain.Issue{
-{Number: 10, Title: "Child", ParentNumber: &parentNum},
-{Number: 5, Title: "Parent"},
-}
-worktrees := []domain.Worktree{
-{Branch: "feat/issue-5-parent-feature"},
-{Branch: "feat/issue-10-child-feature"},
-}
-hint := buildPRHint("feat/issue-10-child-feature", issues, worktrees)
-assert.Contains(t, hint, "gh pr create --base feat/issue-5-parent-feature")
+	parentNum := 5
+	issues := []domain.Issue{
+		{Number: 10, Title: "Child", ParentNumber: &parentNum},
+		{Number: 5, Title: "Parent"},
+	}
+	worktrees := []domain.Worktree{
+		{Branch: "feat/issue-5-parent-feature"},
+		{Branch: "feat/issue-10-child-feature"},
+	}
+	hint := buildPRHint("feat/issue-10-child-feature", issues, worktrees)
+	assert.Contains(t, hint, "gh pr create --base feat/issue-5-parent-feature")
 }
 
 func TestBuildPRHint_NotASubIssue(t *testing.T) {
-issues := []domain.Issue{
-{Number: 10, Title: "Standalone"},
-}
-worktrees := []domain.Worktree{{Branch: "feat/issue-10-standalone"}}
-hint := buildPRHint("feat/issue-10-standalone", issues, worktrees)
-assert.Empty(t, hint)
+	issues := []domain.Issue{
+		{Number: 10, Title: "Standalone"},
+	}
+	worktrees := []domain.Worktree{{Branch: "feat/issue-10-standalone"}}
+	hint := buildPRHint("feat/issue-10-standalone", issues, worktrees)
+	assert.Empty(t, hint)
 }
 
 func TestBuildPRHint_NonIssueBranch(t *testing.T) {
-hint := buildPRHint("main", []domain.Issue{}, []domain.Worktree{})
-assert.Empty(t, hint)
+	hint := buildPRHint("main", []domain.Issue{}, []domain.Worktree{})
+	assert.Empty(t, hint)
 }
 
 // ---------------------------------------------------------------------------

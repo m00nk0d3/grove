@@ -259,6 +259,24 @@ func TestUpsertSession_ClosedDB(t *testing.T) {
 	assert.Contains(t, err.Error(), "upsert session")
 }
 
+// TestGetSessionByWorktree_CaseInsensitive verifies that path lookup is
+// case-insensitive so that Windows paths stored with one casing (e.g.
+// "D:\Dev\Foo") can be found with a differently-cased query ("d:\dev\foo").
+func TestGetSessionByWorktree_CaseInsensitive(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	s := newSession("/Repo/Target")
+	_, err = data.UpsertSession(db, s)
+	require.NoError(t, err)
+
+	got, err := data.GetSessionByWorktree(db, "/repo/target")
+	require.NoError(t, err)
+	require.NotNil(t, got, "GetSessionByWorktree should find session regardless of path casing")
+	assert.Equal(t, "/Repo/Target", got.WorktreePath)
+}
+
 // TestDeleteSession_ClosedDB verifies that operating on a closed DB returns a
 // wrapped error containing "delete session".
 func TestDeleteSession_ClosedDB(t *testing.T) {

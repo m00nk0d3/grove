@@ -78,7 +78,7 @@ func GetSessionByWorktree(db *DB, worktreePath string) (*domain.Session, error) 
 	row := db.Conn.QueryRow(
 		`SELECT id, worktree_path, shell_pid, agent_name, prompt, status, started_at, updated_at
 		 FROM active_sessions
-		 WHERE worktree_path = ?`,
+		 WHERE LOWER(worktree_path) = LOWER(?)`,
 		worktreePath,
 	)
 	s, err := scanSession(row)

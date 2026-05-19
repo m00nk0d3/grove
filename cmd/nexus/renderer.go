@@ -1095,7 +1095,9 @@ func renderInfoModal(msg string, termWidth, termHeight int, baseView string) str
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
-	_ = termHeight // reserved for future height-capping logic
+	if termHeight <= 0 {
+		termHeight = 24
+	}
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
