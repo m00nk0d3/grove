@@ -1617,7 +1617,7 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 					// with agent info rather than adding a duplicate entry.
 					matched := false
 					for i := range alive {
-						if strings.EqualFold(alive[i].WorktreePath, cs.WorktreePath) {
+						if strings.EqualFold(filepath.Clean(alive[i].WorktreePath), filepath.Clean(cs.WorktreePath)) {
 							if alive[i].AgentName == nil {
 								alive[i].AgentName = cs.AgentName
 								alive[i].Prompt = cs.Prompt

@@ -53,10 +53,19 @@ var navItems = []navItem{
 	{"T", "SETTINGS"},
 }
 
+// pathsEqual reports whether two filesystem paths refer to the same location.
+// It normalises both paths with filepath.Clean (converting forward slashes to
+// OS-native separators on Windows) and compares case-insensitively so that
+// mixed-separator paths from the Copilot session-store match paths returned by
+// git worktree list on Windows.
+func pathsEqual(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
 // sessionForWorktree returns the session whose WorktreePath matches worktreePath, or nil.
 func sessionForWorktree(sessions []domain.Session, worktreePath string) *domain.Session {
 	for i := range sessions {
-		if sessions[i].WorktreePath == worktreePath {
+		if pathsEqual(sessions[i].WorktreePath, worktreePath) {
 			return &sessions[i]
 		}
 	}

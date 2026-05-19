@@ -2211,3 +2211,46 @@ func TestRenderFull_NoSessionBlock_WhenNoSession(t *testing.T) {
 
 	assert.NotContains(t, view, "SESSION")
 }
+
+// TestSessionForWorktree_PathNormalisation verifies that sessionForWorktree matches
+// sessions even when the stored WorktreePath uses different path separators than
+// the lookup path (the Windows forward-slash vs backslash mismatch from the
+// Copilot session-store).
+func TestSessionForWorktree_PathNormalisation(t *testing.T) {
+	agentName := "copilot"
+	sessions := []domain.Session{
+		{
+			WorktreePath: filepath.FromSlash("/repo/feat-work"),
+			Status:       domain.StatusAgentRunning,
+			AgentName:    &agentName,
+		},
+	}
+
+	// Same path with opposite separator style — must still match.
+	got := sessionForWorktree(sessions, filepath.ToSlash(filepath.FromSlash("/repo/feat-work")))
+	require.NotNil(t, got, "expected a session match despite different separators")
+	assert.Equal(t, domain.StatusAgentRunning, got.Status)
+}
+
+// TestPathsEqual_NormalisedComparison verifies the pathsEqual helper handles
+// case differences and mixed separators.
+func TestPathsEqual_NormalisedComparison(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical paths", "/repo/foo", "/repo/foo", true},
+		{"different case", "/Repo/Foo", "/repo/foo", true},
+		{"forward vs backslash", "D:/dev/foo", `D:\dev\foo`, true},
+		{"trailing slash a", "/repo/foo/", "/repo/foo", true},
+		{"trailing slash b", "/repo/foo", "/repo/foo/", true},
+		{"different paths", "/repo/foo", "/repo/bar", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, pathsEqual(tt.a, tt.b))
+		})
+	}
+}

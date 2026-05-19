@@ -59,16 +59,20 @@ func GetActiveCopilotSessions(storePath string, activityWindow time.Duration) ([
 		if err := rows.Scan(&cwd, &summary, &createdAtStr); err != nil {
 			return nil, fmt.Errorf("scan copilot session: %w", err)
 		}
-		if seen[cwd] {
+		// Normalise to OS-native separators before dedup and storage so that
+		// mixed-separator paths from the Copilot CLI match paths returned by
+		// git worktree list (e.g. "D:/dev/foo" vs "D:\dev\foo" on Windows).
+		normalised := filepath.Clean(cwd)
+		if seen[normalised] {
 			continue
 		}
-		seen[cwd] = true
+		seen[normalised] = true
 
 		createdAt, _ := time.Parse(time.RFC3339, createdAtStr)
 
 		agentName := "copilot"
 		s := domain.Session{
-			WorktreePath: cwd,
+			WorktreePath: normalised,
 			AgentName:    &agentName,
 			Status:       domain.StatusAgentRunning,
 			StartedAt:    createdAt,

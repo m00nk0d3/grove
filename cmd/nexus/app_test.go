@@ -2686,7 +2686,7 @@ func TestCheckSessionsCmd_CopilotSessions(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, result.sessions, 1)
 	sess := result.sessions[0]
-	assert.Equal(t, "/repo/copilot-worktree", sess.WorktreePath)
+	assert.Equal(t, filepath.FromSlash("/repo/copilot-worktree"), sess.WorktreePath)
 	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
 	require.NotNil(t, sess.AgentName)
 	assert.Equal(t, "copilot", *sess.AgentName)
@@ -2747,6 +2747,58 @@ func TestCheckSessionsCmd_CopilotEnrichesExisting(t *testing.T) {
 	assert.Equal(t, "copilot", *sess.AgentName)
 }
 
+// TestCheckSessionsCmd_CopilotSessions_MixedSeparators verifies that Copilot
+// sessions whose cwd uses different path separators than the nexus-tracked
+// worktree path still merge correctly (Windows forward-slash vs backslash).
+func TestCheckSessionsCmd_CopilotSessions_MixedSeparators(t *testing.T) {
+	nexusDB, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = nexusDB.Close() })
+
+	// Insert a nexus session with OS-native separators.
+	nativePath := filepath.FromSlash("/repo/feat-auth")
+	shellSess := domain.Session{
+		WorktreePath: nativePath,
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(nexusDB, shellSess)
+	require.NoError(t, err)
+
+	// Insert a Copilot session with forward-slash CWD (as stored by the Copilot CLI).
+	tmpDir := t.TempDir()
+	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
+	csDB, err := data.NewDB(copilotDBPath)
+	require.NoError(t, err)
+	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
+		id TEXT PRIMARY KEY,
+		cwd TEXT NOT NULL,
+		summary TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`)
+	require.NoError(t, err)
+	recentTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
+	// Use forward-slash path — Copilot CLI on Windows stores these.
+	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"abc-999", filepath.ToSlash(nativePath), "auth work", recentTime, recentTime)
+	require.NoError(t, err)
+	csDB.Close()
+
+	m := NewModel()
+	m.db = nexusDB
+	m.copilotDBPath = copilotDBPath
+
+	msg := m.checkSessionsCmd()()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	// Must merge into ONE session — no duplicate.
+	require.Len(t, result.sessions, 1)
+	sess := result.sessions[0]
+	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
+	require.NotNil(t, sess.AgentName)
+	assert.Equal(t, "copilot", *sess.AgentName)
+}
 
 func TestPidAlive_CurrentProcess(t *testing.T) {
 	assert.True(t, pidAlive(os.Getpid()), "current process should be alive")
