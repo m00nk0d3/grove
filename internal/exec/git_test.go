@@ -373,13 +373,16 @@ func TestGitCommand_AddWorktreeNewBranch(t *testing.T) {
 			},
 		},
 		{
-			name:       "returns error when fetch fails",
+			name:       "falls back to local branch ref when fetch fails (offline)",
 			repoPath:   "/repo/main",
 			path:       "/repo/worktrees/feat-issue-5-modals",
 			branchName: "feat/issue-5-modals",
 			baseBranch: "main",
 			fetchErr:   errors.New("network error"),
-			expectErr:  "network error",
+			wantCallSeq: [][]string{
+				{"fetch", "origin", "main"},
+				{"worktree", "add", "-b", "feat/issue-5-modals", "/repo/worktrees/feat-issue-5-modals", "main"},
+			},
 		},
 		{
 			name:        "returns error when worktree add fails",
