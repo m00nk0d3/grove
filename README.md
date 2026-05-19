@@ -1,6 +1,6 @@
 # NEXUS — Git Worktree Orchestrator & AI Agent Hub
 
-> Manage Git worktrees, track GitHub PRs and Issues, and launch AI coding agents — all from a single terminal interface.
+> Manage Git worktrees, track GitHub PRs and Issues, launch AI coding agents, and keep tabs on every active session — all from a single terminal interface. No browser. No tab soup. Just vibes.
 
 ![Go version](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -34,7 +34,10 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 - **3-pane TUI** — worktree list, GitHub context panel, and detail view in one terminal window
 - **Full worktree management** — create, delete, switch shell, lock/unlock, and prune worktrees without leaving the terminal
 - **GitHub sync** — pull requests and issues fetched via the `gh` CLI and kept fresh in the background
+- **Issue hierarchy & sub-issue branching** — navigate parent/child issue trees and spin up a worktree for any sub-issue in one move, with smart guards so you never branch off a ghost
+- **Active sessions dashboard** — mission control for your worktrees: see exactly what's alive, what's idle, and what's absolutely on fire 🔥
 - **AI agent launchers** — spawn Claude Code, GitHub Copilot, or Aider in the correct worktree directory with a single keypress
+- **Auto-update notifications** — Nexus checks for new versions on startup and can update itself; no more `brew upgrade` guilt-trips
 - **Theme cycling** — switch between Digital Noir, Matrix, and Light themes on the fly with `t`
 - **In-app help** — press `f1` or `?` at any time for a searchable keybindings and troubleshooting reference
 - **Local persistence** — config lives in `~/.nexus/config.toml`; metadata is cached in SQLite so Nexus starts fast
@@ -169,8 +172,9 @@ Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
 | Key | Action |
 |---|---|
 | `w` / `W` | Worktrees view |
-| `i` / `I` | Issues view |
+| `i` / `I` | Issues view (with sub-issue hierarchy!) |
 | `p` / `P` | PRs view |
+| `S` | Active Sessions — mission control for your worktrees |
 | `t` | Cycle themes (Digital Noir → Matrix → Light) |
 
 ### Global
@@ -179,7 +183,7 @@ Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
 |---|---|
 | `f1` / `?` | Open help modal |
 | `g` | Open selected item in GitHub |
-| `Esc` / `Ctrl+C` | Quit |
+| `q` / `Esc` / `Ctrl+C` | Quit |
 
 ---
 
@@ -216,6 +220,30 @@ base_branch = "main"
 # Where new worktree directories are created, relative to the repo root.
 worktree_root = "../worktrees"
 ```
+
+---
+
+## Active Sessions
+
+Press **`S`** to open the Sessions view — your real-time mission control for everything happening across worktrees. See which agents are running, which shells are alive, and which worktrees are just sitting there pretending to be productive.
+
+No more `ps aux | grep claude` crimes. It's all in one place.
+
+---
+
+## Issue Hierarchy & Sub-Issue Branching
+
+Nexus understands GitHub's issue hierarchy (parent issues → sub-issues). In the **Issues** view:
+
+- Browse nested issue trees with indentation so you always know who's the parent
+- Select a sub-issue and press `Ctrl+N` — Nexus creates a worktree branching off the parent's branch automatically
+- If the parent issue has no branch yet, Nexus will warn you instead of silently creating something broken (we've all been there)
+
+---
+
+## Staying Up to Date
+
+Nexus checks for new versions on startup and lets you know when there's something fresher available. No manual `go install` archaeology required. When a new version drops, you'll see a notification and can trigger the self-update from inside the app.
 
 ---
 
