@@ -53,10 +53,98 @@ var navItems = []navItem{
 	{"T", "SETTINGS"},
 }
 
+// pathsEqual reports whether two filesystem paths refer to the same location.
+// It normalises both paths with filepath.Clean (converting forward slashes to
+// OS-native separators on Windows) and compares case-insensitively so that
+// mixed-separator paths from the Copilot session-store match paths returned by
+// git worktree list on Windows.
+func pathsEqual(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+// sessionForWorktree returns the session whose WorktreePath matches worktreePath, or nil.
+func sessionForWorktree(sessions []domain.Session, worktreePath string) *domain.Session {
+	for i := range sessions {
+		if pathsEqual(sessions[i].WorktreePath, worktreePath) {
+			return &sessions[i]
+		}
+	}
+	return nil
+}
+
+// sessionBadge returns a compact badge string for the given session state.
+// nil → "" (no session), StatusActive → "[shell]", agent states include agent name.
+//
+// StatusAgentRunning uses no [shell] prefix because the health checker transitions
+// to that status only once the shell process has already died (agent still alive).
+func sessionBadge(s *domain.Session) string {
+	if s == nil {
+		return ""
+	}
+	agentName := "agent"
+	if s.AgentName != nil {
+		agentName = *s.AgentName
+	}
+	switch s.Status {
+	case domain.StatusActive:
+		return "[shell]"
+	case domain.StatusAgentRunning:
+		return fmt.Sprintf("[%s running]", agentName)
+	case domain.StatusAgentDone:
+		return fmt.Sprintf("[shell][done %s]", agentName)
+	case domain.StatusAgentFailed:
+		return fmt.Sprintf("[shell][failed %s]", agentName)
+	case domain.StatusDead:
+		return "[dead]"
+	default:
+		return ""
+	}
+}
+
+// countActiveSessions returns the number of sessions whose status is not StatusDead.
+func countActiveSessions(sessions []domain.Session) int {
+	n := 0
+	for _, s := range sessions {
+		if s.Status != domain.StatusDead {
+			n++
+		}
+	}
+	return n
+}
+
+// renderSessionBlock formats a SESSION detail block for the context panel.
+// Returns an empty string when s is nil.
+func renderSessionBlock(s *domain.Session) string {
+	if s == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nSESSION\n")
+	b.WriteString(fmt.Sprintf("  Status:  %s\n", s.Status))
+	if s.ShellPID != nil {
+		b.WriteString(fmt.Sprintf("  Shell:   pid %d\n", *s.ShellPID))
+	} else {
+		b.WriteString("  Shell:   none\n")
+	}
+	if s.AgentName != nil {
+		b.WriteString(fmt.Sprintf("  Agent:   %s %s\n", *s.AgentName, s.Status))
+	}
+	if s.Prompt != nil && *s.Prompt != "" {
+		b.WriteString(fmt.Sprintf("  Prompt:  %s\n", *s.Prompt))
+	}
+	mins := int(time.Since(s.StartedAt).Minutes())
+	if mins < 1 {
+		b.WriteString("  Started: just now")
+	} else {
+		b.WriteString(fmt.Sprintf("  Started: %dm ago", mins))
+	}
+	return b.String()
+}
+
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
@@ -79,7 +167,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 		panelHeight = termHeight - fixedChromeRows
 	}
 
-	header := renderHeader(repoPath, theme, headerInner)
+	header := renderHeader(repoPath, theme, headerInner, countActiveSessions(sessions))
 	nav := renderNavRail(theme, panelHeight, view, focused == panelNav)
 
 	// Apply pagination slicing for issue/PR list panels.
@@ -118,10 +206,10 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	case viewPRs:
 		list = renderPRList(visiblePRs, visibleSelectedPRIdx, theme, listInner, panelHeight, focused == panelList)
 	default:
-		list = renderWorktreePanel(worktrees, selectedIdx, theme, listInner, panelHeight, focused == panelList)
+		list = renderWorktreePanel(worktrees, selectedIdx, theme, listInner, panelHeight, focused == panelList, sessions)
 	}
 
-	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner)
+	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions)
 	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, nav, list, ctx)
 	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, prs, currentPage)
 	actionBar := renderActionBar(theme, termWidth)
@@ -129,7 +217,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer, actionBar)
 }
 
-func renderHeader(repoPath string, theme styles.Theme, innerWidth int) string {
+func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSessions int) string {
 	if repoPath == "" {
 		repoPath = "./"
 	}
@@ -137,6 +225,9 @@ func renderHeader(repoPath string, theme styles.Theme, innerWidth int) string {
 		"NEXUS v%s: GIT WORKTREE ORCHESTRATOR | Repo: %s | Local Path: %s",
 		appVersion, filepath.Base(repoPath), repoPath,
 	)
+	if activeSessions > 0 {
+		text += fmt.Sprintf(" | %d active session(s)", activeSessions)
+	}
 	return theme.GetStyle("header").Width(innerWidth).Render(text)
 }
 
@@ -159,7 +250,7 @@ func renderNavRail(theme styles.Theme, panelHeight int, view activeView, focused
 	return st.Render(strings.TrimRight(b.String(), "\n"))
 }
 
-func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme styles.Theme, listInner, panelHeight int, focused bool) string {
+func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme styles.Theme, listInner, panelHeight int, focused bool, sessions []domain.Session) string {
 	const (
 		cursorW    = 2
 		pathW      = 30
@@ -216,7 +307,7 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 		}
 		entries[i] = wtEntry{
 			cursor:  cursor,
-			name:    truncateStr(filepath.Base(wt.Path), nameW),
+			name:    nameWithBadge(filepath.Base(wt.Path), nameW, sessionForWorktree(sessions, wt.Path)),
 			path:    truncateStr(wt.Path, pathW),
 			status:  worktreeStatus(wt),
 			updated: sha,
@@ -290,7 +381,7 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 	return st.Render(t.Render())
 }
 
-func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int) string {
+func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session) string {
 	var content string
 	switch view {
 	case viewIssues:
@@ -342,6 +433,7 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 			content = "No worktree selected.\nSelect a worktree to\nview context."
 		} else {
 			wt := worktrees[worktreeIdx]
+			sess := sessionForWorktree(sessions, wt.Path)
 			if wt.LinkedPR != nil {
 				pr := wt.LinkedPR
 				// "Labels: " = 8 chars; "Author: @" = 9 chars; "GH Title: " = 10 chars
@@ -366,6 +458,7 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 					filepath.Base(wt.Path), wt.Branch, pathTrunc, prHint,
 				)
 			}
+			content += renderSessionBlock(sess)
 		}
 	}
 	st := theme.GetStyle("context-panel").Width(ctxInner + panelPaddingOverhead)
@@ -895,6 +988,27 @@ func truncateStr(s string, n int) string {
 		return string(runes[:n])
 	}
 	return string(runes[:n-1]) + "…"
+}
+
+// nameWithBadge returns a name+badge string fitting within maxW runes.
+// If the badge fits after the full name, both are shown. Otherwise the name
+// is truncated to make room. If maxW is too small for any badge, just the name.
+func nameWithBadge(name string, maxW int, s *domain.Session) string {
+	badge := sessionBadge(s)
+	if badge == "" {
+		return truncateStr(name, maxW)
+	}
+	badgeRunes := len([]rune(badge))
+	combined := name + " " + badge
+	if len([]rune(combined)) <= maxW {
+		return combined
+	}
+	// Truncate name to leave room for " " + badge.
+	nameMax := maxW - badgeRunes - 1
+	if nameMax < 2 {
+		return truncateStr(name, maxW)
+	}
+	return truncateStr(name, nameMax) + " " + badge
 }
 
 // worktreeStatus maps domain fields to a display status string.

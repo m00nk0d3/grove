@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -179,9 +180,9 @@ func TestModelIntegration(t *testing.T) {
 	}
 }
 
-// TestModel_Enter_TriggersSwitch verifies that pressing Enter on a selected worktree
-// returns a tea.Cmd to switch to that worktree
-func TestModel_Enter_TriggersSwitch(t *testing.T) {
+// TestModel_Enter_TriggersSpawn verifies that pressing Enter on a selected worktree
+// returns a tea.Cmd to spawn a new terminal session for that worktree.
+func TestModel_Enter_TriggersSpawn(t *testing.T) {
 	tests := []struct {
 		name          string
 		worktrees     []interface{} // Will be converted to domain.Worktree
@@ -190,23 +191,23 @@ func TestModel_Enter_TriggersSwitch(t *testing.T) {
 		wantCmdNotNil bool
 	}{
 		{
-			name: "enter on first worktree returns switch command",
+			name: "enter on first worktree returns spawn command",
 			worktrees: []interface{}{
 				map[string]interface{}{"Path": "/home/user/repos/wt1", "Branch": "main", "CommitSHA": "abc123", "IsClean": true, "IsLocked": false, "LinkedPR": nil},
 				map[string]interface{}{"Path": "/home/user/repos/wt2", "Branch": "feature", "CommitSHA": "def456", "IsClean": false, "IsLocked": false, "LinkedPR": nil},
 			},
 			selectedIdx:   0,
-			description:   "Should return a Cmd to switch to first worktree",
+			description:   "Should return a Cmd to spawn session for first worktree",
 			wantCmdNotNil: true,
 		},
 		{
-			name: "enter on second worktree returns switch command",
+			name: "enter on second worktree returns spawn command",
 			worktrees: []interface{}{
 				map[string]interface{}{"Path": "/home/user/repos/wt1", "Branch": "main", "CommitSHA": "abc123", "IsClean": true, "IsLocked": false, "LinkedPR": nil},
 				map[string]interface{}{"Path": "/home/user/repos/wt2", "Branch": "feature", "CommitSHA": "def456", "IsClean": false, "IsLocked": false, "LinkedPR": nil},
 			},
 			selectedIdx:   1,
-			description:   "Should return a Cmd to switch to second worktree",
+			description:   "Should return a Cmd to spawn session for second worktree",
 			wantCmdNotNil: true,
 		},
 	}
@@ -215,6 +216,7 @@ func TestModel_Enter_TriggersSwitch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup: Create model with populated Worktrees list
 			model := NewModel()
+			model.copilotDBPath = ""
 			require.NotNil(t, model, "Model creation should succeed")
 
 			// Convert test data to domain.Worktree
@@ -238,16 +240,16 @@ func TestModel_Enter_TriggersSwitch(t *testing.T) {
 			// Assert: Model is returned
 			assert.NotNil(t, updatedModel, "Update should return model: %s", tt.description)
 
-			// Assert: A Cmd is returned (for switching worktree)
+			// Assert: A Cmd is returned (for spawning a session)
 			if tt.wantCmdNotNil {
-				assert.NotNil(t, cmd, "Update should return a Cmd for switching worktree: %s", tt.description)
+				assert.NotNil(t, cmd, "Update should return a Cmd for spawning session: %s", tt.description)
 			}
 		})
 	}
 }
 
 // TestModel_Enter_EmptyList_NoOp verifies that pressing Enter on an empty worktree list
-// does not trigger a switch command
+// does not trigger a spawn command
 func TestModel_Enter_EmptyList_NoOp(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1856,10 +1858,11 @@ func TestModel_Enter_InViewPRs_EmptyList_NoOp(t *testing.T) {
 	assert.Nil(t, updatedModel.activeModal)
 }
 
-// TestModel_Enter_InViewWorktrees_SwitchesWorktree verifies that Enter still
-// switches to the selected worktree when in viewWorktrees (unchanged behavior).
-func TestModel_Enter_InViewWorktrees_SwitchesWorktree(t *testing.T) {
+// TestModel_Enter_InViewWorktrees_SpawnsSession verifies that Enter spawns a
+// session (same as the s key) when a worktree is selected.
+func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 	m := NewModel()
+	m.copilotDBPath = ""
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
 		{Path: "/repos/nexus", Branch: "main"},
@@ -1867,7 +1870,7 @@ func TestModel_Enter_InViewWorktrees_SwitchesWorktree(t *testing.T) {
 	m.selectedIdx = 0
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	assert.NotNil(t, cmd, "should return a switchWorktreeCmd")
+	assert.NotNil(t, cmd, "should return a spawnSessionCmd")
 }
 
 // ---------------------------------------------------------------------------
@@ -2481,7 +2484,7 @@ func TestBuildNewTerminalCmd(t *testing.T) {
 			t.Setenv("TERMINAL", tt.terminalEnv)
 			t.Setenv("SHELL", tt.shellEnv)
 
-			cmd := buildNewTerminalCmd(tt.path, tt.goos)
+			cmd := buildNewTerminalCmd(tt.path, "", tt.goos)
 			require.NotNil(t, cmd)
 			require.NotEmpty(t, cmd.Args)
 
@@ -2585,10 +2588,11 @@ func TestModel_SKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
 	assert.NotNil(t, cmd, "clearErrorCmd should be returned")
 }
 
-// TestModel_EnterKey_StillUsesSwitchWorktreeCmd verifies that pressing Enter
-// still triggers switchWorktreeCmd (i.e. s-key rebind did not affect Enter).
-func TestModel_EnterKey_StillUsesSwitchWorktreeCmd(t *testing.T) {
+// TestModel_EnterKey_SpawnsSessionLikeSKey verifies that Enter and s both
+// trigger spawnSessionCmd (same behavior).
+func TestModel_EnterKey_SpawnsSessionLikeSKey(t *testing.T) {
 	m := NewModel()
+	m.copilotDBPath = ""
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
 		{Path: "/repos/nexus", Branch: "main"},
@@ -2596,7 +2600,7 @@ func TestModel_EnterKey_StillUsesSwitchWorktreeCmd(t *testing.T) {
 	m.selectedIdx = 0
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	assert.NotNil(t, cmd, "Enter key must still return a Cmd (switchWorktreeCmd)")
+	assert.NotNil(t, cmd, "Enter key must return a Cmd (spawnSessionCmd)")
 }
 
 // TestSessionTickMsg verifies that sessionTickMsg dispatches checkSessionsCmd.
@@ -2632,6 +2636,7 @@ func TestSessionStatusUpdatedMsg_Empty(t *testing.T) {
 // TestCheckSessionsCmd_NilDB verifies that checkSessionsCmd is a no-op when db is nil.
 func TestCheckSessionsCmd_NilDB(t *testing.T) {
 	m := NewModel()
+	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	m.sessions = []domain.Session{
 		{ID: 1, WorktreePath: "/repo/existing", Status: domain.StatusActive},
 	}
@@ -2652,6 +2657,7 @@ func TestCheckSessionsCmd_EmptyDB(t *testing.T) {
 
 	m := NewModel()
 	m.db = db
+	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	cmd := m.checkSessionsCmd()
 	require.NotNil(t, cmd)
 	msg := cmd()
@@ -2660,7 +2666,186 @@ func TestCheckSessionsCmd_EmptyDB(t *testing.T) {
 	assert.Empty(t, result.sessions)
 }
 
-// TestPidAlive_CurrentProcess verifies that pidAlive returns true for the current process.
+// TestCheckSessionsCmd_DeadNilPIDPruned verifies that a session with StatusDead
+// and no ShellPID is deleted from the DB and excluded from the returned list.
+// This is a regression test for the bug where nil-PID sessions were kept unconditionally.
+func TestCheckSessionsCmd_DeadNilPIDPruned(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Insert a dead session with no PID.
+	deadSess := domain.Session{
+		WorktreePath: "/repo/dead-no-pid",
+		Status:       domain.StatusDead,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, deadSess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+	m.copilotDBPath = "" // disable Copilot session reading in unit tests
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "dead+nil-PID session must be pruned from results")
+
+	// Confirm it was also removed from the DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/dead-no-pid")
+	require.NoError(t, err)
+	assert.Nil(t, got, "dead+nil-PID session must be deleted from the database")
+}
+
+// TestCheckSessionsCmd_CopilotSessions verifies that Copilot CLI sessions from the
+// session-store database are merged into the live sessions list as agent_running entries.
+func TestCheckSessionsCmd_CopilotSessions(t *testing.T) {
+	// Build a minimal Copilot session-store in a temp SQLite file.
+	tmpDir := t.TempDir()
+	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
+	csDB, err := data.NewDB(copilotDBPath)
+	require.NoError(t, err)
+	// Seed the Copilot schema (just what GetActiveCopilotSessions queries).
+	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
+		id TEXT PRIMARY KEY,
+		cwd TEXT NOT NULL,
+		summary TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`)
+	require.NoError(t, err)
+	recentTime := time.Now().UTC().Add(-30 * time.Minute).Format(time.RFC3339)
+	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"abc-123", "/repo/copilot-worktree", "implement auth", recentTime, recentTime)
+	require.NoError(t, err)
+	csDB.Close()
+
+	m := NewModel()
+	m.copilotDBPath = copilotDBPath
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	require.Len(t, result.sessions, 1)
+	sess := result.sessions[0]
+	assert.Equal(t, filepath.FromSlash("/repo/copilot-worktree"), sess.WorktreePath)
+	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
+	require.NotNil(t, sess.AgentName)
+	assert.Equal(t, "copilot", *sess.AgentName)
+	require.NotNil(t, sess.Prompt)
+	assert.Equal(t, "implement auth", *sess.Prompt)
+}
+
+// TestCheckSessionsCmd_CopilotEnrichesExisting verifies that a Copilot session for the same
+// worktree as a nexus-tracked shell session enriches it rather than creating a duplicate.
+func TestCheckSessionsCmd_CopilotEnrichesExisting(t *testing.T) {
+	nexusDB, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = nexusDB.Close() })
+
+	// Insert a nexus-tracked session with no agent info.
+	shellSess := domain.Session{
+		WorktreePath: "/repo/shared-worktree",
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(nexusDB, shellSess)
+	require.NoError(t, err)
+
+	// Build a Copilot session-store pointing at the same worktree.
+	tmpDir := t.TempDir()
+	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
+	csDB, err := data.NewDB(copilotDBPath)
+	require.NoError(t, err)
+	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
+		id TEXT PRIMARY KEY,
+		cwd TEXT NOT NULL,
+		summary TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`)
+	require.NoError(t, err)
+	recentTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
+	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"xyz-456", "/repo/shared-worktree", "add tests", recentTime, recentTime)
+	require.NoError(t, err)
+	csDB.Close()
+
+	m := NewModel()
+	m.db = nexusDB
+	m.copilotDBPath = copilotDBPath
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	// Should be exactly ONE session (enriched, not duplicated).
+	require.Len(t, result.sessions, 1)
+	sess := result.sessions[0]
+	assert.Equal(t, "/repo/shared-worktree", sess.WorktreePath)
+	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
+	require.NotNil(t, sess.AgentName)
+	assert.Equal(t, "copilot", *sess.AgentName)
+}
+
+// TestCheckSessionsCmd_CopilotSessions_MixedSeparators verifies that Copilot
+// sessions whose cwd uses different path separators than the nexus-tracked
+// worktree path still merge correctly (Windows forward-slash vs backslash).
+func TestCheckSessionsCmd_CopilotSessions_MixedSeparators(t *testing.T) {
+	nexusDB, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = nexusDB.Close() })
+
+	// Insert a nexus session with OS-native separators.
+	nativePath := filepath.FromSlash("/repo/feat-auth")
+	shellSess := domain.Session{
+		WorktreePath: nativePath,
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(nexusDB, shellSess)
+	require.NoError(t, err)
+
+	// Insert a Copilot session with forward-slash CWD (as stored by the Copilot CLI).
+	tmpDir := t.TempDir()
+	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
+	csDB, err := data.NewDB(copilotDBPath)
+	require.NoError(t, err)
+	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
+		id TEXT PRIMARY KEY,
+		cwd TEXT NOT NULL,
+		summary TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`)
+	require.NoError(t, err)
+	recentTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
+	// Use forward-slash path — Copilot CLI on Windows stores these.
+	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"abc-999", filepath.ToSlash(nativePath), "auth work", recentTime, recentTime)
+	require.NoError(t, err)
+	csDB.Close()
+
+	m := NewModel()
+	m.db = nexusDB
+	m.copilotDBPath = copilotDBPath
+
+	msg := m.checkSessionsCmd()()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	// Must merge into ONE session — no duplicate.
+	require.Len(t, result.sessions, 1)
+	sess := result.sessions[0]
+	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
+	require.NotNil(t, sess.AgentName)
+	assert.Equal(t, "copilot", *sess.AgentName)
+}
+
 func TestPidAlive_CurrentProcess(t *testing.T) {
 	assert.True(t, pidAlive(os.Getpid()), "current process should be alive")
 }
