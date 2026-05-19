@@ -25,12 +25,6 @@ import (
 	"github.com/m00nk0d3/nexus/internal/version"
 )
 
-// issuesFetchedMsg carries the result of a background gh issue list call.
-type issuesFetchedMsg struct {
-	issues []domain.Issue // List of fetched issues, or nil on error
-	err    error          // Error during fetch, if any
-}
-
 // worktreeOpDoneMsg carries the result of an add/remove worktree operation.
 type worktreeOpDoneMsg struct {
 	err error // Error during operation, if any
@@ -467,6 +461,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyEnter:
 			switch m.view {
+			case viewIssues:
+				issue, ok := m.selectedIssue()
+				if !ok {
+					return m, nil
+				}
+				m.activeModal = modal.NewCreateModalForIssue(issue, m.RepoPath, computeParentBranches(m.issues, m.Worktrees)...)
+				return m, nil
 			case viewPRs:
 				if len(m.prs) == 0 || m.selectedPRIdx >= len(m.prs) {
 					return m, nil
@@ -510,8 +511,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF1:
 			m.activeModal = modal.NewHelpModal()
 			return m, nil
-		case tea.KeyCtrlN:
-			return m, m.fetchIssuesCmd()
 		case tea.KeyCtrlD:
 			if selected, ok := m.selectedWorktree(); ok {
 				m.activeModal = modal.NewDeleteModal(selected)
@@ -673,11 +672,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusErr = "No active session for this worktree"
 				return m, clearErrorCmd()
 			}
-		}
-
-	case issuesFetchedMsg:
-		if msg.err == nil {
-			m.activeModal = modal.NewCreateModal(msg.issues, m.RepoPath, computeParentBranches(m.issues, m.Worktrees)...)
 		}
 
 	case aiderFilesFetchedMsg:
@@ -998,17 +992,6 @@ func (m *Model) openInBrowserCmd() tea.Cmd {
 		return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
 	default:
 		return nil
-	}
-}
-
-// fetchIssuesCmd returns a Cmd that fetches open GitHub issues in the background,
-// allowing the user to create worktrees from issues.
-func (m *Model) fetchIssuesCmd() tea.Cmd {
-	repoPath := m.RepoPath
-	return func() tea.Msg {
-		cmd := internalexec.NewIssueCommand(repoPath)
-		issues, err := cmd.ListOpenIssues()
-		return issuesFetchedMsg{issues: issues, err: err}
 	}
 }
 
@@ -1830,6 +1813,14 @@ func (m *Model) selectedWorktree() (domain.Worktree, bool) {
 	}
 
 	return m.Worktrees[m.selectedIdx], true
+}
+
+func (m *Model) selectedIssue() (domain.Issue, bool) {
+	if len(m.issues) == 0 || m.selectedIssueIdx < 0 || m.selectedIssueIdx >= len(m.issues) {
+		return domain.Issue{}, false
+	}
+
+	return m.issues[m.selectedIssueIdx], true
 }
 
 func (m *Model) clampSelectedIdx() {

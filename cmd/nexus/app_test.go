@@ -1856,6 +1856,40 @@ func TestModel_Enter_InViewPRs_EmptyList_NoOp(t *testing.T) {
 	assert.Nil(t, updatedModel.activeModal)
 }
 
+func TestModel_Enter_InViewIssues_OpensCreateModalForSelectedIssue(t *testing.T) {
+	m := NewModel()
+	m.view = viewIssues
+	m.RepoPath = "/repos/nexus"
+	m.issues = []domain.Issue{
+		{Number: 1, Title: "First issue"},
+		{Number: 2, Title: "Second issue"},
+	}
+	m.selectedIssueIdx = 1
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updatedModel, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Nil(t, cmd, "no cmd until the create modal is confirmed")
+	createModal, ok := updatedModel.activeModal.(*modal.CreateModal)
+	require.True(t, ok, "create modal should be open")
+	assert.Equal(t, 2, createModal.SelectedIssue().Number)
+	assert.Contains(t, createModal.View(), "Select branch type")
+	assert.NotContains(t, createModal.View(), "Select issue")
+}
+
+func TestModel_Enter_InViewIssues_EmptyList_NoOp(t *testing.T) {
+	m := NewModel()
+	m.view = viewIssues
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updatedModel, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Nil(t, cmd)
+	assert.Nil(t, updatedModel.activeModal)
+}
+
 // TestModel_Enter_InViewWorktrees_SpawnsSession verifies that Enter spawns a
 // session (same as the s key) when a worktree is selected.
 func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {

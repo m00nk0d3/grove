@@ -40,13 +40,13 @@ var keybindingGroups = []bindingGroup{
 			{"↑/↓  j/k", "Navigate within panel"},
 			{"←/→  h/l", "Switch between panels / tabs"},
 			{"Tab", "Cycle panel focus / tab"},
-			{"Enter", "Open shell in worktree / Select"},
+			{"Enter", "Open selected item"},
 		},
 	},
 	{
 		title: "WORKTREE OPERATIONS",
 		bindings: [][2]string{
-			{"Ctrl+N", "Create new worktree"},
+			{"Enter (Issues view)", "Create worktree from selected issue"},
 			{"Ctrl+D", "Delete selected worktree"},
 			{"s", "Open shell in worktree"},
 			{"x", "Close session and terminal tab"},
@@ -336,7 +336,8 @@ func isAllCaps(s string) bool {
 const tipsContent = `COMMON WORKFLOWS
 
 1. Create a worktree from a GitHub issue
-   Press Ctrl+N → pick issue → choose branch type → confirm.
+   Open the Issues view, select an issue, then press Enter.
+   Choose the branch type and confirm.
    Nexus creates the branch and worktree automatically.
 
 2. Switch to a worktree and start coding
@@ -350,7 +351,7 @@ const tipsContent = `COMMON WORKFLOWS
 
 4. Keep GitHub data fresh
    Nexus auto-syncs on startup and at the configured interval
-   (~5 min default). Use Ctrl+N to fetch fresh issue data.
+   (~5 min default).
 
 5. Open an issue or PR in the browser
    While in the Issues or PRs view, press g to open the
@@ -404,4 +405,3 @@ Nexus helps you manage multiple git worktrees and
 launch AI coding agents with the correct filesystem
 context — all from a single terminal interface.`, version.Version)
 }
-
