@@ -1954,45 +1954,45 @@ func TestSessionBadge_AllStates(t *testing.T) {
 			want:    "",
 		},
 		{
-			name:    "StatusActive returns [shell]",
+			name:    "StatusActive returns [session open]",
 			session: &domain.Session{Status: domain.StatusActive},
-			want:    "[shell]",
+			want:    "[session open]",
 		},
 		{
-			name: "StatusAgentRunning returns [agent running] without shell prefix",
+			name: "StatusAgentRunning returns [session open]",
 			session: &domain.Session{
 				Status:    domain.StatusAgentRunning,
 				AgentName: ptr("copilot"),
 			},
-			want: "[copilot running]",
+			want: "[session open]",
 		},
 		{
-			name: "StatusAgentRunning with no agent name uses 'agent'",
+			name: "StatusAgentRunning with no agent name returns [session open]",
 			session: &domain.Session{
 				Status: domain.StatusAgentRunning,
 			},
-			want: "[agent running]",
+			want: "[session open]",
 		},
 		{
-			name: "StatusAgentDone returns [shell][done agent]",
+			name: "StatusAgentDone returns [session open]",
 			session: &domain.Session{
 				Status:    domain.StatusAgentDone,
 				AgentName: ptr("claude"),
 			},
-			want: "[shell][done claude]",
+			want: "[session open]",
 		},
 		{
-			name: "StatusAgentFailed returns [shell][failed agent]",
+			name: "StatusAgentFailed returns [session open]",
 			session: &domain.Session{
 				Status:    domain.StatusAgentFailed,
 				AgentName: ptr("aider"),
 			},
-			want: "[shell][failed aider]",
+			want: "[session open]",
 		},
 		{
-			name:    "StatusDead returns [dead]",
+			name:    "StatusDead returns empty string",
 			session: &domain.Session{Status: domain.StatusDead},
-			want:    "[dead]",
+			want:    "",
 		},
 	}
 
@@ -2087,41 +2087,41 @@ func TestRenderFull_SessionBadgesInWorktreeRow(t *testing.T) {
 			wantIn:  "feat-work",
 		},
 		{
-			name:    "shell-only session shows [shell]",
+			name:    "shell-only session shows [session open]",
 			session: &domain.Session{WorktreePath: "/tmp/feat-work", Status: domain.StatusActive},
-			wantIn:  "[shell]",
+			wantIn:  "[session open]",
 		},
 		{
-			name: "agent running shows running badge",
+			name: "agent running shows [session open]",
 			session: &domain.Session{
 				WorktreePath: "/tmp/feat-work",
 				Status:       domain.StatusAgentRunning,
 				AgentName:    ptr("copilot"),
 			},
-			wantIn: "[copilot running]",
+			wantIn: "[session open]",
 		},
 		{
-			name: "agent done shows done badge",
+			name: "agent done shows [session open]",
 			session: &domain.Session{
 				WorktreePath: "/tmp/feat-work",
 				Status:       domain.StatusAgentDone,
 				AgentName:    ptr("claude"),
 			},
-			wantIn: "[done claude]",
+			wantIn: "[session open]",
 		},
 		{
-			name: "agent failed shows failed badge",
+			name: "agent failed shows [session open]",
 			session: &domain.Session{
 				WorktreePath: "/tmp/feat-work",
 				Status:       domain.StatusAgentFailed,
 				AgentName:    ptr("aider"),
 			},
-			wantIn: "[failed aider]",
+			wantIn: "[session open]",
 		},
 		{
-			name:    "dead session shows [dead]",
+			name:    "dead session shows no badge",
 			session: &domain.Session{WorktreePath: "/tmp/feat-work", Status: domain.StatusDead},
-			wantIn:  "[dead]",
+			wantIn:  "feat-work",
 		},
 	}
 

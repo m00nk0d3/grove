@@ -134,8 +134,15 @@ func pidInitUnixCmd(pidFile string) string {
 	return fmt.Sprintf(`sh -c 'echo $$ > "%s"; exec "%s"'`, pidFile, shell)
 }
 
-// closeSessionDoneMsg carries the result of a close-session operation.
-type closeSessionDoneMsg struct {
+// sessionKilledMsg carries the result of a kill-session operation.
+type sessionKilledMsg struct {
+	worktreePath string
+	err          error
+}
+
+// sessionFocusedMsg carries the result of attempting to bring an existing
+// terminal session to the foreground.
+type sessionFocusedMsg struct {
 	worktreePath string
 	err          error
 }
@@ -235,11 +242,6 @@ type Model struct {
 	// DB is optional; when non-nil, agent runs are logged to agent_history.
 	db *data.DB
 
-	// copilotDBPath is the path to the Copilot CLI session-store database.
-	// Defaults to ~/.copilot/session-store.db. Used to surface Copilot
-	// sessions as badges even when they weren't launched from Nexus.
-	copilotDBPath string
-
 	// sessions holds the last-known list of active terminal sessions.
 	sessions []domain.Session
 
@@ -275,11 +277,10 @@ func NewModel() *Model {
 	}
 
 	return &Model{
-		Config:        cfg,
-		themeIdx:      themeIdx,
-		statusErr:     configErr,
-		focused:       panelList,
-		copilotDBPath: data.DefaultCopilotDBPath(),
+		Config:    cfg,
+		themeIdx:  themeIdx,
+		statusErr: configErr,
+		focused:   panelList,
 	}
 }
 
@@ -441,6 +442,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			default:
 				if selected, ok := m.selectedWorktree(); ok {
+					// If a live session already exists for this worktree, focus it
+					// instead of spawning a new one. Skip any stale entry whose
+					// shell PID is confirmed dead (and whose agent PID is also
+					// gone), so that closed terminals don't block re-spawning.
+					for _, s := range m.sessions {
+						if !pathsEqual(s.WorktreePath, selected.Path) {
+							continue
+						}
+						if s.ShellPID != nil && !pidAlive(*s.ShellPID) {
+							agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
+							if !agentAlive {
+								break // stale — fall through to spawn
+							}
+						}
+						return m, m.focusSessionCmd(s)
+					}
 					return m, m.spawnSessionCmd(selected.Path)
 				}
 				return m, nil
@@ -608,8 +625,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				for _, s := range m.sessions {
-					if s.WorktreePath == selected.Path {
-						return m, m.closeSessionCmd(s)
+					if pathsEqual(s.WorktreePath, selected.Path) {
+						return m, m.killSessionCmd(s)
 					}
 				}
 				m.statusErr = "No active session for this worktree"
@@ -784,10 +801,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.checkSessionsCmd()
 
 	case sessionStatusUpdatedMsg:
-		m.sessions = msg.sessions
+		var live []domain.Session
+		for _, s := range msg.sessions {
+			if s.Status != domain.StatusDead {
+				live = append(live, s)
+			}
+		}
+		if live == nil {
+			live = []domain.Session{}
+		}
+		m.sessions = live
 		return m, sessionTickCmd()
 
-	case closeSessionDoneMsg:
+	case sessionFocusedMsg:
+		// Focus is best-effort; show a friendly toast regardless of outcome.
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("Session active for %s (could not bring to front: %v)", msg.worktreePath, msg.err)
+		} else {
+			m.statusMsg = fmt.Sprintf("Focused session for %s", msg.worktreePath)
+		}
+		return m, clearMsgCmd()
+
+	case sessionKilledMsg:
 		if msg.err != nil {
 			m.statusErr = fmt.Sprintf("Close session: %v", msg.err)
 			return m, clearErrorCmd()
@@ -1520,45 +1555,85 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 	}
 }
 
-// closeSessionCmd kills the shell process for the given session (causing the
-// terminal tab to close) and removes the session record from the DB.
-func (m *Model) closeSessionCmd(session domain.Session) tea.Cmd {
+// killSessionCmd gracefully kills the shell and agent processes for the given
+// session and removes the session record from the DB.
+// On Unix, SIGTERM is sent first; SIGKILL follows after a 3-second timeout.
+// On Windows, the process is terminated immediately (no SIGTERM equivalent).
+func (m *Model) killSessionCmd(session domain.Session) tea.Cmd {
 	db := m.db
 	return func() tea.Msg {
 		if session.ShellPID != nil {
-			if proc, err := os.FindProcess(*session.ShellPID); err == nil {
-				_ = proc.Kill()
-			}
+			gracefulKillPID(*session.ShellPID)
+		}
+		if session.AgentPID != nil {
+			gracefulKillPID(*session.AgentPID)
 		}
 		if db != nil && session.ID != 0 {
 			if err := data.DeleteSession(db, session.ID); err != nil {
-				return closeSessionDoneMsg{worktreePath: session.WorktreePath, err: err}
+				return sessionKilledMsg{worktreePath: session.WorktreePath, err: err}
 			}
 		}
-		return closeSessionDoneMsg{worktreePath: session.WorktreePath}
+		return sessionKilledMsg{worktreePath: session.WorktreePath}
 	}
 }
 
-// checkSessionsCmd reads all tracked sessions from the nexus DB, checks whether
-// each PID is still alive, and also merges active Copilot CLI sessions discovered
-// from the Copilot session-store database. Returns sessionStatusUpdatedMsg with
-// the combined live session list.
+// focusSessionCmd attempts to bring the terminal window for the given session
+// to the foreground and dispatches sessionFocusedMsg with the outcome.
+func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
+	return func() tea.Msg {
+		pid := 0
+		if session.ShellPID != nil {
+			pid = *session.ShellPID
+		}
+		err := focusSessionWindow(pid)
+		return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
+	}
+}
+
+// checkSessionsCmd reads all tracked sessions from the nexus DB and checks
+// whether each PID is still alive. Returns sessionStatusUpdatedMsg with the
+// live session list.
 func (m *Model) checkSessionsCmd() tea.Cmd {
 	db := m.db
 	current := m.sessions
-	copilotDBPath := m.copilotDBPath
 	return func() tea.Msg {
 		var alive []domain.Session
 
 		// Part 1: reconcile nexus-spawned shell sessions from the nexus DB.
 		if db == nil {
-			// No nexus DB — preserve whatever sessions are already in memory.
-			alive = append(alive, current...)
+			// No nexus DB — perform PID health checks on in-memory sessions so
+			// that terminals the user has closed are removed rather than kept
+			// as stale badges that block re-spawning.
+			for _, s := range current {
+				if s.ShellPID == nil {
+					if s.Status == domain.StatusDead || time.Since(s.StartedAt) > 24*time.Hour {
+						continue
+					}
+					alive = append(alive, s)
+					continue
+				}
+				shellAlive := pidAlive(*s.ShellPID)
+				agentAlive := s.AgentPID != nil && pidAlive(*s.AgentPID)
+				if shellAlive {
+					alive = append(alive, s)
+					continue
+				}
+				if agentAlive {
+					s.Status = domain.StatusAgentRunning
+					alive = append(alive, s)
+					continue
+				}
+				// Both dead — drop from alive (prunes the stale in-memory entry).
+			}
 		} else {
 			all, err := data.GetSessions(db)
 			if err != nil {
 				slog.Warn("session health check: failed to read sessions from DB", "err", err)
-				alive = append(alive, current...)
+				for _, s := range current {
+					if s.Status != domain.StatusDead {
+						alive = append(alive, s)
+					}
+				}
 			} else {
 				for _, s := range all {
 					if s.ShellPID == nil {
@@ -1600,37 +1675,6 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 					// Both are dead — remove from DB.
 					if err := data.DeleteSession(db, s.ID); err != nil {
 						slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
-					}
-				}
-			}
-		}
-
-		// Part 2: merge externally-started Copilot CLI sessions.
-		// These are sessions visible in the Copilot session-store that were not
-		// launched by Nexus. We show them as agent_running badges on the matching
-		// worktree row. Sessions older than 8 hours are ignored.
-		if copilotDBPath != "" {
-			copilotSessions, err := data.GetActiveCopilotSessions(copilotDBPath, 8*time.Hour)
-			if err != nil {
-				slog.Warn("session health check: failed to read copilot sessions", "err", err)
-			} else {
-				for _, cs := range copilotSessions {
-					// If nexus already tracks a session for this worktree, enrich it
-					// with agent info rather than adding a duplicate entry.
-					matched := false
-					for i := range alive {
-						if strings.EqualFold(filepath.Clean(alive[i].WorktreePath), filepath.Clean(cs.WorktreePath)) {
-							if alive[i].AgentName == nil {
-								alive[i].AgentName = cs.AgentName
-								alive[i].Prompt = cs.Prompt
-								alive[i].Status = domain.StatusAgentRunning
-							}
-							matched = true
-							break
-						}
-					}
-					if !matched {
-						alive = append(alive, cs)
 					}
 				}
 			}

@@ -73,32 +73,12 @@ func sessionForWorktree(sessions []domain.Session, worktreePath string) *domain.
 }
 
 // sessionBadge returns a compact badge string for the given session state.
-// nil → "" (no session), StatusActive → "[shell]", agent states include agent name.
-//
-// StatusAgentRunning uses no [shell] prefix because the health checker transitions
-// to that status only once the shell process has already died (agent still alive).
+// nil or dead → "" (no badge), any live session → "[session open]".
 func sessionBadge(s *domain.Session) string {
-	if s == nil {
+	if s == nil || s.Status == domain.StatusDead {
 		return ""
 	}
-	agentName := "agent"
-	if s.AgentName != nil {
-		agentName = *s.AgentName
-	}
-	switch s.Status {
-	case domain.StatusActive:
-		return "[shell]"
-	case domain.StatusAgentRunning:
-		return fmt.Sprintf("[%s running]", agentName)
-	case domain.StatusAgentDone:
-		return fmt.Sprintf("[shell][done %s]", agentName)
-	case domain.StatusAgentFailed:
-		return fmt.Sprintf("[shell][failed %s]", agentName)
-	case domain.StatusDead:
-		return "[dead]"
-	default:
-		return ""
-	}
+	return "[session open]"
 }
 
 // countActiveSessions returns the number of sessions whose status is not StatusDead.
