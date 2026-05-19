@@ -9,9 +9,9 @@ import (
 
 func TestGitHubConfig_SyncInterval(t *testing.T) {
 	tests := []struct {
-		name     string
-		minutes  int
-		wantDur  time.Duration
+		name    string
+		minutes int
+		wantDur time.Duration
 	}{
 		{
 			name:    "zero falls back to 5 minutes",

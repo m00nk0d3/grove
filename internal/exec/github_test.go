@@ -135,9 +135,9 @@ func TestListOpenIssues_MapsDomainsCorrectly(t *testing.T) {
 
 func TestListOpenIssues_MapsAssigneesCorrectly(t *testing.T) {
 	tests := []struct {
-		name              string
-		raw               string
-		wantAssignees     []string
+		name          string
+		raw           string
+		wantAssignees []string
 	}{
 		{
 			name:          "single assignee is mapped",

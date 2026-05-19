@@ -74,8 +74,14 @@ func (g *GitCommand) isWorktreeClean(path string) (bool, error) {
 	return strings.TrimSpace(output) == "", nil
 }
 
-// AddWorktreeNewBranch creates a new worktree and branch: git worktree add -b <branch> <path> <baseBranch>.
+// AddWorktreeNewBranch creates a new worktree and branch. It first attempts to
+// fetch the latest state of baseBranch from origin so the worktree starts from
+// the most recent remote commit. If the fetch fails (e.g. offline or no remote),
+// it falls back to the local branch ref so the command still works offline.
 func (g *GitCommand) AddWorktreeNewBranch(path, branchName, baseBranch string) error {
+	if err := g.FetchRemoteBranch(baseBranch); err == nil {
+		return g.runNoOutput("add worktree new branch", "worktree", "add", "-b", branchName, path, "origin/"+baseBranch)
+	}
 	return g.runNoOutput("add worktree new branch", "worktree", "add", "-b", branchName, path, baseBranch)
 }
 

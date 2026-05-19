@@ -49,6 +49,7 @@ var keybindingGroups = []bindingGroup{
 			{"Ctrl+N", "Create new worktree"},
 			{"Ctrl+D", "Delete selected worktree"},
 			{"s", "Open shell in worktree"},
+			{"x", "Close session and terminal tab"},
 		},
 	},
 	{

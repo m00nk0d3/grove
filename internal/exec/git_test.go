@@ -229,7 +229,7 @@ func TestGitCommand_ListWorktrees(t *testing.T) {
 			expectErr: "git failed",
 		},
 		{
-			name: "returns parse error with context",
+			name:     "returns parse error with context",
 			repoPath: "/repo/main",
 			listOutput: "HEAD badbadbadbadbadbadbadbadbadbadbadbadbadb\n" +
 				"worktree /repo/main\n",
@@ -340,48 +340,80 @@ func TestGitCommand_AddWorktree(t *testing.T) {
 
 func TestGitCommand_AddWorktreeNewBranch(t *testing.T) {
 	tests := []struct {
-		name       string
-		repoPath   string
-		path       string
-		branchName string
-		baseBranch string
-		runErr     error
-		wantArgs   []string
-		expectErr  string
+		name        string
+		repoPath    string
+		path        string
+		branchName  string
+		baseBranch  string
+		fetchErr    error
+		worktreeErr error
+		wantCallSeq [][]string
+		expectErr   string
 	}{
 		{
-			name:       "invokes git worktree add with -b flag",
+			name:       "fetches base branch then creates worktree from origin/<base>",
 			repoPath:   "/repo/main",
 			path:       "/repo/worktrees/feat-issue-5-modals",
 			branchName: "feat/issue-5-modals",
 			baseBranch: "main",
-			wantArgs:   []string{"worktree", "add", "-b", "feat/issue-5-modals", "/repo/worktrees/feat-issue-5-modals", "main"},
+			wantCallSeq: [][]string{
+				{"fetch", "origin", "main"},
+				{"worktree", "add", "-b", "feat/issue-5-modals", "/repo/worktrees/feat-issue-5-modals", "origin/main"},
+			},
 		},
 		{
-			name:       "returns runner error",
+			name:       "fetches feature base branch then creates worktree from origin/<base>",
+			repoPath:   "/repo/main",
+			path:       "/repo/worktrees/feat-issue-63",
+			branchName: "feat/issue-63-my-feature",
+			baseBranch: "feat/issue-61-base",
+			wantCallSeq: [][]string{
+				{"fetch", "origin", "feat/issue-61-base"},
+				{"worktree", "add", "-b", "feat/issue-63-my-feature", "/repo/worktrees/feat-issue-63", "origin/feat/issue-61-base"},
+			},
+		},
+		{
+			name:       "falls back to local branch ref when fetch fails (offline)",
 			repoPath:   "/repo/main",
 			path:       "/repo/worktrees/feat-issue-5-modals",
 			branchName: "feat/issue-5-modals",
 			baseBranch: "main",
-			runErr:     errors.New("git failed"),
-			wantArgs:   []string{"worktree", "add", "-b", "feat/issue-5-modals", "/repo/worktrees/feat-issue-5-modals", "main"},
-			expectErr:  "git failed",
+			fetchErr:   errors.New("network error"),
+			wantCallSeq: [][]string{
+				{"fetch", "origin", "main"},
+				{"worktree", "add", "-b", "feat/issue-5-modals", "/repo/worktrees/feat-issue-5-modals", "main"},
+			},
+		},
+		{
+			name:        "returns error when worktree add fails",
+			repoPath:    "/repo/main",
+			path:        "/repo/worktrees/feat-issue-5-modals",
+			branchName:  "feat/issue-5-modals",
+			baseBranch:  "main",
+			worktreeErr: errors.New("branch already exists"),
+			expectErr:   "branch already exists",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var calledArgs []string
+			var callSeq [][]string
 
 			runner := func(repoPath string, args ...string) (string, error) {
-				calledArgs = append([]string{}, args...)
-				return "", tt.runErr
+				call := append([]string{}, args...)
+				callSeq = append(callSeq, call)
+				// First call is fetch, second is worktree add.
+				if len(callSeq) == 1 && tt.fetchErr != nil {
+					return "", tt.fetchErr
+				}
+				if len(callSeq) == 2 && tt.worktreeErr != nil {
+					return "", tt.worktreeErr
+				}
+				return "", nil
 			}
 
 			cmd := NewGitCommandWithRunner(tt.repoPath, runner)
 			err := cmd.AddWorktreeNewBranch(tt.path, tt.branchName, tt.baseBranch)
-
-			assert.Equal(t, tt.wantArgs, calledArgs)
 
 			if tt.expectErr != "" {
 				require.Error(t, err)
@@ -390,6 +422,7 @@ func TestGitCommand_AddWorktreeNewBranch(t *testing.T) {
 			}
 
 			require.NoError(t, err)
+			assert.Equal(t, tt.wantCallSeq, callSeq)
 		})
 	}
 }
@@ -1206,4 +1239,3 @@ func TestGitCommand_ListModifiedFiles(t *testing.T) {
 		})
 	}
 }
-

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -178,9 +179,9 @@ func TestModelIntegration(t *testing.T) {
 	}
 }
 
-// TestModel_Enter_TriggersSwitch verifies that pressing Enter on a selected worktree
-// returns a tea.Cmd to switch to that worktree
-func TestModel_Enter_TriggersSwitch(t *testing.T) {
+// TestModel_Enter_TriggersSpawn verifies that pressing Enter on a selected worktree
+// returns a tea.Cmd to spawn a new terminal session for that worktree.
+func TestModel_Enter_TriggersSpawn(t *testing.T) {
 	tests := []struct {
 		name          string
 		worktrees     []interface{} // Will be converted to domain.Worktree
@@ -189,23 +190,23 @@ func TestModel_Enter_TriggersSwitch(t *testing.T) {
 		wantCmdNotNil bool
 	}{
 		{
-			name: "enter on first worktree returns switch command",
+			name: "enter on first worktree returns spawn command",
 			worktrees: []interface{}{
 				map[string]interface{}{"Path": "/home/user/repos/wt1", "Branch": "main", "CommitSHA": "abc123", "IsClean": true, "IsLocked": false, "LinkedPR": nil},
 				map[string]interface{}{"Path": "/home/user/repos/wt2", "Branch": "feature", "CommitSHA": "def456", "IsClean": false, "IsLocked": false, "LinkedPR": nil},
 			},
 			selectedIdx:   0,
-			description:   "Should return a Cmd to switch to first worktree",
+			description:   "Should return a Cmd to spawn session for first worktree",
 			wantCmdNotNil: true,
 		},
 		{
-			name: "enter on second worktree returns switch command",
+			name: "enter on second worktree returns spawn command",
 			worktrees: []interface{}{
 				map[string]interface{}{"Path": "/home/user/repos/wt1", "Branch": "main", "CommitSHA": "abc123", "IsClean": true, "IsLocked": false, "LinkedPR": nil},
 				map[string]interface{}{"Path": "/home/user/repos/wt2", "Branch": "feature", "CommitSHA": "def456", "IsClean": false, "IsLocked": false, "LinkedPR": nil},
 			},
 			selectedIdx:   1,
-			description:   "Should return a Cmd to switch to second worktree",
+			description:   "Should return a Cmd to spawn session for second worktree",
 			wantCmdNotNil: true,
 		},
 	}
@@ -237,16 +238,16 @@ func TestModel_Enter_TriggersSwitch(t *testing.T) {
 			// Assert: Model is returned
 			assert.NotNil(t, updatedModel, "Update should return model: %s", tt.description)
 
-			// Assert: A Cmd is returned (for switching worktree)
+			// Assert: A Cmd is returned (for spawning a session)
 			if tt.wantCmdNotNil {
-				assert.NotNil(t, cmd, "Update should return a Cmd for switching worktree: %s", tt.description)
+				assert.NotNil(t, cmd, "Update should return a Cmd for spawning session: %s", tt.description)
 			}
 		})
 	}
 }
 
 // TestModel_Enter_EmptyList_NoOp verifies that pressing Enter on an empty worktree list
-// does not trigger a switch command
+// does not trigger a spawn command
 func TestModel_Enter_EmptyList_NoOp(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -891,13 +892,13 @@ func TestModel_G_Key_OpensInBrowser(t *testing.T) {
 // the new list bounds so openInBrowserCmd never panics.
 func TestModel_GithubSync_ClampsIssueAndPRIdx(t *testing.T) {
 	tests := []struct {
-		name             string
-		initialIssueIdx  int
-		initialPRIdx     int
-		syncIssues       []domain.Issue
-		syncPRs          []domain.PullRequest
-		wantIssueIdx     int
-		wantPRIdx        int
+		name            string
+		initialIssueIdx int
+		initialPRIdx    int
+		syncIssues      []domain.Issue
+		syncPRs         []domain.PullRequest
+		wantIssueIdx    int
+		wantPRIdx       int
 	}{
 		{
 			name:            "issue idx clamped when sync shrinks list",
@@ -1164,55 +1165,54 @@ func TestModel_WindowSizeMsg_StoresDimensions(t *testing.T) {
 	}
 }
 
-
 // TestModelUpdate_SKeyOpensShellInWorktreeverifies that pressing "s" in
-// viewWorktrees with a selected worktree triggers switchWorktreeCmd.
+// viewWorktrees with a selected worktree triggers spawnSessionCmd.
 func TestModelUpdate_SKeyOpensShellInWorktree(t *testing.T) {
-tests := []struct {
-name       string
-view       activeView
-worktrees  []domain.Worktree
-wantCmdNil bool
-}{
-{
-name: "s key triggers switchWorktreeCmd when in worktrees view",
-view: viewWorktrees,
-worktrees: []domain.Worktree{
-{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
-},
-wantCmdNil: false,
-},
-{
-name:       "s key does nothing when worktree list is empty",
-view:       viewWorktrees,
-worktrees:  nil,
-wantCmdNil: true,
-},
-{
-name: "s key does nothing in issues view",
-view: viewIssues,
-worktrees: []domain.Worktree{
-{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
-},
-wantCmdNil: true,
-},
-}
+	tests := []struct {
+		name       string
+		view       activeView
+		worktrees  []domain.Worktree
+		wantCmdNil bool
+	}{
+		{
+			name: "s key triggers spawnSessionCmd when in worktrees view",
+			view: viewWorktrees,
+			worktrees: []domain.Worktree{
+				{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
+			},
+			wantCmdNil: false,
+		},
+		{
+			name:       "s key returns clearErrorCmd when worktree list is empty",
+			view:       viewWorktrees,
+			worktrees:  nil,
+			wantCmdNil: false, // clearErrorCmd is returned with the "no worktree selected" error
+		},
+		{
+			name: "s key does nothing in issues view",
+			view: viewIssues,
+			worktrees: []domain.Worktree{
+				{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
+			},
+			wantCmdNil: true,
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-model := NewModel()
-require.NotNil(t, model)
-model.view = tt.view
-model.Worktrees = tt.worktrees
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewModel()
+			require.NotNil(t, model)
+			model.view = tt.view
+			model.Worktrees = tt.worktrees
 
-_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-if tt.wantCmdNil {
-assert.Nil(t, cmd)
-} else {
-assert.NotNil(t, cmd, "expected a non-nil cmd from switchWorktreeCmd")
-}
-})
-}
+			_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+			if tt.wantCmdNil {
+				assert.Nil(t, cmd)
+			} else {
+				assert.NotNil(t, cmd, "expected a non-nil cmd from spawnSessionCmd or clearErrorCmd")
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1856,9 +1856,9 @@ func TestModel_Enter_InViewPRs_EmptyList_NoOp(t *testing.T) {
 	assert.Nil(t, updatedModel.activeModal)
 }
 
-// TestModel_Enter_InViewWorktrees_SwitchesWorktree verifies that Enter still
-// switches to the selected worktree when in viewWorktrees (unchanged behavior).
-func TestModel_Enter_InViewWorktrees_SwitchesWorktree(t *testing.T) {
+// TestModel_Enter_InViewWorktrees_SpawnsSession verifies that Enter spawns a
+// session (same as the s key) when a worktree is selected.
+func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 	m := NewModel()
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
@@ -1867,7 +1867,7 @@ func TestModel_Enter_InViewWorktrees_SwitchesWorktree(t *testing.T) {
 	m.selectedIdx = 0
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	assert.NotNil(t, cmd, "should return a switchWorktreeCmd")
+	assert.NotNil(t, cmd, "should return a spawnSessionCmd")
 }
 
 // ---------------------------------------------------------------------------
@@ -2421,3 +2421,979 @@ func TestModel_QKey_SuppressedWhenClaudePromptActive(t *testing.T) {
 		"q should not quit when claude prompt is active")
 }
 
+// ---------------------------------------------------------------------------
+// Phase 2 (sessions): buildNewTerminalCmd and sessionSpawnedMsg tests
+// ---------------------------------------------------------------------------
+
+// TestBuildNewTerminalCmd verifies that buildNewTerminalCmd returns the correct
+// command shape for each supported platform.
+func TestBuildNewTerminalCmd(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		goos        string
+		terminalEnv string
+		shellEnv    string
+		wantExe     string
+		wantArgs    []string
+	}{
+		{
+			name:     "windows launches cmd /C start cmd /K with quoted path",
+			path:     `C:\repo\wt-feature`,
+			goos:     "windows",
+			wantExe:  "cmd",
+			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d "C:\repo\wt-feature"`},
+		},
+		{
+			name:     "windows quotes path containing spaces",
+			path:     `C:\My Projects\nexus`,
+			goos:     "windows",
+			wantExe:  "cmd",
+			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d "C:\My Projects\nexus"`},
+		},
+		{
+			name:     "darwin uses open -a Terminal",
+			path:     "/Users/dev/repo/wt",
+			goos:     "darwin",
+			wantExe:  "open",
+			wantArgs: []string{"open", "-a", "Terminal", "/Users/dev/repo/wt"},
+		},
+		{
+			name:        "linux with TERMINAL env uses --working-directory",
+			path:        "/home/dev/repo/wt",
+			goos:        "linux",
+			terminalEnv: "kitty",
+			wantExe:     "kitty",
+			wantArgs:    []string{"kitty", "--working-directory=/home/dev/repo/wt"},
+		},
+		{
+			name:     "linux without TERMINAL env falls back to xterm",
+			path:     "/home/dev/repo/wt",
+			goos:     "linux",
+			shellEnv: "/bin/bash",
+			wantExe:  "xterm",
+			wantArgs: []string{"xterm", "-e", "cd '/home/dev/repo/wt'; /bin/bash"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TERMINAL", tt.terminalEnv)
+			t.Setenv("SHELL", tt.shellEnv)
+
+			cmd := buildNewTerminalCmd(tt.path, "", tt.goos)
+			require.NotNil(t, cmd)
+			require.NotEmpty(t, cmd.Args)
+
+			// The first arg is the executable path — check it contains the expected name.
+			assert.Contains(t, cmd.Args[0], tt.wantExe,
+				"command executable should contain %q", tt.wantExe)
+
+			if tt.wantArgs != nil {
+				assert.Equal(t, tt.wantArgs, cmd.Args)
+			}
+		})
+	}
+}
+
+// TestModelUpdate_SessionSpawnedMsg_SpawnErrorSetsStatusErr verifies that when
+// the terminal itself failed to launch (PID == 0), Update sets statusErr.
+func TestModelUpdate_SessionSpawnedMsg_SpawnErrorSetsStatusErr(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	updated, cmd := m.Update(sessionSpawnedMsg{err: errors.New("spawn session: exec: no such file")})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Equal(t, "Failed to spawn session: spawn session: exec: no such file", next.statusErr)
+	assert.Empty(t, next.statusMsg, "statusMsg must be empty on a hard spawn failure")
+	assert.NotNil(t, cmd, "clearErrorCmd should be returned on spawn error")
+}
+
+// TestModelUpdate_SessionSpawnedMsg_TrackErrorSetsStatusMsg verifies that when
+// the terminal launched (PID != 0) but PID tracking failed, Update sets statusMsg
+// (not statusErr) so the user sees a non-fatal warning.
+func TestModelUpdate_SessionSpawnedMsg_TrackErrorSetsStatusMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	pid5678 := 5678
+	updated, cmd := m.Update(sessionSpawnedMsg{
+		session: domain.Session{WorktreePath: "/repo/wt", ShellPID: &pid5678},
+		err:     errors.New("track session: db closed"),
+	})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Empty(t, next.statusErr, "statusErr must be empty when terminal did launch")
+	assert.Contains(t, next.statusMsg, "/repo/wt", "statusMsg should include the worktree path")
+	assert.Contains(t, next.statusMsg, "5678", "statusMsg should include the PID")
+	assert.Contains(t, next.statusMsg, "tracking failed", "statusMsg should indicate tracking failed")
+	assert.NotNil(t, cmd, "clearMsgCmd should be returned on a non-fatal tracking error")
+}
+
+// TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg verifies that a
+// successful sessionSpawnedMsg sets statusMsg with PID info and returns clearMsgCmd.
+func TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	pid9999 := 9999
+	updated, cmd := m.Update(sessionSpawnedMsg{
+		session: domain.Session{ID: 1, WorktreePath: "/repo/feat", ShellPID: &pid9999},
+	})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.NotNil(t, cmd, "clearMsgCmd should be returned on success")
+	assert.Contains(t, next.statusMsg, "/repo/feat", "statusMsg should include the worktree path")
+	assert.Contains(t, next.statusMsg, "9999", "statusMsg should include the PID")
+	assert.Empty(t, next.statusErr, "no error on success")
+}
+
+// TestModel_SKey_InWorktreeView_WithSelection_ReturnsSpawnCmd verifies that
+// pressing s in the worktrees view with a selection returns a non-nil Cmd.
+func TestModel_SKey_InWorktreeView_WithSelection_ReturnsSpawnCmd(t *testing.T) {
+	m := NewModel()
+	m.view = viewWorktrees
+	m.Worktrees = []domain.Worktree{
+		{Path: "/repos/nexus", Branch: "main"},
+	}
+	m.selectedIdx = 0
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.NotNil(t, cmd, "s key on selected worktree should return a spawn Cmd")
+	assert.Empty(t, next.statusErr, "no error when a worktree is selected")
+}
+
+// TestModel_SKey_InWorktreeView_NoSelection_SetsError verifies that pressing s
+// in the worktrees view with no selection sets statusErr.
+func TestModel_SKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
+	m := NewModel()
+	m.view = viewWorktrees
+	m.Worktrees = nil
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	next, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.NotEmpty(t, next.statusErr, "statusErr should be set when no worktree is selected")
+	assert.NotNil(t, cmd, "clearErrorCmd should be returned")
+}
+
+// TestModel_EnterKey_SpawnsSessionLikeSKey verifies that Enter and s both
+// trigger spawnSessionCmd (same behavior).
+func TestModel_EnterKey_SpawnsSessionLikeSKey(t *testing.T) {
+	m := NewModel()
+	m.view = viewWorktrees
+	m.Worktrees = []domain.Worktree{
+		{Path: "/repos/nexus", Branch: "main"},
+	}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.NotNil(t, cmd, "Enter key must return a Cmd (spawnSessionCmd)")
+}
+
+// TestSessionTickMsg verifies that sessionTickMsg dispatches checkSessionsCmd.
+func TestSessionTickMsg(t *testing.T) {
+	m := NewModel()
+	_, cmd := m.Update(sessionTickMsg{})
+	assert.NotNil(t, cmd, "sessionTickMsg should return a non-nil command (checkSessionsCmd)")
+}
+
+// TestSessionStatusUpdatedMsg verifies that sessionStatusUpdatedMsg updates m.sessions
+// and schedules the next tick.
+func TestSessionStatusUpdatedMsg(t *testing.T) {
+	m := NewModel()
+	sessions := []domain.Session{
+		{ID: 1, WorktreePath: "/repo/test", Status: domain.StatusActive},
+	}
+	updated, cmd := m.Update(sessionStatusUpdatedMsg{sessions: sessions})
+	m2 := updated.(*Model)
+	require.Len(t, m2.sessions, 1)
+	assert.Equal(t, "/repo/test", m2.sessions[0].WorktreePath)
+	assert.NotNil(t, cmd, "sessionStatusUpdatedMsg should schedule next tick")
+}
+
+// TestSessionStatusUpdatedMsg_Empty verifies that empty sessions list is stored correctly.
+func TestSessionStatusUpdatedMsg_Empty(t *testing.T) {
+	m := NewModel()
+	m.sessions = []domain.Session{{ID: 1, WorktreePath: "/repo/old"}}
+	updated, _ := m.Update(sessionStatusUpdatedMsg{sessions: []domain.Session{}})
+	m2 := updated.(*Model)
+	assert.Empty(t, m2.sessions)
+}
+
+// TestCheckSessionsCmd_NilDB verifies that checkSessionsCmd performs PID health
+// checks on in-memory sessions even when db is nil, keeping live sessions and
+// dropping stale ones rather than blindly preserving all entries.
+func TestCheckSessionsCmd_NilDB(t *testing.T) {
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: "/repo/existing", Status: domain.StatusActive, StartedAt: time.Now().UTC()},
+	}
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok, "expected sessionStatusUpdatedMsg, got %T", msg)
+	// Session has no ShellPID and is not dead/old, so it must be preserved.
+	require.Len(t, result.sessions, 1)
+	assert.Equal(t, "/repo/existing", result.sessions[0].WorktreePath)
+}
+
+// TestCheckSessionsCmd_NilDB_PrunesDeadPID verifies that checkSessionsCmd drops
+// in-memory sessions whose shell PID is no longer alive when db is nil.
+// This is the fix for the bug where closed terminals kept showing as active.
+func TestCheckSessionsCmd_NilDB_PrunesDeadPID(t *testing.T) {
+	deadPID := 999999999 // extremely unlikely to be a live PID
+
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{
+			ID:           1,
+			WorktreePath: "/repo/dead",
+			ShellPID:     &deadPID,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC(),
+		},
+	}
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok, "expected sessionStatusUpdatedMsg, got %T", msg)
+	assert.Empty(t, result.sessions, "session with dead PID must be pruned from in-memory list")
+}
+
+// TestCheckSessionsCmd_EmptyDB verifies that checkSessionsCmd returns empty sessions when DB is empty.
+func TestCheckSessionsCmd_EmptyDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	m := NewModel()
+	m.db = db
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions)
+}
+
+// TestCheckSessionsCmd_DeadNilPIDPruned verifies that a session with StatusDead
+// and no ShellPID is deleted from the DB and excluded from the returned list.
+// This is a regression test for the bug where nil-PID sessions were kept unconditionally.
+func TestCheckSessionsCmd_DeadNilPIDPruned(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Insert a dead session with no PID.
+	deadSess := domain.Session{
+		WorktreePath: "/repo/dead-no-pid",
+		Status:       domain.StatusDead,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, deadSess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "dead+nil-PID session must be pruned from results")
+
+	// Confirm it was also removed from the DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/dead-no-pid")
+	require.NoError(t, err)
+	assert.Nil(t, got, "dead+nil-PID session must be deleted from the database")
+}
+
+// TestPidAlive_CurrentProcess verifies that pidAlive returns true for the current process.
+func TestPidAlive_CurrentProcess(t *testing.T) {
+	assert.True(t, pidAlive(os.Getpid()), "current process should be alive")
+}
+
+// TestPidAlive_InvalidPID verifies that pidAlive returns false for an invalid PID.
+func TestPidAlive_InvalidPID(t *testing.T) {
+	// PID 0 is the idle process on Windows and typically reserved on Unix.
+	// A very high PID is extremely unlikely to exist.
+	assert.False(t, pidAlive(999999999), "PID 999999999 should not be alive")
+}
+
+// ---------------------------------------------------------------------------
+// buildNewTerminalWithCmdCmd tests
+// ---------------------------------------------------------------------------
+
+// TestBuildNewTerminalWithCmdCmd verifies that buildNewTerminalWithCmdCmd
+// returns a correctly shaped command for each supported terminal emulator and
+// platform combination.
+func TestBuildNewTerminalWithCmdCmd(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		agentCmd    string
+		goos        string
+		termProgram string // TERM_PROGRAM env var (macOS)
+		termEnv     string // TERM env var (Linux terminal type)
+		terminalEnv string // TERMINAL env var (Linux fallback)
+		kittyWinID  string // KITTY_WINDOW_ID
+		wantExe     string
+		wantArgs    []string
+	}{
+		{
+			name:        "darwin ghostty uses ghostty --working-directory",
+			path:        "/Users/dev/repo/wt",
+			agentCmd:    "gh copilot",
+			goos:        "darwin",
+			termProgram: "ghostty",
+			wantExe:     "ghostty",
+			wantArgs:    []string{"ghostty", "--working-directory=/Users/dev/repo/wt", "--", "sh", "-c", "gh copilot"},
+		},
+		{
+			name:     "darwin Terminal.app uses osascript do script",
+			path:     "/Users/dev/repo/wt",
+			agentCmd: "gh copilot",
+			goos:     "darwin",
+			wantExe:  "osascript",
+		},
+		{
+			name:     "linux xterm-ghostty uses ghostty --working-directory",
+			path:     "/home/dev/repo/wt",
+			agentCmd: "claude --print",
+			goos:     "linux",
+			termEnv:  "xterm-ghostty",
+			wantExe:  "ghostty",
+			wantArgs: []string{"ghostty", "--working-directory=/home/dev/repo/wt", "--", "sh", "-c", "claude --print"},
+		},
+		{
+			name:     "linux alacritty uses alacritty --working-directory",
+			path:     "/home/dev/repo/wt",
+			agentCmd: "aider",
+			goos:     "linux",
+			termEnv:  "alacritty",
+			wantExe:  "alacritty",
+			wantArgs: []string{"alacritty", "--working-directory", "/home/dev/repo/wt", "-e", "sh", "-c", "aider"},
+		},
+		{
+			name:        "linux kitty (no remote-control) uses kitty --directory",
+			path:        "/home/dev/repo/wt",
+			agentCmd:    "aider",
+			goos:        "linux",
+			kittyWinID:  "1",
+			wantExe:     "kitty",
+			wantArgs:    []string{"kitty", "--directory", "/home/dev/repo/wt", "sh", "-c", "aider"},
+		},
+		{
+			name:        "linux TERMINAL env uses $TERMINAL -e script",
+			path:        "/home/dev/repo/wt",
+			agentCmd:    "aider",
+			goos:        "linux",
+			terminalEnv: "alacritty",
+			wantExe:     "alacritty",
+		},
+		{
+			name:     "linux no env falls back to xterm",
+			path:     "/home/dev/repo/wt",
+			agentCmd: "aider",
+			goos:     "linux",
+			wantExe:  "xterm",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TERM_PROGRAM", tt.termProgram)
+			t.Setenv("TERM", tt.termEnv)
+			t.Setenv("TERMINAL", tt.terminalEnv)
+			t.Setenv("KITTY_WINDOW_ID", tt.kittyWinID)
+
+			cmd := buildNewTerminalWithCmdCmd(tt.path, tt.agentCmd, tt.goos)
+			require.NotNil(t, cmd)
+			require.NotEmpty(t, cmd.Args)
+
+			assert.Contains(t, cmd.Args[0], tt.wantExe,
+				"executable should contain %q", tt.wantExe)
+			if tt.wantArgs != nil {
+				assert.Equal(t, tt.wantArgs, cmd.Args)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildNewTabWithCmdCmd tests
+// ---------------------------------------------------------------------------
+
+// TestBuildNewTabWithCmdCmd verifies that buildNewTabWithCmdCmd returns a
+// correctly shaped (cmd, true) pair for each supported multiplexer / emulator,
+// and (nil, false) when no supported emulator is detected.
+func TestBuildNewTabWithCmdCmd(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		agentCmd     string
+		pidFile      string
+		goos         string
+		tmuxEnv      string
+		zellijEnv    string
+		kittyWinID   string
+		alacrittyS   string // ALACRITTY_SOCKET
+		wtSession    string // WT_SESSION
+		termProgram  string // TERM_PROGRAM
+		konsoleVer   string // KONSOLE_VERSION
+		wantOK       bool
+		wantExe      string
+		wantArgsContain []string
+	}{
+		// --- Multiplexers ---
+		{
+			name:     "tmux with agentCmd opens new-window with cmd",
+			path:     "/repo/wt",
+			agentCmd: "gh copilot",
+			goos:     "linux",
+			tmuxEnv:  "set",
+			wantOK:   true,
+			wantExe:  "tmux",
+			wantArgsContain: []string{"new-window", "-c", "/repo/wt", "gh copilot"},
+		},
+		{
+			name:    "tmux without agentCmd opens plain new-window",
+			path:    "/repo/wt",
+			goos:    "linux",
+			tmuxEnv: "set",
+			wantOK:  true,
+			wantExe: "tmux",
+			wantArgsContain: []string{"new-window", "-c", "/repo/wt"},
+		},
+		{
+			name:      "zellij with agentCmd runs zellij run",
+			path:      "/repo/wt",
+			agentCmd:  "claude",
+			goos:      "linux",
+			zellijEnv: "set",
+			wantOK:    true,
+			wantExe:   "zellij",
+			wantArgsContain: []string{"run", "--cwd", "/repo/wt"},
+		},
+		{
+			name:      "zellij without agentCmd opens plain shell",
+			path:      "/repo/wt",
+			goos:      "linux",
+			zellijEnv: "set",
+			wantOK:    true,
+			wantExe:   "zellij",
+		},
+		// --- Kitty remote-control ---
+		{
+			name:       "kitty remote-control with agentCmd opens new tab with cmd",
+			path:       "/repo/wt",
+			agentCmd:   "aider",
+			goos:       "linux",
+			kittyWinID: "42",
+			wantOK:     true,
+			wantExe:    "kitty",
+			wantArgsContain: []string{"@", "new-window", "--new-tab", "--cwd", "/repo/wt", "sh", "-c", "aider"},
+		},
+		{
+			name:       "kitty remote-control with pidFile writes PID before shell",
+			path:       "/repo/wt",
+			pidFile:    "/tmp/nexus.pid",
+			goos:       "linux",
+			kittyWinID: "42",
+			wantOK:     true,
+			wantExe:    "kitty",
+			wantArgsContain: []string{"@", "new-window", "--new-tab", "--cwd", "/repo/wt"},
+		},
+		// --- Alacritty IPC ---
+		{
+			name:       "alacritty IPC with agentCmd creates tab with cmd",
+			path:       "/repo/wt",
+			agentCmd:   "gh copilot",
+			goos:       "linux",
+			alacrittyS: "/tmp/alacritty.sock",
+			wantOK:     true,
+			wantExe:    "alacritty",
+			wantArgsContain: []string{"msg", "create-tab", "--working-directory", "/repo/wt", "--", "sh", "-c", "gh copilot"},
+		},
+		// --- Windows Terminal ---
+		{
+			name:      "Windows Terminal with agentCmd opens new tab",
+			path:      `C:\repos\wt`,
+			agentCmd:  "gh copilot",
+			goos:      "windows",
+			wtSession: "some-guid",
+			wantOK:    true,
+			wantExe:   "wt",
+			wantArgsContain: []string{"-w", "0", "new-tab", "--startingDirectory", `C:\repos\wt`, "cmd", "/K", "gh copilot"},
+		},
+		{
+			name:  "Windows without WT_SESSION returns false",
+			path:  `C:\repos\wt`,
+			goos:  "windows",
+			wantOK: false,
+		},
+		// --- macOS iTerm2 ---
+		{
+			name:        "iTerm2 with agentCmd creates tab via osascript",
+			path:        "/Users/dev/repo/wt",
+			agentCmd:    "gh copilot",
+			goos:        "darwin",
+			termProgram: "iTerm.app",
+			wantOK:      true,
+			wantExe:     "osascript",
+		},
+		{
+			name:        "Apple_Terminal with agentCmd creates tab in front window",
+			path:        "/Users/dev/repo/wt",
+			agentCmd:    "aider",
+			goos:        "darwin",
+			termProgram: "Apple_Terminal",
+			wantOK:      true,
+			wantExe:     "osascript",
+		},
+		// --- Linux Konsole ---
+		{
+			name:       "Konsole with agentCmd opens new tab",
+			path:       "/home/dev/repo/wt",
+			agentCmd:   "claude",
+			goos:       "linux",
+			konsoleVer: "210401",
+			wantOK:     true,
+			wantExe:    "konsole",
+			wantArgsContain: []string{"--new-tab"},
+		},
+		// --- No emulator detected ---
+		{
+			name:   "no env vars returns nil false",
+			path:   "/repo/wt",
+			goos:   "linux",
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TMUX", tt.tmuxEnv)
+			t.Setenv("ZELLIJ", tt.zellijEnv)
+			t.Setenv("KITTY_WINDOW_ID", tt.kittyWinID)
+			t.Setenv("ALACRITTY_SOCKET", tt.alacrittyS)
+			t.Setenv("WT_SESSION", tt.wtSession)
+			t.Setenv("TERM_PROGRAM", tt.termProgram)
+			t.Setenv("KONSOLE_VERSION", tt.konsoleVer)
+
+			cmd, ok := buildNewTabWithCmdCmd(tt.path, tt.agentCmd, tt.pidFile, tt.goos)
+			assert.Equal(t, tt.wantOK, ok)
+			if !tt.wantOK {
+				assert.Nil(t, cmd)
+				return
+			}
+			require.NotNil(t, cmd)
+			require.NotEmpty(t, cmd.Args)
+			assert.Contains(t, cmd.Args[0], tt.wantExe,
+				"executable should contain %q", tt.wantExe)
+			for _, want := range tt.wantArgsContain {
+				assert.Contains(t, cmd.Args, want, "args should contain %q", want)
+			}
+		})
+	}
+}
+
+// TestFilterAliveSessions verifies that filterAliveSessions correctly keeps
+// live sessions and drops dead/stale ones.
+func TestFilterAliveSessions(t *testing.T) {
+	liveP := os.Getpid()
+	deadP := 999999999
+
+	tests := []struct {
+		name     string
+		sessions []domain.Session
+		wantLen  int
+	}{
+		{
+			name:     "empty input returns empty",
+			sessions: []domain.Session{},
+			wantLen:  0,
+		},
+		{
+			name: "StatusDead session is always dropped",
+			sessions: []domain.Session{
+				{ID: 1, WorktreePath: "/wt/a", Status: domain.StatusDead, StartedAt: time.Now()},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "live PID session is kept",
+			sessions: []domain.Session{
+				{ID: 2, WorktreePath: "/wt/b", ShellPID: &liveP, Status: domain.StatusActive, StartedAt: time.Now()},
+			},
+			wantLen: 1,
+		},
+		{
+			name: "dead PID session is dropped",
+			sessions: []domain.Session{
+				{ID: 3, WorktreePath: "/wt/c", ShellPID: &deadP, Status: domain.StatusActive, StartedAt: time.Now()},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "nil-PID session under 24h is kept",
+			sessions: []domain.Session{
+				{ID: 4, WorktreePath: "/wt/d", Status: domain.StatusActive, StartedAt: time.Now()},
+			},
+			wantLen: 1,
+		},
+		{
+			name: "nil-PID session over 24h is dropped",
+			sessions: []domain.Session{
+				{ID: 5, WorktreePath: "/wt/e", Status: domain.StatusActive, StartedAt: time.Now().Add(-25 * time.Hour)},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "mixed sessions return only live ones",
+			sessions: []domain.Session{
+				{ID: 1, WorktreePath: "/wt/a", Status: domain.StatusDead, StartedAt: time.Now()},
+				{ID: 2, WorktreePath: "/wt/b", ShellPID: &liveP, Status: domain.StatusActive, StartedAt: time.Now()},
+				{ID: 3, WorktreePath: "/wt/c", ShellPID: &deadP, Status: domain.StatusActive, StartedAt: time.Now()},
+				{ID: 4, WorktreePath: "/wt/d", Status: domain.StatusActive, StartedAt: time.Now()},
+			},
+			wantLen: 2, // live PID + nil-PID (recent)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterAliveSessions(tt.sessions)
+			assert.Len(t, got, tt.wantLen)
+		})
+	}
+}
+
+// TestModel_Enter_ExistingSession_TriggersFocus verifies that when a session
+// already exists for the selected worktree, pressing Enter dispatches a focus
+// command rather than spawning a new session.
+func TestModel_Enter_ExistingSession_TriggersFocus(t *testing.T) {
+	pid := os.Getpid() // use current PID so the session looks alive
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &pid, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// A Cmd must be returned — it is the focus command.
+	assert.NotNil(t, cmd, "Enter on worktree with existing session should return a focus Cmd")
+}
+
+// TestModel_Enter_NoSession_TriggersSpawn verifies that pressing Enter on a
+// worktree with no tracked session dispatches a spawn command.
+func TestModel_Enter_NoSession_TriggersSpawn(t *testing.T) {
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	// No session for this worktree.
+	m.sessions = []domain.Session{}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// A Cmd must be returned — it is the spawn command.
+	assert.NotNil(t, cmd, "Enter on worktree with no session should return a spawn Cmd")
+}
+
+// TestModel_Enter_StaleSession_TriggersSpawn verifies that pressing Enter on a
+// worktree whose only tracked session has a dead shell PID spawns a new terminal
+// rather than calling focusSessionCmd (which would just show a misleading toast).
+func TestModel_Enter_StaleSession_TriggersSpawn(t *testing.T) {
+	worktreePath := "/home/user/repos/wt1"
+	deadPID := 999999999 // extremely unlikely to be a real running PID
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	// Session is stale: has a PID that's dead.
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &deadPID, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Must return a spawn Cmd, not nil (which would mean nothing happened).
+	assert.NotNil(t, cmd, "Enter on worktree with stale session should return a spawn Cmd")
+}
+
+// TestModel_X_WithSession_TriggersKill verifies that pressing x on a worktree
+// with an active session dispatches a kill command.
+func TestModel_X_WithSession_TriggersKill(t *testing.T) {
+	pid := os.Getpid()
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &pid, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+	m.view = viewWorktrees
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	assert.NotNil(t, cmd, "x on worktree with session should return a kill Cmd")
+}
+
+// TestModel_X_WithoutSession_ShowsError verifies that pressing x on a worktree
+// with no active session sets a friendly error message.
+func TestModel_X_WithoutSession_ShowsError(t *testing.T) {
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: "/home/user/repos/wt1", Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{} // no sessions
+	m.selectedIdx = 0
+	m.view = viewWorktrees
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Equal(t, "No active session for this worktree", m2.statusErr)
+	assert.NotNil(t, cmd, "should return clearError cmd")
+}
+
+// TestModel_SessionKilledMsg_Success_RemovesSession verifies that receiving a
+// successful sessionKilledMsg removes the session from m.sessions.
+func TestModel_SessionKilledMsg_Success_RemovesSession(t *testing.T) {
+	pid := os.Getpid()
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: "/wt/a", ShellPID: &pid, Status: domain.StatusActive},
+		{ID: 2, WorktreePath: "/wt/b", ShellPID: &pid, Status: domain.StatusActive},
+	}
+
+	updated, cmd := m.Update(sessionKilledMsg{worktreePath: "/wt/a"})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	require.Len(t, m2.sessions, 1, "killed session should be removed")
+	assert.Equal(t, "/wt/b", m2.sessions[0].WorktreePath)
+	assert.Nil(t, cmd, "successful kill should return nil Cmd")
+}
+
+// TestModel_SessionKilledMsg_Error_SetsStatusErr verifies that a
+// sessionKilledMsg with an error sets m.statusErr.
+func TestModel_SessionKilledMsg_Error_SetsStatusErr(t *testing.T) {
+	m := NewModel()
+	m.sessions = []domain.Session{}
+
+	updated, cmd := m.Update(sessionKilledMsg{worktreePath: "/wt/a", err: errors.New("db error")})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusErr, "Close session")
+	assert.Contains(t, m2.statusErr, "db error")
+	assert.NotNil(t, cmd, "error should schedule clearErrorCmd")
+}
+
+// TestModel_SessionFocusedMsg_Success_ShowsStatusMsg verifies that a successful
+// sessionFocusedMsg sets m.statusMsg.
+func TestModel_SessionFocusedMsg_Success_ShowsStatusMsg(t *testing.T) {
+	m := NewModel()
+
+	updated, cmd := m.Update(sessionFocusedMsg{worktreePath: "/wt/a"})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusMsg, "/wt/a")
+	assert.NotNil(t, cmd, "should return clearMsgCmd")
+}
+
+// TestModel_SessionFocusedMsg_Error_ShowsBestEffortMsg verifies that a failed
+// sessionFocusedMsg still shows a user-friendly message (best-effort focus).
+func TestModel_SessionFocusedMsg_Error_ShowsBestEffortMsg(t *testing.T) {
+	m := NewModel()
+
+	updated, cmd := m.Update(sessionFocusedMsg{worktreePath: "/wt/a", err: errors.New("no wmctrl")})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusMsg, "/wt/a")
+	assert.NotNil(t, cmd, "should return clearMsgCmd even on error")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6: Non-blocking agents — session detection (issue #67)
+// ---------------------------------------------------------------------------
+
+// TestCheckSessionsCmd_NilDB_DeadShellPruned verifies that an in-memory session
+// with a dead shell PID is removed from the alive list.
+func TestCheckSessionsCmd_NilDB_DeadShellPruned(t *testing.T) {
+	deadPID := 999999999
+
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{
+			ID:           1,
+			WorktreePath: "/repo/dead-shell",
+			ShellPID:     &deadPID,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC(),
+		},
+	}
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "session with dead shell PID must be pruned")
+}
+
+// TestCheckSessionsCmd_DB_DeadShellPruned verifies that a DB-backed session
+// with a dead shell PID is deleted from the DB and excluded from the returned list.
+func TestCheckSessionsCmd_DB_DeadShellPruned(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	deadPID := 999999999
+	sess := domain.Session{
+		WorktreePath: "/repo/dead-shell",
+		ShellPID:     &deadPID,
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "session with dead shell PID must be pruned")
+
+	got, err := data.GetSessionByWorktree(db, "/repo/dead-shell")
+	require.NoError(t, err)
+	assert.Nil(t, got, "session with dead shell PID must be deleted from the DB")
+}
+
+// TestPollPIDFile_HappyPath verifies that pollPIDFile returns the PID when
+// the file already contains a valid integer before the first poll.
+func TestPollPIDFile_HappyPath(t *testing.T) {
+	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Remove(f.Name()) })
+
+	_, err = fmt.Fprintf(f, "12345\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	pid := pollPIDFile(f.Name(), 500*time.Millisecond)
+	assert.Equal(t, 12345, pid)
+}
+
+// TestPollPIDFile_DelayedWrite verifies that pollPIDFile waits and returns
+// the PID when the file is written after a short delay.
+func TestPollPIDFile_DelayedWrite(t *testing.T) {
+	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	require.NoError(t, err)
+	pidPath := f.Name()
+	require.NoError(t, f.Close())
+	require.NoError(t, os.Remove(pidPath)) // start with no file
+	t.Cleanup(func() { os.Remove(pidPath) })
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = os.WriteFile(pidPath, []byte("99999\n"), 0600)
+	}()
+
+	pid := pollPIDFile(pidPath, time.Second)
+	assert.Equal(t, 99999, pid)
+}
+
+// TestPollPIDFile_Timeout verifies that pollPIDFile returns 0 when the
+// file never appears within the timeout.
+func TestPollPIDFile_Timeout(t *testing.T) {
+	pid := pollPIDFile(os.TempDir()+"/nexus-pid-test-nonexistent.pid", 200*time.Millisecond)
+	assert.Equal(t, 0, pid, "should return 0 on timeout")
+}
+
+// TestPollPIDFile_InvalidContent verifies that pollPIDFile returns 0 when
+// the file exists but does not contain a valid positive integer.
+func TestPollPIDFile_InvalidContent(t *testing.T) {
+	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Remove(f.Name()) })
+
+	_, err = fmt.Fprintf(f, "not-a-pid\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	pid := pollPIDFile(f.Name(), 200*time.Millisecond)
+	assert.Equal(t, 0, pid, "invalid content should time out and return 0")
+}
+
+// TestShellSingleQuote verifies that shellSingleQuote wraps paths in single
+// quotes and escapes embedded single-quotes with the '\” idiom.
+func TestShellSingleQuote(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"/simple/path", "'/simple/path'"},
+		{"/path with spaces", "'/path with spaces'"},
+		{"/path/with'quote", `'/path/with'\''quote'`},
+		{"", "''"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, shellSingleQuote(tt.input))
+		})
+	}
+}
+
+// TestEscapeAppleScriptStr verifies that escapeAppleScriptStr escapes
+// backslashes and double-quotes for safe embedding in AppleScript strings.
+func TestEscapeAppleScriptStr(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{`aider file.go`, `aider file.go`},
+		{`aider "file.go"`, `aider \"file.go\"`},
+		{`aider back\slash`, `aider back\\slash`},
+		{`aider "a" 'b'`, `aider \"a\" 'b'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, escapeAppleScriptStr(tt.input))
+		})
+	}
+}

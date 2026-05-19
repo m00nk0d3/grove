@@ -41,6 +41,8 @@ func run() error {
 	if db, err := data.NewDB(dbPath); err == nil {
 		m.db = db
 		defer db.Close()
+		// Best-effort cleanup: remove sessions whose processes are no longer alive.
+		_ = data.DeleteDeadSessions(db)
 	}
 
 	opts := []tea.ProgramOption{tea.WithAltScreen()}

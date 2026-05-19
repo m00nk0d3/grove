@@ -12,7 +12,7 @@ type Issue struct {
 	Body            string
 	Labels          []string
 	Assignees       []string
-	ParentNumber    *int // nil if this is a top-level issue
+	ParentNumber    *int  // nil if this is a top-level issue
 	SubIssueNumbers []int // empty if no sub-issues
 }
 
