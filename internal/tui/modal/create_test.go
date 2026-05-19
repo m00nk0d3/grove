@@ -24,6 +24,15 @@ func TestNewCreateModal_StartsAtIssueListStep(t *testing.T) {
 	assert.Equal(t, 0, m.typeIdx)
 }
 
+func TestNewCreateModalForIssue_StartsAtTypeStep(t *testing.T) {
+	m := NewCreateModalForIssue(testIssues[1], "/home/user/repo")
+
+	require.NotNil(t, m)
+	assert.Equal(t, stepType, m.step)
+	assert.Equal(t, 0, m.issueIdx)
+	assert.Equal(t, testIssues[1].Number, m.SelectedIssue().Number)
+}
+
 func TestCreateModal_View_IssueStep_ShowsIssues(t *testing.T) {
 	m := NewCreateModal(testIssues, "/home/user/repo")
 	view := m.View()

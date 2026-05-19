@@ -62,6 +62,14 @@ func NewCreateModal(issues []domain.Issue, repoPath string, parentBranches ...st
 	}
 }
 
+// NewCreateModalForIssue creates a new CreateModal for an already-selected issue.
+// It skips the issue picker and starts directly at the branch type step.
+func NewCreateModalForIssue(issue domain.Issue, repoPath string, parentBranches ...string) *CreateModal {
+	m := NewCreateModal([]domain.Issue{issue}, repoPath, parentBranches...)
+	m.step = stepType
+	return m
+}
+
 // Init satisfies tea.Model.
 func (m *CreateModal) Init() tea.Cmd { return nil }
 

@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	footerHintsWorktrees= "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [q/esc] Quit"
+	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [q/esc] Quit"
+	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [t] Settings | [g] GH | [q/esc] Quit"
 	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [t] Settings | [g] GH | [q/esc] Quit"
 	footerHintsDefault   = footerHintsWorktrees
-	actionBarHints       = "[c-n] New  [c-d] Delete  [c-l] Lock | [f1] Help"
+	actionBarHints       = "[enter] Open  [c-d] Delete  [c-l] Lock | [f1] Help"
 	defaultTermWidth     = 120
 	navPanelInner        = 18
 	// ctxPanelInner is no longer a constant — use computeCtxInner(termWidth) instead.
@@ -778,7 +779,10 @@ func clipContent(content string, offset, maxLines int) string {
 
 func renderFooterBar(theme styles.Theme, date string, termWidth int, syncing bool, lastSynced time.Time, syncErr error, view activeView, issues []domain.Issue, prs []domain.PullRequest, currentPage int) string {
 	hints := footerHintsDefault
-	if view == viewPRs {
+	switch view {
+	case viewIssues:
+		hints = footerHintsIssues
+	case viewPRs:
 		hints = footerHintsPRs
 	}
 

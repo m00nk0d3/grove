@@ -146,7 +146,7 @@ func TestRenderFull_ContainsFooterKeyHints(t *testing.T) {
 		},
 		{
 			name:   "action bar contains worktree commands",
-			wantIn: []string{"[c-n] New", "[c-d] Delete", "[f1] Help"},
+			wantIn: []string{"[enter] Open", "[c-d] Delete", "[f1] Help"},
 		},
 	}
 
