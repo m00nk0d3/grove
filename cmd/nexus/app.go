@@ -242,11 +242,6 @@ type Model struct {
 	// DB is optional; when non-nil, agent runs are logged to agent_history.
 	db *data.DB
 
-	// copilotDBPath is the path to the Copilot CLI session-store database.
-	// Defaults to ~/.copilot/session-store.db. Used to surface Copilot
-	// sessions as badges even when they weren't launched from Nexus.
-	copilotDBPath string
-
 	// sessions holds the last-known list of active terminal sessions.
 	sessions []domain.Session
 
@@ -282,11 +277,10 @@ func NewModel() *Model {
 	}
 
 	return &Model{
-		Config:        cfg,
-		themeIdx:      themeIdx,
-		statusErr:     configErr,
-		focused:       panelList,
-		copilotDBPath: data.DefaultCopilotDBPath(),
+		Config:    cfg,
+		themeIdx:  themeIdx,
+		statusErr: configErr,
+		focused:   panelList,
 	}
 }
 
@@ -805,7 +799,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.checkSessionsCmd()
 
 	case sessionStatusUpdatedMsg:
-		m.sessions = msg.sessions
+		var live []domain.Session
+		for _, s := range msg.sessions {
+			if s.Status != domain.StatusDead {
+				live = append(live, s)
+			}
+		}
+		if live == nil {
+			live = []domain.Session{}
+		}
+		m.sessions = live
 		return m, sessionTickCmd()
 
 	case sessionFocusedMsg:
@@ -1585,14 +1588,12 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 	}
 }
 
-// checkSessionsCmd reads all tracked sessions from the nexus DB, checks whether
-// each PID is still alive, and also merges active Copilot CLI sessions discovered
-// from the Copilot session-store database. Returns sessionStatusUpdatedMsg with
-// the combined live session list.
+// checkSessionsCmd reads all tracked sessions from the nexus DB and checks
+// whether each PID is still alive. Returns sessionStatusUpdatedMsg with the
+// live session list.
 func (m *Model) checkSessionsCmd() tea.Cmd {
 	db := m.db
 	current := m.sessions
-	copilotDBPath := m.copilotDBPath
 	return func() tea.Msg {
 		var alive []domain.Session
 
@@ -1626,7 +1627,11 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 			all, err := data.GetSessions(db)
 			if err != nil {
 				slog.Warn("session health check: failed to read sessions from DB", "err", err)
-				alive = append(alive, current...)
+				for _, s := range current {
+					if s.Status != domain.StatusDead {
+						alive = append(alive, s)
+					}
+				}
 			} else {
 				for _, s := range all {
 					if s.ShellPID == nil {
@@ -1668,37 +1673,6 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 					// Both are dead — remove from DB.
 					if err := data.DeleteSession(db, s.ID); err != nil {
 						slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
-					}
-				}
-			}
-		}
-
-		// Part 2: merge externally-started Copilot CLI sessions.
-		// These are sessions visible in the Copilot session-store that were not
-		// launched by Nexus. We show them as agent_running badges on the matching
-		// worktree row. Sessions older than 8 hours are ignored.
-		if copilotDBPath != "" {
-			copilotSessions, err := data.GetActiveCopilotSessions(copilotDBPath, 8*time.Hour)
-			if err != nil {
-				slog.Warn("session health check: failed to read copilot sessions", "err", err)
-			} else {
-				for _, cs := range copilotSessions {
-					// If nexus already tracks a session for this worktree, enrich it
-					// with agent info rather than adding a duplicate entry.
-					matched := false
-					for i := range alive {
-						if strings.EqualFold(filepath.Clean(alive[i].WorktreePath), filepath.Clean(cs.WorktreePath)) {
-							if alive[i].AgentName == nil {
-								alive[i].AgentName = cs.AgentName
-								alive[i].Prompt = cs.Prompt
-								alive[i].Status = domain.StatusAgentRunning
-							}
-							matched = true
-							break
-						}
-					}
-					if !matched {
-						alive = append(alive, cs)
 					}
 				}
 			}

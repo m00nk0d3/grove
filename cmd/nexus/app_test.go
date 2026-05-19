@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -216,7 +215,6 @@ func TestModel_Enter_TriggersSpawn(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup: Create model with populated Worktrees list
 			model := NewModel()
-			model.copilotDBPath = ""
 			require.NotNil(t, model, "Model creation should succeed")
 
 			// Convert test data to domain.Worktree
@@ -1862,7 +1860,6 @@ func TestModel_Enter_InViewPRs_EmptyList_NoOp(t *testing.T) {
 // session (same as the s key) when a worktree is selected.
 func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 	m := NewModel()
-	m.copilotDBPath = ""
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
 		{Path: "/repos/nexus", Branch: "main"},
@@ -2546,7 +2543,6 @@ func TestModel_SKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
 // trigger spawnSessionCmd (same behavior).
 func TestModel_EnterKey_SpawnsSessionLikeSKey(t *testing.T) {
 	m := NewModel()
-	m.copilotDBPath = ""
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
 		{Path: "/repos/nexus", Branch: "main"},
@@ -2592,7 +2588,6 @@ func TestSessionStatusUpdatedMsg_Empty(t *testing.T) {
 // dropping stale ones rather than blindly preserving all entries.
 func TestCheckSessionsCmd_NilDB(t *testing.T) {
 	m := NewModel()
-	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	m.sessions = []domain.Session{
 		{ID: 1, WorktreePath: "/repo/existing", Status: domain.StatusActive, StartedAt: time.Now().UTC()},
 	}
@@ -2613,7 +2608,6 @@ func TestCheckSessionsCmd_NilDB_PrunesDeadPID(t *testing.T) {
 	deadPID := 999999999 // extremely unlikely to be a live PID
 
 	m := NewModel()
-	m.copilotDBPath = ""
 	m.sessions = []domain.Session{
 		{
 			ID:           1,
@@ -2639,7 +2633,6 @@ func TestCheckSessionsCmd_EmptyDB(t *testing.T) {
 
 	m := NewModel()
 	m.db = db
-	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	cmd := m.checkSessionsCmd()
 	require.NotNil(t, cmd)
 	msg := cmd()
@@ -2667,7 +2660,6 @@ func TestCheckSessionsCmd_DeadNilPIDPruned(t *testing.T) {
 
 	m := NewModel()
 	m.db = db
-	m.copilotDBPath = "" // disable Copilot session reading in unit tests
 	cmd := m.checkSessionsCmd()
 	require.NotNil(t, cmd)
 	msg := cmd()
@@ -2679,153 +2671,6 @@ func TestCheckSessionsCmd_DeadNilPIDPruned(t *testing.T) {
 	got, err := data.GetSessionByWorktree(db, "/repo/dead-no-pid")
 	require.NoError(t, err)
 	assert.Nil(t, got, "dead+nil-PID session must be deleted from the database")
-}
-
-// TestCheckSessionsCmd_CopilotSessions verifies that Copilot CLI sessions from the
-// session-store database are merged into the live sessions list as agent_running entries.
-func TestCheckSessionsCmd_CopilotSessions(t *testing.T) {
-	// Build a minimal Copilot session-store in a temp SQLite file.
-	tmpDir := t.TempDir()
-	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
-	csDB, err := data.NewDB(copilotDBPath)
-	require.NoError(t, err)
-	// Seed the Copilot schema (just what GetActiveCopilotSessions queries).
-	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		cwd TEXT NOT NULL,
-		summary TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	)`)
-	require.NoError(t, err)
-	recentTime := time.Now().UTC().Add(-30 * time.Minute).Format(time.RFC3339)
-	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		"abc-123", "/repo/copilot-worktree", "implement auth", recentTime, recentTime)
-	require.NoError(t, err)
-	csDB.Close()
-
-	m := NewModel()
-	m.copilotDBPath = copilotDBPath
-
-	cmd := m.checkSessionsCmd()
-	require.NotNil(t, cmd)
-	msg := cmd()
-	result, ok := msg.(sessionStatusUpdatedMsg)
-	require.True(t, ok)
-	require.Len(t, result.sessions, 1)
-	sess := result.sessions[0]
-	assert.Equal(t, filepath.FromSlash("/repo/copilot-worktree"), sess.WorktreePath)
-	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
-	require.NotNil(t, sess.AgentName)
-	assert.Equal(t, "copilot", *sess.AgentName)
-	require.NotNil(t, sess.Prompt)
-	assert.Equal(t, "implement auth", *sess.Prompt)
-}
-
-// TestCheckSessionsCmd_CopilotEnrichesExisting verifies that a Copilot session for the same
-// worktree as a nexus-tracked shell session enriches it rather than creating a duplicate.
-func TestCheckSessionsCmd_CopilotEnrichesExisting(t *testing.T) {
-	nexusDB, err := data.NewDB(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = nexusDB.Close() })
-
-	// Insert a nexus-tracked session with no agent info.
-	shellSess := domain.Session{
-		WorktreePath: "/repo/shared-worktree",
-		Status:       domain.StatusActive,
-		StartedAt:    time.Now().UTC().Truncate(time.Second),
-	}
-	_, err = data.UpsertSession(nexusDB, shellSess)
-	require.NoError(t, err)
-
-	// Build a Copilot session-store pointing at the same worktree.
-	tmpDir := t.TempDir()
-	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
-	csDB, err := data.NewDB(copilotDBPath)
-	require.NoError(t, err)
-	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		cwd TEXT NOT NULL,
-		summary TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	)`)
-	require.NoError(t, err)
-	recentTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		"xyz-456", "/repo/shared-worktree", "add tests", recentTime, recentTime)
-	require.NoError(t, err)
-	csDB.Close()
-
-	m := NewModel()
-	m.db = nexusDB
-	m.copilotDBPath = copilotDBPath
-
-	cmd := m.checkSessionsCmd()
-	require.NotNil(t, cmd)
-	msg := cmd()
-	result, ok := msg.(sessionStatusUpdatedMsg)
-	require.True(t, ok)
-	// Should be exactly ONE session (enriched, not duplicated).
-	require.Len(t, result.sessions, 1)
-	sess := result.sessions[0]
-	assert.Equal(t, "/repo/shared-worktree", sess.WorktreePath)
-	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
-	require.NotNil(t, sess.AgentName)
-	assert.Equal(t, "copilot", *sess.AgentName)
-}
-
-// TestCheckSessionsCmd_CopilotSessions_MixedSeparators verifies that Copilot
-// sessions whose cwd uses different path separators than the nexus-tracked
-// worktree path still merge correctly (Windows forward-slash vs backslash).
-func TestCheckSessionsCmd_CopilotSessions_MixedSeparators(t *testing.T) {
-	nexusDB, err := data.NewDB(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = nexusDB.Close() })
-
-	// Insert a nexus session with OS-native separators.
-	nativePath := filepath.FromSlash("/repo/feat-auth")
-	shellSess := domain.Session{
-		WorktreePath: nativePath,
-		Status:       domain.StatusActive,
-		StartedAt:    time.Now().UTC().Truncate(time.Second),
-	}
-	_, err = data.UpsertSession(nexusDB, shellSess)
-	require.NoError(t, err)
-
-	// Insert a Copilot session with forward-slash CWD (as stored by the Copilot CLI).
-	tmpDir := t.TempDir()
-	copilotDBPath := filepath.Join(tmpDir, "session-store.db")
-	csDB, err := data.NewDB(copilotDBPath)
-	require.NoError(t, err)
-	_, err = csDB.Conn.Exec(`CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		cwd TEXT NOT NULL,
-		summary TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	)`)
-	require.NoError(t, err)
-	recentTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-	// Use forward-slash path — Copilot CLI on Windows stores these.
-	_, err = csDB.Conn.Exec(`INSERT INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		"abc-999", filepath.ToSlash(nativePath), "auth work", recentTime, recentTime)
-	require.NoError(t, err)
-	csDB.Close()
-
-	m := NewModel()
-	m.db = nexusDB
-	m.copilotDBPath = copilotDBPath
-
-	msg := m.checkSessionsCmd()()
-	result, ok := msg.(sessionStatusUpdatedMsg)
-	require.True(t, ok)
-	// Must merge into ONE session — no duplicate.
-	require.Len(t, result.sessions, 1)
-	sess := result.sessions[0]
-	assert.Equal(t, domain.StatusAgentRunning, sess.Status)
-	require.NotNil(t, sess.AgentName)
-	assert.Equal(t, "copilot", *sess.AgentName)
 }
 
 // TestPidAlive_CurrentProcess verifies that pidAlive returns true for the current process.
@@ -2852,7 +2697,6 @@ func TestModel_Enter_ExistingSession_TriggersFocus(t *testing.T) {
 	worktreePath := "/home/user/repos/wt1"
 
 	m := NewModel()
-	m.copilotDBPath = ""
 	m.Worktrees = []domain.Worktree{
 		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
 	}
@@ -2873,7 +2717,6 @@ func TestModel_Enter_NoSession_TriggersSpawn(t *testing.T) {
 	worktreePath := "/home/user/repos/wt1"
 
 	m := NewModel()
-	m.copilotDBPath = ""
 	m.Worktrees = []domain.Worktree{
 		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
 	}
@@ -2895,7 +2738,6 @@ func TestModel_Enter_StaleSession_TriggersSpawn(t *testing.T) {
 	deadPID := 999999999 // extremely unlikely to be a real running PID
 
 	m := NewModel()
-	m.copilotDBPath = ""
 	m.Worktrees = []domain.Worktree{
 		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
 	}
