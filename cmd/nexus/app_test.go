@@ -2375,3 +2375,49 @@ func TestPagination_PrevPageClampsAtZero(t *testing.T) {
 	assert.Equal(t, 0, m2.selectedIssueIdx, "selectedIssueIdx unchanged when already at first page")
 }
 
+// ---------------------------------------------------------------------------
+// Issue #77: q as quit key binding tests
+// ---------------------------------------------------------------------------
+
+// TestModel_QKey_QuitsApp verifies that pressing q from the root view quits the app.
+func TestModel_QKey_QuitsApp(t *testing.T) {
+	m := NewModel()
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	require.NotNil(t, cmd, "q should return a Cmd")
+
+	// Execute the command and verify it produces tea.Quit.
+	msg := cmd()
+	assert.Equal(t, tea.Quit(), msg, "q should produce tea.Quit")
+}
+
+// TestModel_QKey_SuppressedWhenCopilotPromptActive verifies that q does NOT quit
+// when the copilot text input is focused — it should be routed to the input instead.
+func TestModel_QKey_SuppressedWhenCopilotPromptActive(t *testing.T) {
+	model := NewModel()
+	model.copilotPromptActive = true
+	model.Worktrees = []domain.Worktree{{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"}}
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	updatedModel, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.True(t, updatedModel.copilotPromptActive,
+		"q should not quit when copilot prompt is active")
+}
+
+// TestModel_QKey_SuppressedWhenClaudePromptActive verifies that q does NOT quit
+// when the Claude text input is focused — it should be routed to the input instead.
+func TestModel_QKey_SuppressedWhenClaudePromptActive(t *testing.T) {
+	model := NewModel()
+	model.claudePromptActive = true
+	model.Worktrees = []domain.Worktree{{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"}}
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	updatedModel, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.True(t, updatedModel.claudePromptActive,
+		"q should not quit when claude prompt is active")
+}
+

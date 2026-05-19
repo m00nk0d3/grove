@@ -18,8 +18,8 @@ import (
 
 const (
 	appVersion           = "1.0"
-	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [esc] Quit"
-	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [t] Settings | [g] GH | [esc] Quit"
+	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [q/esc] Quit"
+	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [t] Settings | [g] GH | [q/esc] Quit"
 	footerHintsDefault   = footerHintsWorktrees
 	actionBarHints       = "[c-n] New  [c-d] Delete  [c-l] Lock | [f1] Help"
 	defaultTermWidth     = 120

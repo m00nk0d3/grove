@@ -73,7 +73,7 @@ var keybindingGroups = []bindingGroup{
 		bindings: [][2]string{
 			{"f1 / ?", "Open this help modal"},
 			{"g", "Open selected item in GitHub"},
-			{"Esc / Ctrl+C", "Quit"},
+			{"Esc / q / Ctrl+C", "Quit"},
 		},
 	},
 }

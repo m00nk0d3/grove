@@ -402,6 +402,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, clearErrorCmd()
 		case tea.KeyRunes:
 			switch msg.String() {
+			case "q":
+				return m, tea.Quit
 			case " ":
 				// Spacebar can arrive as KeyRunes " " on some terminals (e.g. Windows).
 				// Mirror the KeySpace handler above.
