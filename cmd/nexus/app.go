@@ -134,8 +134,15 @@ func pidInitUnixCmd(pidFile string) string {
 	return fmt.Sprintf(`sh -c 'echo $$ > "%s"; exec "%s"'`, pidFile, shell)
 }
 
-// closeSessionDoneMsg carries the result of a close-session operation.
-type closeSessionDoneMsg struct {
+// sessionKilledMsg carries the result of a kill-session operation.
+type sessionKilledMsg struct {
+	worktreePath string
+	err          error
+}
+
+// sessionFocusedMsg carries the result of attempting to bring an existing
+// terminal session to the foreground.
+type sessionFocusedMsg struct {
 	worktreePath string
 	err          error
 }
@@ -441,6 +448,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			default:
 				if selected, ok := m.selectedWorktree(); ok {
+					// If a session already exists for this worktree, focus it instead of
+					// spawning a new one.
+					for _, s := range m.sessions {
+						if s.WorktreePath == selected.Path {
+							return m, m.focusSessionCmd(s)
+						}
+					}
 					return m, m.spawnSessionCmd(selected.Path)
 				}
 				return m, nil
@@ -607,7 +621,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				for _, s := range m.sessions {
 					if s.WorktreePath == selected.Path {
-						return m, m.closeSessionCmd(s)
+						return m, m.killSessionCmd(s)
 					}
 				}
 				m.statusErr = "No active session for this worktree"
@@ -785,7 +799,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessions = msg.sessions
 		return m, sessionTickCmd()
 
-	case closeSessionDoneMsg:
+	case sessionFocusedMsg:
+		// Focus is best-effort; show a friendly toast regardless of outcome.
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("Session active for %s (could not bring to front: %v)", msg.worktreePath, msg.err)
+		} else {
+			m.statusMsg = fmt.Sprintf("Focused session for %s", msg.worktreePath)
+		}
+		return m, clearMsgCmd()
+
+	case sessionKilledMsg:
 		if msg.err != nil {
 			m.statusErr = fmt.Sprintf("Close session: %v", msg.err)
 			return m, clearErrorCmd()
@@ -1518,22 +1541,38 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 	}
 }
 
-// closeSessionCmd kills the shell process for the given session (causing the
-// terminal tab to close) and removes the session record from the DB.
-func (m *Model) closeSessionCmd(session domain.Session) tea.Cmd {
+// killSessionCmd gracefully kills the shell and agent processes for the given
+// session and removes the session record from the DB.
+// On Unix, SIGTERM is sent first; SIGKILL follows after a 3-second timeout.
+// On Windows, the process is terminated immediately (no SIGTERM equivalent).
+func (m *Model) killSessionCmd(session domain.Session) tea.Cmd {
 	db := m.db
 	return func() tea.Msg {
 		if session.ShellPID != nil {
-			if proc, err := os.FindProcess(*session.ShellPID); err == nil {
-				_ = proc.Kill()
-			}
+			gracefulKillPID(*session.ShellPID)
+		}
+		if session.AgentPID != nil {
+			gracefulKillPID(*session.AgentPID)
 		}
 		if db != nil && session.ID != 0 {
 			if err := data.DeleteSession(db, session.ID); err != nil {
-				return closeSessionDoneMsg{worktreePath: session.WorktreePath, err: err}
+				return sessionKilledMsg{worktreePath: session.WorktreePath, err: err}
 			}
 		}
-		return closeSessionDoneMsg{worktreePath: session.WorktreePath}
+		return sessionKilledMsg{worktreePath: session.WorktreePath}
+	}
+}
+
+// focusSessionCmd attempts to bring the terminal window for the given session
+// to the foreground and dispatches sessionFocusedMsg with the outcome.
+func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
+	return func() tea.Msg {
+		pid := 0
+		if session.ShellPID != nil {
+			pid = *session.ShellPID
+		}
+		err := focusSessionWindow(pid)
+		return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
 	}
 }
 

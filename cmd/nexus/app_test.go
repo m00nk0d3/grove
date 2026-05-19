@@ -2800,6 +2800,7 @@ func TestCheckSessionsCmd_CopilotSessions_MixedSeparators(t *testing.T) {
 	assert.Equal(t, "copilot", *sess.AgentName)
 }
 
+// TestPidAlive_CurrentProcess verifies that pidAlive returns true for the current process.
 func TestPidAlive_CurrentProcess(t *testing.T) {
 	assert.True(t, pidAlive(os.Getpid()), "current process should be alive")
 }
@@ -2809,4 +2810,151 @@ func TestPidAlive_InvalidPID(t *testing.T) {
 	// PID 0 is the idle process on Windows and typically reserved on Unix.
 	// A very high PID is extremely unlikely to exist.
 	assert.False(t, pidAlive(999999999), "PID 999999999 should not be alive")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: Session management (attach / kill)
+// ---------------------------------------------------------------------------
+
+// TestModel_Enter_ExistingSession_TriggersFocus verifies that when a session
+// already exists for the selected worktree, pressing Enter dispatches a focus
+// command rather than spawning a new session.
+func TestModel_Enter_ExistingSession_TriggersFocus(t *testing.T) {
+	pid := os.Getpid() // use current PID so the session looks alive
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.copilotDBPath = ""
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &pid, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// A Cmd must be returned — it is the focus command.
+	assert.NotNil(t, cmd, "Enter on worktree with existing session should return a focus Cmd")
+}
+
+// TestModel_Enter_NoSession_TriggersSpawn verifies that pressing Enter on a
+// worktree with no tracked session dispatches a spawn command.
+func TestModel_Enter_NoSession_TriggersSpawn(t *testing.T) {
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.copilotDBPath = ""
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	// No session for this worktree.
+	m.sessions = []domain.Session{}
+	m.selectedIdx = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// A Cmd must be returned — it is the spawn command.
+	assert.NotNil(t, cmd, "Enter on worktree with no session should return a spawn Cmd")
+}
+
+// TestModel_X_WithSession_TriggersKill verifies that pressing x on a worktree
+// with an active session dispatches a kill command.
+func TestModel_X_WithSession_TriggersKill(t *testing.T) {
+	pid := os.Getpid()
+	worktreePath := "/home/user/repos/wt1"
+
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: worktreePath, Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: worktreePath, ShellPID: &pid, Status: domain.StatusActive},
+	}
+	m.selectedIdx = 0
+	m.view = viewWorktrees
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	assert.NotNil(t, cmd, "x on worktree with session should return a kill Cmd")
+}
+
+// TestModel_X_WithoutSession_ShowsError verifies that pressing x on a worktree
+// with no active session sets a friendly error message.
+func TestModel_X_WithoutSession_ShowsError(t *testing.T) {
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: "/home/user/repos/wt1", Branch: "main", CommitSHA: "abc123"},
+	}
+	m.sessions = []domain.Session{} // no sessions
+	m.selectedIdx = 0
+	m.view = viewWorktrees
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Equal(t, "No active session for this worktree", m2.statusErr)
+	assert.NotNil(t, cmd, "should return clearError cmd")
+}
+
+// TestModel_SessionKilledMsg_Success_RemovesSession verifies that receiving a
+// successful sessionKilledMsg removes the session from m.sessions.
+func TestModel_SessionKilledMsg_Success_RemovesSession(t *testing.T) {
+	pid := os.Getpid()
+	m := NewModel()
+	m.sessions = []domain.Session{
+		{ID: 1, WorktreePath: "/wt/a", ShellPID: &pid, Status: domain.StatusActive},
+		{ID: 2, WorktreePath: "/wt/b", ShellPID: &pid, Status: domain.StatusActive},
+	}
+
+	updated, cmd := m.Update(sessionKilledMsg{worktreePath: "/wt/a"})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	require.Len(t, m2.sessions, 1, "killed session should be removed")
+	assert.Equal(t, "/wt/b", m2.sessions[0].WorktreePath)
+	assert.Nil(t, cmd, "successful kill should return nil Cmd")
+}
+
+// TestModel_SessionKilledMsg_Error_SetsStatusErr verifies that a
+// sessionKilledMsg with an error sets m.statusErr.
+func TestModel_SessionKilledMsg_Error_SetsStatusErr(t *testing.T) {
+	m := NewModel()
+	m.sessions = []domain.Session{}
+
+	updated, cmd := m.Update(sessionKilledMsg{worktreePath: "/wt/a", err: errors.New("db error")})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusErr, "Close session")
+	assert.Contains(t, m2.statusErr, "db error")
+	assert.NotNil(t, cmd, "error should schedule clearErrorCmd")
+}
+
+// TestModel_SessionFocusedMsg_Success_ShowsStatusMsg verifies that a successful
+// sessionFocusedMsg sets m.statusMsg.
+func TestModel_SessionFocusedMsg_Success_ShowsStatusMsg(t *testing.T) {
+	m := NewModel()
+
+	updated, cmd := m.Update(sessionFocusedMsg{worktreePath: "/wt/a"})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusMsg, "/wt/a")
+	assert.NotNil(t, cmd, "should return clearMsgCmd")
+}
+
+// TestModel_SessionFocusedMsg_Error_ShowsBestEffortMsg verifies that a failed
+// sessionFocusedMsg still shows a user-friendly message (best-effort focus).
+func TestModel_SessionFocusedMsg_Error_ShowsBestEffortMsg(t *testing.T) {
+	m := NewModel()
+
+	updated, cmd := m.Update(sessionFocusedMsg{worktreePath: "/wt/a", err: errors.New("no wmctrl")})
+	m2, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Contains(t, m2.statusMsg, "/wt/a")
+	assert.NotNil(t, cmd, "should return clearMsgCmd even on error")
 }
