@@ -1228,7 +1228,13 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 		var alive []domain.Session
 		for _, s := range all {
 			if s.ShellPID == nil {
-				// No PID to check — keep as-is.
+				// No PID to check — prune dead status rows, keep everything else.
+				if s.Status == domain.StatusDead {
+					if err := data.DeleteSession(db, s.ID); err != nil {
+						slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
+					}
+					continue
+				}
 				alive = append(alive, s)
 				continue
 			}

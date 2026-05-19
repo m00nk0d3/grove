@@ -1959,19 +1959,19 @@ func TestSessionBadge_AllStates(t *testing.T) {
 			want:    "[shell]",
 		},
 		{
-			name: "StatusAgentRunning returns [shell][agent running]",
+			name: "StatusAgentRunning returns [agent running] without shell prefix",
 			session: &domain.Session{
 				Status:    domain.StatusAgentRunning,
 				AgentName: ptr("copilot"),
 			},
-			want: "[shell][copilot running]",
+			want: "[copilot running]",
 		},
 		{
 			name: "StatusAgentRunning with no agent name uses 'agent'",
 			session: &domain.Session{
 				Status: domain.StatusAgentRunning,
 			},
-			want: "[shell][agent running]",
+			want: "[agent running]",
 		},
 		{
 			name: "StatusAgentDone returns [shell][done agent]",
@@ -2163,7 +2163,7 @@ func TestRenderFull_SessionBlockInContextPanel(t *testing.T) {
 				Status:       domain.StatusActive,
 				ShellPID:     &pid,
 			},
-			wantIn: []string{"SESSION", "Status:  active", "Shell:   pid 8821 alive"},
+			wantIn: []string{"SESSION", "Status:  active", "Shell:   pid 8821"},
 		},
 		{
 			name: "session block shows agent name and prompt",

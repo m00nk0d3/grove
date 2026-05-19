@@ -65,6 +65,9 @@ func sessionForWorktree(sessions []domain.Session, worktreePath string) *domain.
 
 // sessionBadge returns a compact badge string for the given session state.
 // nil → "" (no session), StatusActive → "[shell]", agent states include agent name.
+//
+// StatusAgentRunning uses no [shell] prefix because the health checker transitions
+// to that status only once the shell process has already died (agent still alive).
 func sessionBadge(s *domain.Session) string {
 	if s == nil {
 		return ""
@@ -77,7 +80,7 @@ func sessionBadge(s *domain.Session) string {
 	case domain.StatusActive:
 		return "[shell]"
 	case domain.StatusAgentRunning:
-		return fmt.Sprintf("[shell][%s running]", agentName)
+		return fmt.Sprintf("[%s running]", agentName)
 	case domain.StatusAgentDone:
 		return fmt.Sprintf("[shell][done %s]", agentName)
 	case domain.StatusAgentFailed:
@@ -110,7 +113,7 @@ func renderSessionBlock(s *domain.Session) string {
 	b.WriteString("\nSESSION\n")
 	b.WriteString(fmt.Sprintf("  Status:  %s\n", s.Status))
 	if s.ShellPID != nil {
-		b.WriteString(fmt.Sprintf("  Shell:   pid %d alive\n", *s.ShellPID))
+		b.WriteString(fmt.Sprintf("  Shell:   pid %d\n", *s.ShellPID))
 	} else {
 		b.WriteString("  Shell:   none\n")
 	}

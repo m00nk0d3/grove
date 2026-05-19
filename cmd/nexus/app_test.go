@@ -2614,6 +2614,38 @@ func TestCheckSessionsCmd_EmptyDB(t *testing.T) {
 	assert.Empty(t, result.sessions)
 }
 
+// TestCheckSessionsCmd_DeadNilPIDPruned verifies that a session with StatusDead
+// and no ShellPID is deleted from the DB and excluded from the returned list.
+// This is a regression test for the bug where nil-PID sessions were kept unconditionally.
+func TestCheckSessionsCmd_DeadNilPIDPruned(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Insert a dead session with no PID.
+	deadSess := domain.Session{
+		WorktreePath: "/repo/dead-no-pid",
+		Status:       domain.StatusDead,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, deadSess)
+	require.NoError(t, err)
+
+	m := NewModel()
+	m.db = db
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "dead+nil-PID session must be pruned from results")
+
+	// Confirm it was also removed from the DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/dead-no-pid")
+	require.NoError(t, err)
+	assert.Nil(t, got, "dead+nil-PID session must be deleted from the database")
+}
+
 // TestPidAlive_CurrentProcess verifies that pidAlive returns true for the current process.
 func TestPidAlive_CurrentProcess(t *testing.T) {
 	assert.True(t, pidAlive(os.Getpid()), "current process should be alive")
