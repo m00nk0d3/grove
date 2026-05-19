@@ -33,6 +33,8 @@ func TestIsNewer(t *testing.T) {
 		{name: "invalid semver latest", latest: "not-a-version", current: "v1.0.0", wantErr: true},
 		{name: "invalid semver current", latest: "v1.2.3", current: "custom-build", want: false},
 		{name: "no v prefix", latest: "1.2.3", current: "1.0.0", want: true},
+		{name: "pre-release latest", latest: "v1.2.3-rc.1", current: "v1.2.2", want: true},
+		{name: "pre-release current", latest: "v1.2.3", current: "v1.2.3-rc.1", want: false},
 	}
 
 	for _, tt := range tests {
@@ -98,8 +100,14 @@ func TestCheckLatestRelease_InvalidJSON(t *testing.T) {
 
 func TestDownloadURL(t *testing.T) {
 	tag := "v1.2.3"
+
+	old := githubReleaseBase
+	githubReleaseBase = "https://example.com/releases"
+	defer func() { githubReleaseBase = old }()
+
 	url := DownloadURL(tag)
 
+	assert.True(t, strings.HasPrefix(url, "https://example.com/releases"), "should use githubReleaseBase: %s", url)
 	assert.Contains(t, url, tag)
 	assert.Contains(t, url, runtime.GOOS)
 	assert.Contains(t, url, runtime.GOARCH)

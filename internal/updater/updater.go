@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -94,10 +95,15 @@ func IsNewer(latest, current string) (bool, error) {
 	return false, nil
 }
 
-// parseSemver strips an optional "v" prefix and returns the [major, minor, patch]
+// parseSemver strips an optional "v" prefix and pre-release suffix
+// (e.g. "v1.2.3-rc.1" → "1.2.3") and returns the [major, minor, patch]
 // integer components. Returns an error if the string is not a valid semver.
 func parseSemver(v string) ([3]int, error) {
 	v = strings.TrimPrefix(v, "v")
+	// Drop pre-release / build-metadata suffixes so "v1.2.3-rc.1" parses cleanly.
+	if idx := strings.IndexByte(v, '-'); idx != -1 {
+		v = v[:idx]
+	}
 	parts := strings.SplitN(v, ".", 3)
 	if len(parts) != 3 {
 		return [3]int{}, fmt.Errorf("not semver: %q", v)
@@ -121,20 +127,20 @@ func DownloadURL(tagName string) string {
 		ext = "zip"
 	}
 	filename := fmt.Sprintf("nexus_%s_%s_%s.%s", tagName, runtime.GOOS, runtime.GOARCH, ext)
-	return fmt.Sprintf("https://github.com/m00nk0d3/nexus/releases/download/%s/%s", tagName, filename)
+	return fmt.Sprintf("%s/%s/%s", githubReleaseBase, tagName, filename)
 }
 
 // SelfUpdate downloads the release archive for the current platform, extracts the
-// nexus binary from it, and replaces the running executable. onProgress is called
-// with human-readable status strings. Returns an error if any step fails.
-func SelfUpdate(ctx context.Context, tagName string, onProgress func(string)) error {
+// nexus binary from it, and replaces the running executable. Progress is logged
+// at debug level. Returns an error if any step fails.
+func SelfUpdate(ctx context.Context, tagName string) error {
 	currentExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("self-update: get executable path: %w", err)
 	}
 
 	url := DownloadURL(tagName)
-	onProgress("Downloading " + url + "...")
+	slog.Debug("self-update", "status", "Downloading "+url+"...")
 
 	archiveFile, err := os.CreateTemp(os.TempDir(), "nexus-update-archive-*")
 	if err != nil {
@@ -149,7 +155,7 @@ func SelfUpdate(ctx context.Context, tagName string, onProgress func(string)) er
 	}
 	archiveFile.Close()
 
-	onProgress("Verifying checksum...")
+	slog.Debug("self-update", "status", "Verifying checksum...")
 
 	archiveFilename := filepath.Base(url)
 	expectedHash, err := fetchChecksum(ctx, tagName, archiveFilename)
@@ -160,7 +166,7 @@ func SelfUpdate(ctx context.Context, tagName string, onProgress func(string)) er
 		return fmt.Errorf("self-update: %w", err)
 	}
 
-	onProgress("Extracting...")
+	slog.Debug("self-update", "status", "Extracting...")
 
 	binaryFile, err := os.CreateTemp(os.TempDir(), "nexus-update-binary-*")
 	if err != nil {
@@ -185,7 +191,7 @@ func SelfUpdate(ctx context.Context, tagName string, onProgress func(string)) er
 		}
 	}
 
-	onProgress("Replacing binary...")
+	slog.Debug("self-update", "status", "Replacing binary...")
 
 	if err := os.Chmod(binaryPath, 0755); err != nil && runtime.GOOS != "windows" {
 		return fmt.Errorf("self-update: chmod: %w", err)
@@ -198,7 +204,7 @@ func SelfUpdate(ctx context.Context, tagName string, onProgress func(string)) er
 		return fmt.Errorf("self-update: replace binary: %w", err)
 	}
 
-	onProgress("Done! Please restart nexus.")
+	slog.Debug("self-update", "status", "Done! Please restart nexus.")
 	return nil
 }
 

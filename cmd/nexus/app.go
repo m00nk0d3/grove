@@ -126,9 +126,7 @@ func selfUpdateCmd(tagName string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		err := updater.SelfUpdate(ctx, tagName, func(status string) {
-			slog.Debug("self-update", "status", status)
-		})
+		err := updater.SelfUpdate(ctx, tagName)
 		return selfUpdateDoneMsg{err: err}
 	}
 }
