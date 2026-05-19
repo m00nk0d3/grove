@@ -3,8 +3,11 @@ package updater
 import (
 	"archive/tar"
 	"archive/zip"
+	"bufio"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +21,13 @@ import (
 
 // githubAPIBase is the base URL for GitHub API calls. It can be overridden in tests.
 var githubAPIBase = "https://api.github.com"
+
+// githubReleaseBase is the base URL for release asset downloads. It can be overridden in tests.
+var githubReleaseBase = "https://github.com/m00nk0d3/nexus/releases/download"
+
+// maxDownloadBytes caps the size of any single HTTP download (archive or checksums file)
+// to prevent runaway disk writes from unexpectedly large or malformed responses.
+const maxDownloadBytes = 200 * 1024 * 1024 // 200 MB
 
 // ReleaseInfo holds the relevant fields returned by the GitHub releases/latest API.
 type ReleaseInfo struct {
@@ -139,6 +149,17 @@ func SelfUpdate(ctx context.Context, tagName string, onProgress func(string)) er
 	}
 	archiveFile.Close()
 
+	onProgress("Verifying checksum...")
+
+	archiveFilename := filepath.Base(url)
+	expectedHash, err := fetchChecksum(ctx, tagName, archiveFilename)
+	if err != nil {
+		return fmt.Errorf("self-update: %w", err)
+	}
+	if err := verifyChecksum(archivePath, expectedHash); err != nil {
+		return fmt.Errorf("self-update: %w", err)
+	}
+
 	onProgress("Extracting...")
 
 	binaryFile, err := os.CreateTemp(os.TempDir(), "nexus-update-binary-*")
@@ -182,7 +203,8 @@ func SelfUpdate(ctx context.Context, tagName string, onProgress func(string)) er
 }
 
 // downloadToFile performs an HTTP GET with the given context and writes the
-// response body into f. Returns an error on non-200 status or I/O failure.
+// response body into f, capped at maxDownloadBytes. Returns an error on
+// non-200 status or I/O failure.
 func downloadToFile(ctx context.Context, url string, f *os.File) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -196,7 +218,7 @@ func downloadToFile(ctx context.Context, url string, f *os.File) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
-	_, err = io.Copy(f, resp.Body)
+	_, err = io.Copy(f, io.LimitReader(resp.Body, maxDownloadBytes))
 	return err
 }
 
@@ -231,7 +253,7 @@ func extractFromTarGz(archivePath, binaryName, destPath string) error {
 		if err != nil {
 			return fmt.Errorf("open dest: %w", err)
 		}
-		_, copyErr := io.Copy(out, tr)
+		_, copyErr := io.Copy(out, io.LimitReader(tr, maxDownloadBytes))
 		out.Close()
 		return copyErr
 	}
@@ -260,10 +282,60 @@ func extractFromZip(archivePath, binaryName, destPath string) error {
 			rc.Close()
 			return fmt.Errorf("open dest: %w", err)
 		}
-		_, copyErr := io.Copy(out, rc)
+		_, copyErr := io.Copy(out, io.LimitReader(rc, maxDownloadBytes))
 		out.Close()
 		rc.Close()
 		return copyErr
 	}
 	return fmt.Errorf("binary %q not found in archive", binaryName)
+}
+
+// fetchChecksum downloads the GoReleaser-generated checksums.txt for the given
+// release tag and returns the expected SHA-256 hex digest for archiveFilename.
+func fetchChecksum(ctx context.Context, tagName, archiveFilename string) (string, error) {
+	url := githubReleaseBase + "/" + tagName + "/checksums.txt"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("fetch checksum: build request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch checksum: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch checksum: unexpected status %d", resp.StatusCode)
+	}
+
+	// GoReleaser format: "<sha256hex>  <filename>\n"
+	scanner := bufio.NewScanner(io.LimitReader(resp.Body, 64*1024))
+	for scanner.Scan() {
+		parts := strings.SplitN(scanner.Text(), "  ", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[1]) == archiveFilename {
+			return strings.TrimSpace(parts[0]), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("fetch checksum: read body: %w", err)
+	}
+	return "", fmt.Errorf("fetch checksum: no entry for %q in checksums.txt", archiveFilename)
+}
+
+// verifyChecksum computes the SHA-256 digest of the file at path and compares
+// it against expectedHex. Returns an error if they do not match.
+func verifyChecksum(path, expectedHex string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash: %w", err)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != expectedHex {
+		return fmt.Errorf("checksum mismatch: got %s, want %s", got, expectedHex)
+	}
+	return nil
 }

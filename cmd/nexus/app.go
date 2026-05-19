@@ -101,9 +101,6 @@ type updateCheckedMsg struct {
 	err  error
 }
 
-// selfUpdateProgressMsg carries a progress status string during self-update.
-type selfUpdateProgressMsg struct{ status string }
-
 // selfUpdateDoneMsg carries the result of a self-update attempt.
 type selfUpdateDoneMsg struct{ err error }
 
@@ -130,9 +127,7 @@ func selfUpdateCmd(tagName string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		err := updater.SelfUpdate(ctx, tagName, func(status string) {
-			// Progress is reflected via selfUpdateProgressMsg — but since
-			// tea.Cmd returns a single Msg, we capture only the final outcome here.
-			_ = status
+			slog.Debug("self-update", "status", status)
 		})
 		return selfUpdateDoneMsg{err: err}
 	}
@@ -289,8 +284,6 @@ type Model struct {
 	latestVersion string
 	// selfUpdating is true while a self-update is in progress.
 	selfUpdating bool
-	// selfUpdateStatus holds the last progress message during a self-update.
-	selfUpdateStatus string
 
 	// issueTree caches the depth-first-ordered tree built from m.issues.
 	// Rebuilt whenever m.issues is updated (debouncedRenderMsg handler).
@@ -374,7 +367,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modal.UpdateConfirmedMsg:
 			m.activeModal = nil
 			m.selfUpdating = true
-			m.selfUpdateStatus = "Starting update..."
 			return m, selfUpdateCmd(m.latestVersion)
 		case modal.SpawnAgentMsg:
 			m.activeModal = nil
@@ -921,13 +913,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeModal = modal.NewUpdateModal(version.Version, msg.info.TagName, msg.info.Body, msg.info.HTMLURL, len(m.sessions))
 		return m, nil
 
-	case selfUpdateProgressMsg:
-		m.selfUpdateStatus = msg.status
-		return m, nil
-
 	case selfUpdateDoneMsg:
 		m.selfUpdating = false
-		m.selfUpdateStatus = ""
 		if msg.err != nil {
 			m.statusErr = fmt.Sprintf("Update failed: %v", msg.err)
 			return m, clearErrorCmd()
@@ -979,7 +966,7 @@ func (m *Model) View() string {
 	}
 
 	if m.selfUpdating {
-		return overlay("Updating nexus", fmt.Sprintf("%s\n\nPlease wait...", m.selfUpdateStatus))
+		return overlay("Updating nexus", "Downloading and installing update...\n\nPlease wait.")
 	}
 
 	if m.statusErr != "" {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/m00nk0d3/nexus/internal/tui/styles"
 )
@@ -57,12 +58,26 @@ func (m *UpdateModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *UpdateModal) View() string {
 	var b strings.Builder
 
+	// Accent style for separators and key hints; warning style for active-sessions alert.
+	var accentSt, warnSt lipgloss.Style
+	if m.theme != nil {
+		accentSt = lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Accent()))
+		warnSt = lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Warning()))
+	}
+
+	styled := func(st lipgloss.Style, s string) string {
+		if m.theme == nil {
+			return s
+		}
+		return st.Render(s)
+	}
+
 	b.WriteString("🚀 A shiny new version of nexus just dropped!\n\n")
 	b.WriteString(fmt.Sprintf("  Running:   %s\n", m.current))
 	b.WriteString(fmt.Sprintf("  Available: %s\n", m.latest))
 
 	if m.changelog != "" {
-		b.WriteString("\n── WHAT'S NEW ──────────────────────────────────────\n")
+		b.WriteString("\n" + styled(accentSt, "── WHAT'S NEW ──────────────────────────────────────") + "\n")
 		lines := strings.Split(strings.TrimSpace(m.changelog), "\n")
 		truncated := false
 		if len(lines) > changelogMaxLines {
@@ -77,17 +92,17 @@ func (m *UpdateModal) View() string {
 		if truncated && m.htmlURL != "" {
 			b.WriteString(fmt.Sprintf("  ↓ full changelog at %s\n", m.htmlURL))
 		}
-		b.WriteString("─────────────────────────────────────────────────────\n")
+		b.WriteString(styled(accentSt, "─────────────────────────────────────────────────────") + "\n")
 	}
 
 	if m.activeSessions > 0 {
 		b.WriteString(fmt.Sprintf(
-			"\n⚠  %d active session(s) vibing right now — they'll be fine,\n   but give nexus a restart after the update.\n",
-			m.activeSessions,
+			"\n%s  %d active session(s) vibing right now — they'll be fine,\n   but give nexus a restart after the update.\n",
+			styled(warnSt, "⚠"), m.activeSessions,
 		))
 	}
 
-	b.WriteString("\n  [y] Hell yeah, update!    [n] Nah, I fear change\n")
+	b.WriteString("\n  " + styled(accentSt, "[y] Hell yeah, update!    [n] Nah, I fear change") + "\n")
 	return b.String()
 }
 

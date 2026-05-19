@@ -1,9 +1,13 @@
 package updater
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -105,4 +109,80 @@ func TestDownloadURL(t *testing.T) {
 	} else {
 		assert.True(t, strings.HasSuffix(url, ".tar.gz"), "non-windows should use .tar.gz: %s", url)
 	}
+}
+
+func TestFetchChecksum_Success(t *testing.T) {
+	const filename = "nexus_v1.2.3_linux_amd64.tar.gz"
+	const wantHash = "abc123def456"
+	body := wantHash + "  " + filename + "\ndeadbeef  other_file.tar.gz\n"
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "checksums.txt")
+		fmt.Fprint(w, body)
+	}))
+	defer ts.Close()
+
+	old := githubReleaseBase
+	githubReleaseBase = ts.URL
+	defer func() { githubReleaseBase = old }()
+
+	got, err := fetchChecksum(t.Context(), "v1.2.3", filename)
+	require.NoError(t, err)
+	assert.Equal(t, wantHash, got)
+}
+
+func TestFetchChecksum_NotFound(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	old := githubReleaseBase
+	githubReleaseBase = ts.URL
+	defer func() { githubReleaseBase = old }()
+
+	_, err := fetchChecksum(t.Context(), "v1.2.3", "nexus_v1.2.3_linux_amd64.tar.gz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "404")
+}
+
+func TestFetchChecksum_MissingEntry(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "abc123  some_other_file.tar.gz\n")
+	}))
+	defer ts.Close()
+
+	old := githubReleaseBase
+	githubReleaseBase = ts.URL
+	defer func() { githubReleaseBase = old }()
+
+	_, err := fetchChecksum(t.Context(), "v1.2.3", "nexus_v1.2.3_linux_amd64.tar.gz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no entry for")
+}
+
+func TestVerifyChecksum_Valid(t *testing.T) {
+	content := []byte("hello nexus")
+	sum := sha256.Sum256(content)
+	expectedHex := hex.EncodeToString(sum[:])
+
+	f, err := os.CreateTemp(t.TempDir(), "nexus-test-*")
+	require.NoError(t, err)
+	_, err = f.Write(content)
+	require.NoError(t, err)
+	f.Close()
+
+	require.NoError(t, verifyChecksum(f.Name(), expectedHex))
+}
+
+func TestVerifyChecksum_Mismatch(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "nexus-test-*")
+	require.NoError(t, err)
+	_, err = f.Write([]byte("some content"))
+	require.NoError(t, err)
+	f.Close()
+
+	err = verifyChecksum(f.Name(), "0000000000000000000000000000000000000000000000000000000000000000")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "checksum mismatch")
 }
