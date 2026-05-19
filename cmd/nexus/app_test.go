@@ -2732,8 +2732,353 @@ func TestPidAlive_InvalidPID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5: Session management (attach / kill)
+// buildNewTerminalWithCmdCmd tests
 // ---------------------------------------------------------------------------
+
+// TestBuildNewTerminalWithCmdCmd verifies that buildNewTerminalWithCmdCmd
+// returns a correctly shaped command for each supported terminal emulator and
+// platform combination.
+func TestBuildNewTerminalWithCmdCmd(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		agentCmd    string
+		goos        string
+		termProgram string // TERM_PROGRAM env var (macOS)
+		termEnv     string // TERM env var (Linux terminal type)
+		terminalEnv string // TERMINAL env var (Linux fallback)
+		kittyWinID  string // KITTY_WINDOW_ID
+		wantExe     string
+		wantArgs    []string
+	}{
+		{
+			name:        "darwin ghostty uses ghostty --working-directory",
+			path:        "/Users/dev/repo/wt",
+			agentCmd:    "gh copilot",
+			goos:        "darwin",
+			termProgram: "ghostty",
+			wantExe:     "ghostty",
+			wantArgs:    []string{"ghostty", "--working-directory=/Users/dev/repo/wt", "--", "sh", "-c", "gh copilot"},
+		},
+		{
+			name:     "darwin Terminal.app uses osascript do script",
+			path:     "/Users/dev/repo/wt",
+			agentCmd: "gh copilot",
+			goos:     "darwin",
+			wantExe:  "osascript",
+		},
+		{
+			name:     "linux xterm-ghostty uses ghostty --working-directory",
+			path:     "/home/dev/repo/wt",
+			agentCmd: "claude --print",
+			goos:     "linux",
+			termEnv:  "xterm-ghostty",
+			wantExe:  "ghostty",
+			wantArgs: []string{"ghostty", "--working-directory=/home/dev/repo/wt", "--", "sh", "-c", "claude --print"},
+		},
+		{
+			name:     "linux alacritty uses alacritty --working-directory",
+			path:     "/home/dev/repo/wt",
+			agentCmd: "aider",
+			goos:     "linux",
+			termEnv:  "alacritty",
+			wantExe:  "alacritty",
+			wantArgs: []string{"alacritty", "--working-directory", "/home/dev/repo/wt", "-e", "sh", "-c", "aider"},
+		},
+		{
+			name:        "linux kitty (no remote-control) uses kitty --directory",
+			path:        "/home/dev/repo/wt",
+			agentCmd:    "aider",
+			goos:        "linux",
+			kittyWinID:  "1",
+			wantExe:     "kitty",
+			wantArgs:    []string{"kitty", "--directory", "/home/dev/repo/wt", "sh", "-c", "aider"},
+		},
+		{
+			name:        "linux TERMINAL env uses $TERMINAL -e script",
+			path:        "/home/dev/repo/wt",
+			agentCmd:    "aider",
+			goos:        "linux",
+			terminalEnv: "alacritty",
+			wantExe:     "alacritty",
+		},
+		{
+			name:     "linux no env falls back to xterm",
+			path:     "/home/dev/repo/wt",
+			agentCmd: "aider",
+			goos:     "linux",
+			wantExe:  "xterm",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TERM_PROGRAM", tt.termProgram)
+			t.Setenv("TERM", tt.termEnv)
+			t.Setenv("TERMINAL", tt.terminalEnv)
+			t.Setenv("KITTY_WINDOW_ID", tt.kittyWinID)
+
+			cmd := buildNewTerminalWithCmdCmd(tt.path, tt.agentCmd, tt.goos)
+			require.NotNil(t, cmd)
+			require.NotEmpty(t, cmd.Args)
+
+			assert.Contains(t, cmd.Args[0], tt.wantExe,
+				"executable should contain %q", tt.wantExe)
+			if tt.wantArgs != nil {
+				assert.Equal(t, tt.wantArgs, cmd.Args)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildNewTabWithCmdCmd tests
+// ---------------------------------------------------------------------------
+
+// TestBuildNewTabWithCmdCmd verifies that buildNewTabWithCmdCmd returns a
+// correctly shaped (cmd, true) pair for each supported multiplexer / emulator,
+// and (nil, false) when no supported emulator is detected.
+func TestBuildNewTabWithCmdCmd(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		agentCmd     string
+		pidFile      string
+		goos         string
+		tmuxEnv      string
+		zellijEnv    string
+		kittyWinID   string
+		alacrittyS   string // ALACRITTY_SOCKET
+		wtSession    string // WT_SESSION
+		termProgram  string // TERM_PROGRAM
+		konsoleVer   string // KONSOLE_VERSION
+		wantOK       bool
+		wantExe      string
+		wantArgsContain []string
+	}{
+		// --- Multiplexers ---
+		{
+			name:     "tmux with agentCmd opens new-window with cmd",
+			path:     "/repo/wt",
+			agentCmd: "gh copilot",
+			goos:     "linux",
+			tmuxEnv:  "set",
+			wantOK:   true,
+			wantExe:  "tmux",
+			wantArgsContain: []string{"new-window", "-c", "/repo/wt", "gh copilot"},
+		},
+		{
+			name:    "tmux without agentCmd opens plain new-window",
+			path:    "/repo/wt",
+			goos:    "linux",
+			tmuxEnv: "set",
+			wantOK:  true,
+			wantExe: "tmux",
+			wantArgsContain: []string{"new-window", "-c", "/repo/wt"},
+		},
+		{
+			name:      "zellij with agentCmd runs zellij run",
+			path:      "/repo/wt",
+			agentCmd:  "claude",
+			goos:      "linux",
+			zellijEnv: "set",
+			wantOK:    true,
+			wantExe:   "zellij",
+			wantArgsContain: []string{"run", "--cwd", "/repo/wt"},
+		},
+		{
+			name:      "zellij without agentCmd opens plain shell",
+			path:      "/repo/wt",
+			goos:      "linux",
+			zellijEnv: "set",
+			wantOK:    true,
+			wantExe:   "zellij",
+		},
+		// --- Kitty remote-control ---
+		{
+			name:       "kitty remote-control with agentCmd opens new tab with cmd",
+			path:       "/repo/wt",
+			agentCmd:   "aider",
+			goos:       "linux",
+			kittyWinID: "42",
+			wantOK:     true,
+			wantExe:    "kitty",
+			wantArgsContain: []string{"@", "new-window", "--new-tab", "--cwd", "/repo/wt", "sh", "-c", "aider"},
+		},
+		{
+			name:       "kitty remote-control with pidFile writes PID before shell",
+			path:       "/repo/wt",
+			pidFile:    "/tmp/nexus.pid",
+			goos:       "linux",
+			kittyWinID: "42",
+			wantOK:     true,
+			wantExe:    "kitty",
+			wantArgsContain: []string{"@", "new-window", "--new-tab", "--cwd", "/repo/wt"},
+		},
+		// --- Alacritty IPC ---
+		{
+			name:       "alacritty IPC with agentCmd creates tab with cmd",
+			path:       "/repo/wt",
+			agentCmd:   "gh copilot",
+			goos:       "linux",
+			alacrittyS: "/tmp/alacritty.sock",
+			wantOK:     true,
+			wantExe:    "alacritty",
+			wantArgsContain: []string{"msg", "create-tab", "--working-directory", "/repo/wt", "--", "sh", "-c", "gh copilot"},
+		},
+		// --- Windows Terminal ---
+		{
+			name:      "Windows Terminal with agentCmd opens new tab",
+			path:      `C:\repos\wt`,
+			agentCmd:  "gh copilot",
+			goos:      "windows",
+			wtSession: "some-guid",
+			wantOK:    true,
+			wantExe:   "wt",
+			wantArgsContain: []string{"-w", "0", "new-tab", "--startingDirectory", `C:\repos\wt`, "cmd", "/K", "gh copilot"},
+		},
+		{
+			name:  "Windows without WT_SESSION returns false",
+			path:  `C:\repos\wt`,
+			goos:  "windows",
+			wantOK: false,
+		},
+		// --- macOS iTerm2 ---
+		{
+			name:        "iTerm2 with agentCmd creates tab via osascript",
+			path:        "/Users/dev/repo/wt",
+			agentCmd:    "gh copilot",
+			goos:        "darwin",
+			termProgram: "iTerm.app",
+			wantOK:      true,
+			wantExe:     "osascript",
+		},
+		{
+			name:        "Apple_Terminal with agentCmd creates tab in front window",
+			path:        "/Users/dev/repo/wt",
+			agentCmd:    "aider",
+			goos:        "darwin",
+			termProgram: "Apple_Terminal",
+			wantOK:      true,
+			wantExe:     "osascript",
+		},
+		// --- Linux Konsole ---
+		{
+			name:       "Konsole with agentCmd opens new tab",
+			path:       "/home/dev/repo/wt",
+			agentCmd:   "claude",
+			goos:       "linux",
+			konsoleVer: "210401",
+			wantOK:     true,
+			wantExe:    "konsole",
+			wantArgsContain: []string{"--new-tab"},
+		},
+		// --- No emulator detected ---
+		{
+			name:   "no env vars returns nil false",
+			path:   "/repo/wt",
+			goos:   "linux",
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TMUX", tt.tmuxEnv)
+			t.Setenv("ZELLIJ", tt.zellijEnv)
+			t.Setenv("KITTY_WINDOW_ID", tt.kittyWinID)
+			t.Setenv("ALACRITTY_SOCKET", tt.alacrittyS)
+			t.Setenv("WT_SESSION", tt.wtSession)
+			t.Setenv("TERM_PROGRAM", tt.termProgram)
+			t.Setenv("KONSOLE_VERSION", tt.konsoleVer)
+
+			cmd, ok := buildNewTabWithCmdCmd(tt.path, tt.agentCmd, tt.pidFile, tt.goos)
+			assert.Equal(t, tt.wantOK, ok)
+			if !tt.wantOK {
+				assert.Nil(t, cmd)
+				return
+			}
+			require.NotNil(t, cmd)
+			require.NotEmpty(t, cmd.Args)
+			assert.Contains(t, cmd.Args[0], tt.wantExe,
+				"executable should contain %q", tt.wantExe)
+			for _, want := range tt.wantArgsContain {
+				assert.Contains(t, cmd.Args, want, "args should contain %q", want)
+			}
+		})
+	}
+}
+
+// TestFilterAliveSessions verifies that filterAliveSessions correctly keeps
+// live sessions and drops dead/stale ones.
+func TestFilterAliveSessions(t *testing.T) {
+	liveP := os.Getpid()
+	deadP := 999999999
+
+	tests := []struct {
+		name     string
+		sessions []domain.Session
+		wantLen  int
+	}{
+		{
+			name:     "empty input returns empty",
+			sessions: []domain.Session{},
+			wantLen:  0,
+		},
+		{
+			name: "StatusDead session is always dropped",
+			sessions: []domain.Session{
+				{ID: 1, WorktreePath: "/wt/a", Status: domain.StatusDead, StartedAt: time.Now()},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "live PID session is kept",
+			sessions: []domain.Session{
+				{ID: 2, WorktreePath: "/wt/b", ShellPID: &liveP, Status: domain.StatusActive, StartedAt: time.Now()},
+			},
+			wantLen: 1,
+		},
+		{
+			name: "dead PID session is dropped",
+			sessions: []domain.Session{
+				{ID: 3, WorktreePath: "/wt/c", ShellPID: &deadP, Status: domain.StatusActive, StartedAt: time.Now()},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "nil-PID session under 24h is kept",
+			sessions: []domain.Session{
+				{ID: 4, WorktreePath: "/wt/d", Status: domain.StatusActive, StartedAt: time.Now()},
+			},
+			wantLen: 1,
+		},
+		{
+			name: "nil-PID session over 24h is dropped",
+			sessions: []domain.Session{
+				{ID: 5, WorktreePath: "/wt/e", Status: domain.StatusActive, StartedAt: time.Now().Add(-25 * time.Hour)},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "mixed sessions return only live ones",
+			sessions: []domain.Session{
+				{ID: 1, WorktreePath: "/wt/a", Status: domain.StatusDead, StartedAt: time.Now()},
+				{ID: 2, WorktreePath: "/wt/b", ShellPID: &liveP, Status: domain.StatusActive, StartedAt: time.Now()},
+				{ID: 3, WorktreePath: "/wt/c", ShellPID: &deadP, Status: domain.StatusActive, StartedAt: time.Now()},
+				{ID: 4, WorktreePath: "/wt/d", Status: domain.StatusActive, StartedAt: time.Now()},
+			},
+			wantLen: 2, // live PID + nil-PID (recent)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterAliveSessions(tt.sessions)
+			assert.Len(t, got, tt.wantLen)
+		})
+	}
+}
 
 // TestModel_Enter_ExistingSession_TriggersFocus verifies that when a session
 // already exists for the selected worktree, pressing Enter dispatches a focus

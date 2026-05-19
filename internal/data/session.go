@@ -101,6 +101,10 @@ func DeleteSession(db *DB, id int64) error {
 }
 
 // DeleteDeadSessions removes all session rows whose status is 'dead'.
+// It is a batch convenience for callers that want to purge dead sessions outside
+// the normal health-check loop (e.g. on startup, in integration tests, or from a
+// maintenance CLI). The session health-check tick in checkSessionsCmd uses
+// DeleteSession per-row instead so it can log each individual failure.
 func DeleteDeadSessions(db *DB) error {
 	_, err := db.Conn.Exec(`DELETE FROM active_sessions WHERE status = ?`, string(domain.StatusDead))
 	if err != nil {

@@ -149,8 +149,7 @@ type sessionFocusedMsg struct {
 }
 
 // msgAutoDismissDuration is how long the success/info toast stays visible before
-// being cleared by clearMsgCmd. renderInfoModal reads this constant directly so
-// the displayed countdown is always accurate.
+// being cleared by clearMsgCmd.
 const msgAutoDismissDuration = 3 * time.Second
 
 // clearMsgMsg is dispatched after the success-notification timer fires.
@@ -1670,9 +1669,35 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 	}
 }
 
+// filterAliveSessions returns only sessions that should be considered live:
+//   - StatusDead sessions are always excluded.
+//   - Sessions with no ShellPID are kept for up to 24 hours (e.g. Windows
+//     Terminal new-tab, where no stable long-lived PID is available).
+//   - Sessions with a ShellPID are kept only when that PID is still alive.
+func filterAliveSessions(sessions []domain.Session) []domain.Session {
+	var alive []domain.Session
+	for _, s := range sessions {
+		if s.Status == domain.StatusDead {
+			continue
+		}
+		if s.ShellPID == nil {
+			// No PID — keep alive up to 24 hours.
+			if time.Since(s.StartedAt) <= 24*time.Hour {
+				alive = append(alive, s)
+			}
+			continue
+		}
+		if pidAlive(*s.ShellPID) {
+			alive = append(alive, s)
+		}
+	}
+	return alive
+}
+
 // checkSessionsCmd reads all tracked sessions from the nexus DB and checks
 // whether each PID is still alive. Returns sessionStatusUpdatedMsg with the
-// live session list.
+// live session list. Dead and stale sessions are removed from the DB when a DB
+// connection is available.
 func (m *Model) checkSessionsCmd() tea.Cmd {
 	db := m.db
 	current := m.sessions
@@ -1680,59 +1705,31 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 		var alive []domain.Session
 
 		if db == nil {
-			// No nexus DB — perform PID health checks on in-memory sessions.
-			for _, s := range current {
-				if s.Status == domain.StatusDead {
-					continue
-				}
-				if s.ShellPID == nil {
-					// No PID — keep alive up to 24 hours.
-					if time.Since(s.StartedAt) > 24*time.Hour {
-						continue
-					}
-					alive = append(alive, s)
-					continue
-				}
-				if pidAlive(*s.ShellPID) {
-					alive = append(alive, s)
-				}
-				// Shell dead — drop from alive.
-			}
+			// No nexus DB — perform PID health checks on in-memory sessions only.
+			alive = filterAliveSessions(current)
 		} else {
 			all, err := data.GetSessions(db)
 			if err != nil {
 				slog.Warn("session health check: failed to read sessions from DB", "err", err)
-				for _, s := range current {
-					if s.Status != domain.StatusDead {
-						alive = append(alive, s)
-					}
-				}
+				// Fall back to in-memory state so the UI doesn't go blank.
+				alive = filterAliveSessions(current)
 			} else {
+				alive = filterAliveSessions(all)
+				// Remove sessions that didn't survive the filter from the DB.
+				aliveIDs := make(map[int64]bool, len(alive))
+				for _, s := range alive {
+					aliveIDs[s.ID] = true
+				}
 				for _, s := range all {
-					if s.Status == domain.StatusDead {
-						if err := data.DeleteSession(db, s.ID); err != nil {
-							slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
-						}
+					if aliveIDs[s.ID] {
 						continue
 					}
+					logKey := "session health check: failed to delete dead session"
 					if s.ShellPID == nil {
-						// No PID — keep alive up to 24 hours (e.g. WT tabs without PID tracking).
-						if time.Since(s.StartedAt) > 24*time.Hour {
-							if err := data.DeleteSession(db, s.ID); err != nil {
-								slog.Warn("session health check: failed to delete stale session", "id", s.ID, "err", err)
-							}
-							continue
-						}
-						alive = append(alive, s)
-						continue
+						logKey = "session health check: failed to delete stale session"
 					}
-					if pidAlive(*s.ShellPID) {
-						alive = append(alive, s)
-					} else {
-						// Shell is dead — remove from DB.
-						if err := data.DeleteSession(db, s.ID); err != nil {
-							slog.Warn("session health check: failed to delete dead session", "id", s.ID, "err", err)
-						}
+					if err := data.DeleteSession(db, s.ID); err != nil {
+						slog.Warn(logKey, "id", s.ID, "err", err)
 					}
 				}
 			}
