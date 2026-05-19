@@ -63,3 +63,6 @@ type SpawnAgentMsg struct {
 	Prompt       string   // Prompt text (empty for Aider which uses file picker)
 	Files        []string // Reserved for Aider file-picker; populated in follow-on issue
 }
+
+// UpdateConfirmedMsg is sent when the user confirms the self-update from the update modal.
+type UpdateConfirmedMsg struct{}

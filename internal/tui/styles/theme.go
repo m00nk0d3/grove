@@ -238,6 +238,9 @@ func (t Theme) Bg() string { return t.bg }
 // Success returns the theme's success color hex string.
 func (t Theme) Success() string { return t.success }
 
+// Warning returns the theme's warning color hex string.
+func (t Theme) Warning() string { return t.warning }
+
 // MutedBorder returns s with the border foreground dimmed to the muted color.
 // Apply this to unfocused panels to visually de-emphasize them relative to the
 // currently focused panel.

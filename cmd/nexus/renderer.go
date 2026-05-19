@@ -13,12 +13,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/m00nk0d3/nexus/internal/domain"
 	"github.com/m00nk0d3/nexus/internal/tui/styles"
+	"github.com/m00nk0d3/nexus/internal/version"
 	"github.com/mattn/go-runewidth"
 )
 
 const (
-	appVersion           = "1.0"
-	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [q/esc] Quit"
+	footerHintsWorktrees= "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [q/esc] Quit"
 	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [t] Settings | [g] GH | [q/esc] Quit"
 	footerHintsDefault   = footerHintsWorktrees
 	actionBarHints       = "[c-n] New  [c-d] Delete  [c-l] Lock | [f1] Help"
@@ -193,8 +193,8 @@ func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSes
 		repoPath = "./"
 	}
 	text := fmt.Sprintf(
-		"NEXUS v%s: GIT WORKTREE ORCHESTRATOR | Repo: %s | Local Path: %s",
-		appVersion, filepath.Base(repoPath), repoPath,
+		"NEXUS %s: GIT WORKTREE ORCHESTRATOR | Repo: %s | Local Path: %s",
+		version.Version, filepath.Base(repoPath), repoPath,
 	)
 	if activeSessions > 0 {
 		text += fmt.Sprintf(" | %d active session(s)", activeSessions)
