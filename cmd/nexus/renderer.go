@@ -1078,8 +1078,8 @@ func renderErrorModal(msg string, termWidth, termHeight int, baseView string) st
 	if maxW < 40 {
 		maxW = 40
 	}
-	if maxW > 80 {
-		maxW = 80
+	if maxW > 120 {
+		maxW = 120
 	}
 
 	box := lipgloss.NewStyle().

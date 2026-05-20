@@ -347,6 +347,41 @@ func verifyChecksum(path, expectedHex string) error {
 	return nil
 }
 
+// moveFile moves src to dst, falling back to a copy+delete when os.Rename
+// fails (e.g. across drive letters on Windows).
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	// Fallback: copy bytes then remove the source.
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open src: %w", err)
+	}
+	defer srcFile.Close()
+
+	info, err := srcFile.Stat()
+	if err != nil {
+		return fmt.Errorf("stat src: %w", err)
+	}
+
+	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return fmt.Errorf("create dst: %w", err)
+	}
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		dstFile.Close()
+		os.Remove(dst)
+		return fmt.Errorf("copy: %w", err)
+	}
+	if err := dstFile.Close(); err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("close dst: %w", err)
+	}
+	_ = os.Remove(src)
+	return nil
+}
+
 // replaceBinary replaces currentExe with the file at newPath.
 //
 // On non-Windows platforms this is a straightforward atomic rename.
@@ -354,13 +389,17 @@ func verifyChecksum(path, expectedHex string) error {
 // CAN rename the running executable away (the OS holds its open handle by
 // inode, not by name). The strategy is therefore:
 //  1. Rename currentExe → currentExe+".old"  (always succeeds on Windows)
-//  2. Rename newPath    → currentExe          (target no longer exists)
+//  2. Move   newPath    → currentExe          (target no longer exists)
+//
+// Step 2 uses moveFile which falls back to copy+delete when the source and
+// destination are on different drives (common when the exe lives on D: but the
+// temp dir is on C:).
 //
 // The ".old" file cannot be deleted while the process is running; call
 // CleanupOldBinary on the next startup to remove it.
 func replaceBinary(newPath, currentExe string) error {
 	if runtime.GOOS != "windows" {
-		if err := os.Rename(newPath, currentExe); err != nil {
+		if err := moveFile(newPath, currentExe); err != nil {
 			return fmt.Errorf("replace binary: %w", err)
 		}
 		return nil
@@ -374,7 +413,7 @@ func replaceBinary(newPath, currentExe string) error {
 	if err := os.Rename(currentExe, oldExe); err != nil {
 		return fmt.Errorf("rename current binary: %w", err)
 	}
-	if err := os.Rename(newPath, currentExe); err != nil {
+	if err := moveFile(newPath, currentExe); err != nil {
 		// Best-effort rollback: put the original back.
 		_ = os.Rename(oldExe, currentExe)
 		return fmt.Errorf("replace binary: %w", err)
