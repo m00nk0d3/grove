@@ -3468,121 +3468,148 @@ func TestUpdateModal_DoesNotSwallowGithubSyncedMsg(t *testing.T) {
 
 // TestPRReviewWorktreePath verifies the pr-<number>-<branch-slug> naming convention.
 func TestPRReviewWorktreePath(t *testing.T) {
-tests := []struct {
-name       string
-repoPath   string
-prNumber   int
-branch     string
-wantSuffix string
-}{
-{
-name:       "simple branch name",
-repoPath:   "/home/user/nexus",
-prNumber:   42,
-branch:     "feat-my-feature",
-wantSuffix: "pr-42-feat-my-feature",
-},
-{
-name:       "branch with slashes",
-repoPath:   "/home/user/nexus",
-prNumber:   7,
-branch:     "feat/issue-7-login",
-wantSuffix: "pr-7-feat-issue-7-login",
-},
-{
-name:       "main branch",
-repoPath:   "/home/user/nexus",
-prNumber:   1,
-branch:     "main",
-wantSuffix: "pr-1-main",
-},
-}
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-got := prReviewWorktreePath(tt.repoPath, tt.prNumber, tt.branch)
-assert.True(t, strings.HasSuffix(got, tt.wantSuffix),
-"expected path to end with %q, got %q", tt.wantSuffix, got)
-})
-}
+	tests := []struct {
+		name       string
+		repoPath   string
+		prNumber   int
+		branch     string
+		wantSuffix string
+	}{
+		{
+			name:       "simple branch name",
+			repoPath:   "/home/user/nexus",
+			prNumber:   42,
+			branch:     "feat-my-feature",
+			wantSuffix: "pr-42-feat-my-feature",
+		},
+		{
+			name:       "branch with slashes",
+			repoPath:   "/home/user/nexus",
+			prNumber:   7,
+			branch:     "feat/issue-7-login",
+			wantSuffix: "pr-7-feat-issue-7-login",
+		},
+		{
+			name:       "main branch",
+			repoPath:   "/home/user/nexus",
+			prNumber:   1,
+			branch:     "main",
+			wantSuffix: "pr-1-main",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := prReviewWorktreePath(tt.repoPath, tt.prNumber, tt.branch)
+			assert.True(t, strings.HasSuffix(got, tt.wantSuffix),
+				"expected path to end with %q, got %q", tt.wantSuffix, got)
+		})
+	}
 }
 
 // TestModel_CtrlR_InPRView_WithNoSelectedPR_ShowsError verifies that Ctrl+R with
 // no PRs available surfaces a friendly error rather than panicking.
 func TestModel_CtrlR_InPRView_WithNoSelectedPR_ShowsError(t *testing.T) {
-m := NewModel()
-m.view = viewPRs
-m.prs = []domain.PullRequest{} // empty PR list
+	m := NewModel()
+	m.view = viewPRs
+	m.prs = []domain.PullRequest{} // empty PR list
 
-updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-result := updated.(*Model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	result := updated.(*Model)
 
-assert.NotEmpty(t, result.statusErr, "should show an error when no PR is selected")
-assert.NotNil(t, cmd, "should return clearErrorCmd")
+	assert.NotEmpty(t, result.statusErr, "should show an error when no PR is selected")
+	assert.NotNil(t, cmd, "should return clearErrorCmd")
 }
 
 // TestModel_CtrlR_InWorktreesView_ShowsError verifies that Ctrl+R outside the PR view
 // shows a helpful error message directing the user to switch views.
 func TestModel_CtrlR_InWorktreesView_ShowsError(t *testing.T) {
-m := NewModel()
-m.view = viewWorktrees
+	m := NewModel()
+	m.view = viewWorktrees
 
-updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-result := updated.(*Model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	result := updated.(*Model)
 
-assert.NotEmpty(t, result.statusErr, "should show an error when not in PR view")
-assert.NotNil(t, cmd)
+	assert.NotEmpty(t, result.statusErr, "should show an error when not in PR view")
+	assert.NotNil(t, cmd)
+}
+
+// TestModel_CtrlR_InPRView_WithValidPR_DispatchesProvisionCmd verifies that Ctrl+R
+// with a selected PR dispatches the provisioning command and sets a loading status.
+func TestModel_CtrlR_InPRView_WithValidPR_DispatchesProvisionCmd(t *testing.T) {
+	m := NewModel()
+	m.view = viewPRs
+	m.prs = []domain.PullRequest{{Number: 42, Branch: "feat/my-feature", Title: "My Feature"}}
+	m.selectedPRIdx = 0
+	// Pre-populate Worktrees so the reuse path fires synchronously (no git I/O).
+	m.Worktrees = []domain.Worktree{
+		{Path: "/home/user/worktrees/feat-my-feature", Branch: "feat/my-feature"},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	result := updated.(*Model)
+
+	require.NotNil(t, cmd, "should return provisionPRReviewWorktreeCmd")
+	assert.Empty(t, result.statusErr, "should not set an error on valid dispatch")
+	assert.NotEmpty(t, result.statusMsg, "should set a loading status message")
+
+	// Verify the cmd resolves to a prReviewWorktreeDoneMsg for the correct worktree.
+	msg := cmd()
+	doneMsg, ok := msg.(prReviewWorktreeDoneMsg)
+	require.True(t, ok, "cmd should resolve to prReviewWorktreeDoneMsg")
+	assert.Nil(t, doneMsg.err)
+	assert.Equal(t, "/home/user/worktrees/feat-my-feature", doneMsg.worktreePath)
 }
 
 // TestModel_PRReviewWorktreeDoneMsg_OpensAgentModal verifies that a successful
 // prReviewWorktreeDoneMsg opens the AgentLauncherModal with the review prompt.
 func TestModel_PRReviewWorktreeDoneMsg_OpensAgentModal(t *testing.T) {
-m := NewModel()
-pr := domain.PullRequest{Number: 42, Title: "Test PR", Branch: "feat-test"}
+	m := NewModel()
+	m.statusMsg = "Provisioning review worktree…"
 
-updated, _ := m.Update(prReviewWorktreeDoneMsg{
-pr:           pr,
-worktreePath: "/home/user/worktrees/pr-42-feat-test",
-})
-result := updated.(*Model)
+	updated, _ := m.Update(prReviewWorktreeDoneMsg{
+		worktreePath: "/home/user/worktrees/pr-42-feat-test",
+	})
+	result := updated.(*Model)
 
-require.NotNil(t, result.activeModal, "AgentLauncherModal should be open")
-assert.Equal(t, "SPAWN AGENT", result.activeModal.Title())
+	require.NotNil(t, result.activeModal, "AgentLauncherModal should be open")
+	assert.Equal(t, "SPAWN AGENT", result.activeModal.Title())
+	assert.Empty(t, result.statusMsg, "loading status should be cleared on success")
 }
 
 // TestModel_PRReviewWorktreeDoneMsg_WithError_ShowsStatusError verifies that a failed
 // prReviewWorktreeDoneMsg shows an error and does not open the agent modal.
 func TestModel_PRReviewWorktreeDoneMsg_WithError_ShowsStatusError(t *testing.T) {
-m := NewModel()
-pr := domain.PullRequest{Number: 5, Title: "Bad PR", Branch: "bad-branch"}
+	m := NewModel()
+	m.statusMsg = "Provisioning review worktree…"
 
-updated, cmd := m.Update(prReviewWorktreeDoneMsg{
-pr:  pr,
-err: errors.New("git: branch not found"),
-})
-result := updated.(*Model)
+	updated, cmd := m.Update(prReviewWorktreeDoneMsg{
+		err: errors.New("git: branch not found"),
+	})
+	result := updated.(*Model)
 
-assert.Nil(t, result.activeModal, "modal should not open on error")
-assert.Contains(t, result.statusErr, "PR review setup failed")
-assert.NotNil(t, cmd)
+	assert.Nil(t, result.activeModal, "modal should not open on error")
+	assert.Contains(t, result.statusErr, "PR review setup failed")
+	assert.Empty(t, result.statusMsg, "loading status should be cleared on error")
+	assert.NotNil(t, cmd)
 }
 
 // TestModel_ProvisionPRReviewWorktreeCmd_ReusesExistingWorktree verifies that when
 // a worktree for the PR branch already exists, the provisioning command reuses that
 // path without attempting a new git checkout.
 func TestModel_ProvisionPRReviewWorktreeCmd_ReusesExistingWorktree(t *testing.T) {
-m := NewModel()
-m.RepoPath = "/home/user/nexus"
-m.Worktrees = []domain.Worktree{
-{Path: "/home/user/worktrees/feat-existing", Branch: "feat/existing"},
-}
-pr := domain.PullRequest{Number: 99, Branch: "feat/existing"}
+	m := NewModel()
+	m.RepoPath = "/home/user/nexus"
+	m.Worktrees = []domain.Worktree{
+		{Path: "/home/user/worktrees/feat-existing", Branch: "feat/existing"},
+	}
+	pr := domain.PullRequest{Number: 99, Branch: "feat/existing"}
 
-cmd := m.provisionPRReviewWorktreeCmd(pr)
-require.NotNil(t, cmd)
+	cmd := m.provisionPRReviewWorktreeCmd(pr)
+	require.NotNil(t, cmd)
 
-msg := cmd()
-doneMsg, ok := msg.(prReviewWorktreeDoneMsg)
-require.True(t, ok)
-assert.Nil(t, doneMsg.err, "should not error when reusing existing worktree")
-assert.Equal(t, "/home/user/worktrees/feat-existing", doneMsg.worktreePath)
+	msg := cmd()
+	doneMsg, ok := msg.(prReviewWorktreeDoneMsg)
+	require.True(t, ok)
+	assert.Nil(t, doneMsg.err, "should not error when reusing existing worktree")
+	assert.Equal(t, "/home/user/worktrees/feat-existing", doneMsg.worktreePath)
 }

@@ -91,7 +91,6 @@ type clearErrorMsg struct{}
 
 // prReviewWorktreeDoneMsg is dispatched after the PR review worktree is provisioned.
 type prReviewWorktreeDoneMsg struct {
-	pr           domain.PullRequest
 	worktreePath string
 	err          error
 }
@@ -550,6 +549,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusErr = "No PR selected — select one first"
 				return m, clearErrorCmd()
 			}
+			m.statusMsg = "Provisioning review worktree…"
 			return m, m.provisionPRReviewWorktreeCmd(m.prs[m.selectedPRIdx])
 		case tea.KeyUp:
 			m.moveUp()
@@ -728,6 +728,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshWorktreesCmd()
 
 	case prReviewWorktreeDoneMsg:
+		m.statusMsg = ""
 		if msg.err != nil {
 			m.statusErr = fmt.Sprintf("PR review setup failed: %v", msg.err)
 			return m, tea.Batch(clearErrorCmd(), m.refreshWorktreesCmd())
@@ -1147,18 +1148,22 @@ func (m *Model) checkoutPRWorktreeCmd(branch, path string) tea.Cmd {
 	}
 }
 
+// branchSlug converts a branch name to a filesystem-safe slug by replacing
+// forward slashes with dashes.
+func branchSlug(branch string) string {
+	return strings.ReplaceAll(branch, "/", "-")
+}
+
 // prWorktreePath derives the filesystem path for a PR worktree using the same
 // convention as issue worktrees: ../worktrees/<branch-with-slashes-as-dashes>.
 func prWorktreePath(repoPath, branch string) string {
-	slug := strings.ReplaceAll(branch, "/", "-")
-	return filepath.Join(filepath.Dir(repoPath), "worktrees", slug)
+	return filepath.Join(filepath.Dir(repoPath), "worktrees", branchSlug(branch))
 }
 
 // prReviewWorktreePath derives the filesystem path for a PR review worktree.
 // Uses naming convention pr-<number>-<branch-slug> as specified in issue #78.
 func prReviewWorktreePath(repoPath string, prNumber int, branch string) string {
-	slug := strings.ReplaceAll(branch, "/", "-")
-	name := fmt.Sprintf("pr-%d-%s", prNumber, slug)
+	name := fmt.Sprintf("pr-%d-%s", prNumber, branchSlug(branch))
 	return filepath.Join(filepath.Dir(repoPath), "worktrees", name)
 }
 
@@ -1173,14 +1178,14 @@ func (m *Model) provisionPRReviewWorktreeCmd(pr domain.PullRequest) tea.Cmd {
 		if wt.Branch == pr.Branch {
 			worktreePath = wt.Path
 			return func() tea.Msg {
-				return prReviewWorktreeDoneMsg{pr: pr, worktreePath: worktreePath}
+				return prReviewWorktreeDoneMsg{worktreePath: worktreePath}
 			}
 		}
 	}
 	return func() tea.Msg {
 		cmd := internalexec.NewGitCommand(repoPath)
 		err := cmd.CheckoutPRWorktree(worktreePath, pr.Branch)
-		return prReviewWorktreeDoneMsg{pr: pr, worktreePath: worktreePath, err: err}
+		return prReviewWorktreeDoneMsg{worktreePath: worktreePath, err: err}
 	}
 }
 
