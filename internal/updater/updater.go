@@ -384,27 +384,18 @@ func moveFile(src, dst string) error {
 
 // replaceBinary replaces currentExe with the file at newPath.
 //
-// On non-Windows platforms this is a straightforward atomic rename.
-// On Windows you cannot rename a file on top of a running executable, but you
-// CAN rename the running executable away (the OS holds its open handle by
-// inode, not by name). The strategy is therefore:
-//  1. Rename currentExe → currentExe+".old"  (always succeeds on Windows)
-//  2. Move   newPath    → currentExe          (target no longer exists)
+// The strategy used on all platforms is:
+//  1. Rename currentExe → currentExe+".old"  (the kernel holds the open inode
+//     by reference, so the running process is unaffected by the rename)
+//  2. Move   newPath    → currentExe          (target slot is now free)
 //
-// Step 2 uses moveFile which falls back to copy+delete when the source and
-// destination are on different drives (common when the exe lives on D: but the
-// temp dir is on C:).
+// This avoids ETXTBSY on Linux/macOS (writing to a running executable is
+// forbidden) and the equivalent restriction on Windows. Step 2 uses moveFile
+// which falls back to copy+delete when newPath and currentExe are on different
+// filesystems (e.g. /tmp vs /usr/local/bin, or C: vs D: on Windows).
 //
-// The ".old" file cannot be deleted while the process is running; call
-// CleanupOldBinary on the next startup to remove it.
+// The ".old" file is cleaned up on the next startup by CleanupOldBinary.
 func replaceBinary(newPath, currentExe string) error {
-	if runtime.GOOS != "windows" {
-		if err := moveFile(newPath, currentExe); err != nil {
-			return fmt.Errorf("replace binary: %w", err)
-		}
-		return nil
-	}
-
 	oldExe := currentExe + ".old"
 	// Remove any leftover .old from a previous update so the rename below
 	// doesn't fail if the file already exists.
@@ -423,12 +414,9 @@ func replaceBinary(newPath, currentExe string) error {
 }
 
 // CleanupOldBinary removes the "<executable>.old" file left behind by a
-// Windows self-update. It is a no-op on other platforms and silently ignores
-// any errors (the file may not exist or may still be locked).
+// self-update. It silently ignores any errors (the file may not exist or may
+// still be locked by the OS).
 func CleanupOldBinary() {
-	if runtime.GOOS != "windows" {
-		return
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		return
