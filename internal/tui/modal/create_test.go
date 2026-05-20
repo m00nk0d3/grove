@@ -150,6 +150,35 @@ func TestCreateModal_WorktreePath_IsParentWorktreesDir(t *testing.T) {
 	assert.Contains(t, path, "worktrees")
 }
 
+func TestCreateModal_WorktreePath_IsScopedToRepoName(t *testing.T) {
+	tests := []struct {
+		name     string
+		repoPath string
+		wantPath string
+	}{
+		{
+			name:     "nexus repo scoped correctly",
+			repoPath: "/home/user/nexus",
+			wantPath: "/home/user/worktrees/nexus/feat-issue-5-create-delete-modals",
+		},
+		{
+			name:     "nova repo scoped correctly — no collision with nexus",
+			repoPath: "/home/user/nova",
+			wantPath: "/home/user/worktrees/nova/feat-issue-5-create-delete-modals",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewCreateModal(testIssues, tt.repoPath)
+			m.issueIdx = 0
+			m.typeIdx = 0 // feat
+			m.slugInput.SetValue("create-delete-modals")
+
+			assert.Equal(t, tt.wantPath, m.WorktreePath())
+		})
+	}
+}
+
 func TestCreateModal_Enter_AtConfirmStep_EmitsCreateMsg(t *testing.T) {
 	m := NewCreateModal(testIssues, "/home/user/repo")
 	m.step = stepConfirm

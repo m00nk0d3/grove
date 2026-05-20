@@ -1169,16 +1169,18 @@ func branchSlug(branch string) string {
 }
 
 // prWorktreePath derives the filesystem path for a PR worktree using the same
-// convention as issue worktrees: ../worktrees/<branch-with-slashes-as-dashes>.
+// convention as issue worktrees: ../worktrees/<repo>/<branch-with-slashes-as-dashes>.
+// The repo name is included to avoid path collisions when multiple projects share the same parent directory.
 func prWorktreePath(repoPath, branch string) string {
-	return filepath.Join(filepath.Dir(repoPath), "worktrees", branchSlug(branch))
+	return filepath.Join(filepath.Dir(repoPath), "worktrees", filepath.Base(repoPath), branchSlug(branch))
 }
 
 // prReviewWorktreePath derives the filesystem path for a PR review worktree.
 // Uses naming convention pr-<number>-<branch-slug> as specified in issue #78.
+// The repo name is included to avoid path collisions when multiple projects share the same parent directory.
 func prReviewWorktreePath(repoPath string, prNumber int, branch string) string {
 	name := fmt.Sprintf("pr-%d-%s", prNumber, branchSlug(branch))
-	return filepath.Join(filepath.Dir(repoPath), "worktrees", name)
+	return filepath.Join(filepath.Dir(repoPath), "worktrees", filepath.Base(repoPath), name)
 }
 
 // provisionPRReviewWorktreeCmd returns a Cmd that provisions a worktree for the given PR.
