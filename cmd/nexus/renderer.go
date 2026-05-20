@@ -20,7 +20,7 @@ import (
 const (
 	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [q/esc] Quit"
 	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [t] Settings | [g] GH | [q/esc] Quit"
-	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [t] Settings | [g] GH | [q/esc] Quit"
+	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [Ctrl+R] Review | [t] Settings | [g] GH | [q/esc] Quit"
 	footerHintsDefault   = footerHintsWorktrees
 	actionBarHints       = "[enter] Open  [c-d] Delete  [c-l] Lock | [f1] Help"
 	defaultTermWidth     = 120

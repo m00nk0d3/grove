@@ -389,3 +389,51 @@ func TestAgentLauncherModal_ShortcutD_WhenAvailable_EmitsSpawnMsg(t *testing.T) 
 	assert.Equal(t, "aider", spawnMsg.AgentName)
 }
 
+
+// --- NewAgentLauncherModalWithPrompt ---
+
+func TestNewAgentLauncherModalWithPrompt_PreFillsOnAgentSelect(t *testing.T) {
+cfg := &domain.Config{}
+m := NewAgentLauncherModalWithPrompt(cfg, testWorktreePath, "review this PR")
+
+require.NotNil(t, m)
+assert.Equal(t, "review this PR", m.initialPrompt)
+assert.Equal(t, stepAgentSelect, m.step, "should start on selection step")
+}
+
+func TestNewAgentLauncherModalWithPrompt_PreFillsPromptInput_OnClaudeSelect(t *testing.T) {
+opts := []agentOption{
+{name: "Claude Code", key: "a", internal: AgentNameClaude, available: true},
+}
+m := newAgentLauncherModal(opts, testWorktreePath)
+m.initialPrompt = "review the PR"
+
+updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+m = updated.(*AgentLauncherModal)
+
+require.NotNil(t, cmd, "Focus cmd should be returned")
+assert.Equal(t, stepAgentPrompt, m.step)
+assert.Equal(t, "review the PR", m.promptInput.Value(), "prompt input should be pre-filled with initialPrompt")
+}
+
+func TestNewAgentLauncherModalWithPrompt_PreFilledPrompt_SubmitsCorrectly(t *testing.T) {
+opts := []agentOption{
+{name: "Claude Code", key: "a", internal: AgentNameClaude, available: true},
+}
+m := newAgentLauncherModal(opts, testWorktreePath)
+m.initialPrompt = "review the PR"
+
+// Select Claude — advances to prompt step with pre-filled value.
+updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+m = updated.(*AgentLauncherModal)
+require.Equal(t, stepAgentPrompt, m.step)
+
+// Submit without modifying the prompt — should use pre-filled value.
+_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+require.NotNil(t, cmd)
+
+msg := cmd()
+spawnMsg, ok := msg.(SpawnAgentMsg)
+require.True(t, ok)
+assert.Equal(t, "review the PR", spawnMsg.Prompt)
+}

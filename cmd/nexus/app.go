@@ -89,6 +89,13 @@ type aiderFilesFetchedMsg struct {
 // clearErrorMsg is dispatched after the 5-second auto-dismiss timer fires.
 type clearErrorMsg struct{}
 
+// prReviewWorktreeDoneMsg is dispatched after the PR review worktree is provisioned.
+type prReviewWorktreeDoneMsg struct {
+	pr           domain.PullRequest
+	worktreePath string
+	err          error
+}
+
 // updateCheckedMsg carries the result of the startup version check.
 type updateCheckedMsg struct {
 	info updater.ReleaseInfo
@@ -177,6 +184,19 @@ type sessionFocusedMsg struct {
 // msgAutoDismissDuration is how long the success/info toast stays visible before
 // being cleared by clearMsgCmd.
 const msgAutoDismissDuration = 3 * time.Second
+
+// prReviewAgentPrompt is the pre-seeded prompt for the AI-assisted PR review flow.
+// It instructs the agent on what to review and how to report findings.
+const prReviewAgentPrompt = `You are performing a pull request code review. If you have a skill specifically for reviewing pull requests, using it is MANDATORY — invoke it before doing anything else.
+
+Your review must cover:
+- Correctness: logic errors, off-by-ones, unhandled edge cases
+- Security: injection, auth issues, exposed secrets, unsafe operations
+- Performance: unnecessary allocations, N+1 queries, blocking calls
+- Maintainability: unclear naming, missing/wrong tests, dead code
+- Breaking changes: API contracts, backward compatibility
+
+Be direct and actionable. Skip formatting/style nitpicks unless they materially harm readability. For each finding, state the file + line, the problem, and a concrete suggestion to fix it.`
 
 // clearMsgMsg is dispatched after the success-notification timer fires.
 type clearMsgMsg struct{}
@@ -521,6 +541,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.selectedWorktree(); ok {
 				m.activeModal = modal.NewDeleteModal(selected)
 			}
+		case tea.KeyCtrlR:
+			if m.view != viewPRs {
+				m.statusErr = "PR Review (Ctrl+R) is only available in the PRs view — press P to switch"
+				return m, clearErrorCmd()
+			}
+			if len(m.prs) == 0 || m.selectedPRIdx >= len(m.prs) {
+				m.statusErr = "No PR selected — select one first"
+				return m, clearErrorCmd()
+			}
+			return m, m.provisionPRReviewWorktreeCmd(m.prs[m.selectedPRIdx])
 		case tea.KeyUp:
 			m.moveUp()
 			return m, m.maybeLazyLoadCmd()
@@ -695,6 +725,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusErr = fmt.Sprintf("Git operation failed: %v", msg.err)
 			return m, tea.Batch(m.refreshWorktreesCmd(), clearErrorCmd())
 		}
+		return m, m.refreshWorktreesCmd()
+
+	case prReviewWorktreeDoneMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("PR review setup failed: %v", msg.err)
+			return m, tea.Batch(clearErrorCmd(), m.refreshWorktreesCmd())
+		}
+		m.activeModal = modal.NewAgentLauncherModalWithPrompt(m.Config, msg.worktreePath, prReviewAgentPrompt)
 		return m, m.refreshWorktreesCmd()
 
 	case worktreeSwitchedMsg:
@@ -1114,6 +1152,36 @@ func (m *Model) checkoutPRWorktreeCmd(branch, path string) tea.Cmd {
 func prWorktreePath(repoPath, branch string) string {
 	slug := strings.ReplaceAll(branch, "/", "-")
 	return filepath.Join(filepath.Dir(repoPath), "worktrees", slug)
+}
+
+// prReviewWorktreePath derives the filesystem path for a PR review worktree.
+// Uses naming convention pr-<number>-<branch-slug> as specified in issue #78.
+func prReviewWorktreePath(repoPath string, prNumber int, branch string) string {
+	slug := strings.ReplaceAll(branch, "/", "-")
+	name := fmt.Sprintf("pr-%d-%s", prNumber, slug)
+	return filepath.Join(filepath.Dir(repoPath), "worktrees", name)
+}
+
+// provisionPRReviewWorktreeCmd returns a Cmd that provisions a worktree for the given PR.
+// It fetches the remote branch and creates a worktree at the pr-<number>-<branch-slug> path.
+// If a worktree for the branch already exists locally, it reuses that path instead.
+func (m *Model) provisionPRReviewWorktreeCmd(pr domain.PullRequest) tea.Cmd {
+	repoPath := m.RepoPath
+	worktreePath := prReviewWorktreePath(repoPath, pr.Number, pr.Branch)
+	// Check if a worktree for this branch already exists — reuse it if so.
+	for _, wt := range m.Worktrees {
+		if wt.Branch == pr.Branch {
+			worktreePath = wt.Path
+			return func() tea.Msg {
+				return prReviewWorktreeDoneMsg{pr: pr, worktreePath: worktreePath}
+			}
+		}
+	}
+	return func() tea.Msg {
+		cmd := internalexec.NewGitCommand(repoPath)
+		err := cmd.CheckoutPRWorktree(worktreePath, pr.Branch)
+		return prReviewWorktreeDoneMsg{pr: pr, worktreePath: worktreePath, err: err}
+	}
 }
 
 // computeParentBranches returns the branches of any worktrees associated with

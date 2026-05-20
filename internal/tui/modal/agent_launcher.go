@@ -35,7 +35,8 @@ type AgentLauncherModal struct {
 	worktreePath  string
 	promptInput   textinput.Model
 	selectedAgent agentOption
-	width         int // terminal width, set by the parent view
+	initialPrompt string // pre-seeded prompt text; pre-fills input when advancing to prompt step
+	width         int    // terminal width, set by the parent view
 }
 
 // newAgentLauncherModal is the internal constructor used in production and in tests.
@@ -96,6 +97,15 @@ func buildAgentOptions(cfg *domain.Config) []agentOption {
 // NewAgentLauncherModal creates an AgentLauncherModal with availability computed from config.
 func NewAgentLauncherModal(cfg *domain.Config, worktreePath string) *AgentLauncherModal {
 	return newAgentLauncherModal(buildAgentOptions(cfg), worktreePath)
+}
+
+// NewAgentLauncherModalWithPrompt creates an AgentLauncherModal with a pre-seeded prompt.
+// When the user selects an agent that uses the prompt step (Claude or Copilot),
+// the prompt input will be pre-filled with initialPrompt so the user can review/edit before confirming.
+func NewAgentLauncherModalWithPrompt(cfg *domain.Config, worktreePath, initialPrompt string) *AgentLauncherModal {
+	m := newAgentLauncherModal(buildAgentOptions(cfg), worktreePath)
+	m.initialPrompt = initialPrompt
+	return m
 }
 
 // Init satisfies tea.Model.
@@ -188,6 +198,10 @@ func (m *AgentLauncherModal) selectAgent(opt agentOption) (tea.Model, tea.Cmd) {
 	// Claude and Copilot: advance to the inline prompt step.
 	m.promptInput.Placeholder = fmt.Sprintf("Enter %s prompt…", opt.name)
 	m.promptInput.SetValue("")
+	if m.initialPrompt != "" {
+		m.promptInput.SetValue(m.initialPrompt)
+		m.promptInput.CursorEnd()
+	}
 	focusCmd := m.promptInput.Focus()
 	m.step = stepAgentPrompt
 	return m, focusCmd
