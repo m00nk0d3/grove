@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.4.0] - 2026-05-20
+
+### Added
+
+- **Your AI bro can now review PRs like a senior dev at 2am** — nexus auto-provisions a worktree, drops into it, and fires up Copilot for an AI-assisted PR review. No more context-switching to a browser like an animal. `feat(tui)` (eda6eb8)
+- **Enter actually does something useful on issues & PRs now** — pressing Enter on an issue or PR that already has a session jumps straight to it instead of making you feel lost. Muscle memory: restored. `feat(sessions)` (3063a9f)
+
+### Fixed
+
+- **`r` key was ghosting the refresh function** — it was wired up in some screens but not globally, so half the time you'd press `r` and nothing happened. Classic. Now it works everywhere like it always should have. `fix(app)` (120f039)
+
 ## [v0.3.2] - 2026-05-19
 
 ### Fixed
