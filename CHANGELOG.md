@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.4.2] - 2026-05-20
+
+### Fixed
+
+- **Worktrees were sharing a namespace like roommates with boundary issues** — paths weren't scoped to the repo name, so multiple repos could stomp each other's worktrees like clumsy giants. Now each repo gets its own lane. No more collisions. `fix(worktree)` (479360f)
+
 ## [v0.4.1] - 2026-05-20
 
 ### Fixed
