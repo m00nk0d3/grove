@@ -3805,3 +3805,37 @@ func TestModel_Enter_PR_JumpsToExistingSession(t *testing.T) {
 		})
 	}
 }
+
+// TestModel_RKey_TriggersFullRefresh verifies that pressing 'r' fires both
+// refreshWorktreesCmd and syncGitHubCmd from any view.
+func TestModel_RKey_TriggersFullRefresh(t *testing.T) {
+	views := []activeView{viewWorktrees, viewIssues, viewPRs}
+	for _, v := range views {
+		t.Run(fmt.Sprintf("view_%d", v), func(t *testing.T) {
+			m := NewModel()
+			require.NotNil(t, m)
+			m.view = v
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+			result, ok := updated.(*Model)
+			require.True(t, ok)
+			assert.True(t, result.syncing, "'r' must set syncing=true")
+			assert.NotNil(t, cmd, "'r' must return a non-nil Cmd (batch of refresh+sync)")
+		})
+	}
+}
+
+// TestModel_RKey_NotFiredWithModalOpen verifies that pressing 'r' while a modal
+// is open is consumed by the modal and does NOT trigger a global refresh.
+func TestModel_RKey_NotFiredWithModalOpen(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+	m.activeModal = modal.NewHelpModal()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	result, ok := updated.(*Model)
+	require.True(t, ok)
+	assert.False(t, result.syncing, "'r' with modal open must NOT set syncing=true")
+}
