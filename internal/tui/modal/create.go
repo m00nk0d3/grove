@@ -260,10 +260,12 @@ func (m *CreateModal) BranchName() string {
 	return fmt.Sprintf("%s/issue-%d-%s", m.SelectedType(), issue.Number, m.slugInput.Value())
 }
 
-// WorktreePath returns the filesystem path for the new worktree: ../worktrees/<type>-issue-<N>-<slug>.
+// WorktreePath returns the filesystem path for the new worktree: ../worktrees/<repo>/<type>-issue-<N>-<slug>.
+// The repo name is included to avoid path collisions when multiple projects share the same parent directory.
 func (m *CreateModal) WorktreePath() string {
 	slug := strings.ReplaceAll(m.BranchName(), "/", "-")
-	return filepath.Join(filepath.Dir(m.repoPath), "worktrees", slug)
+	repoName := filepath.Base(m.repoPath)
+	return filepath.Join(filepath.Dir(m.repoPath), "worktrees", repoName, slug)
 }
 
 // Title returns the modal title for themed overlay rendering.

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
@@ -1763,34 +1762,37 @@ func TestModel_A_Key_BinaryNotFound_SetsError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPRWorktreePath verifies that prWorktreePath produces the correct path
-// by replacing slashes in the branch name with dashes and joining under worktrees/.
+// by replacing slashes in the branch name with dashes and scoping under worktrees/<repo>/.
 func TestPRWorktreePath(t *testing.T) {
 	tests := []struct {
 		name     string
 		repoPath string
 		branch   string
-		wantSlug string // just the slug portion; full path is computed via filepath.Join
+		wantPath string
 	}{
 		{
 			name:     "simple branch no slashes",
 			repoPath: "/repos/nexus",
 			branch:   "main",
-			wantSlug: "main",
+			wantPath: "/repos/worktrees/nexus/main",
 		},
 		{
 			name:     "branch with slashes converted to dashes",
 			repoPath: "/repos/nexus",
 			branch:   "feat/issue-42-my-feature",
-			wantSlug: "feat-issue-42-my-feature",
+			wantPath: "/repos/worktrees/nexus/feat-issue-42-my-feature",
+		},
+		{
+			name:     "different repo does not collide with nexus",
+			repoPath: "/repos/nova",
+			branch:   "feat/issue-42-my-feature",
+			wantPath: "/repos/worktrees/nova/feat-issue-42-my-feature",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := prWorktreePath(tt.repoPath, tt.branch)
-			assert.True(t, strings.HasSuffix(got, tt.wantSlug),
-				"expected path to end with %q, got %q", tt.wantSlug, got)
-			assert.True(t, strings.Contains(got, "worktrees"),
-				"expected path to contain 'worktrees' directory, got %q", got)
+			assert.Equal(t, tt.wantPath, got)
 		})
 	}
 }
@@ -3466,42 +3468,49 @@ func TestUpdateModal_DoesNotSwallowGithubSyncedMsg(t *testing.T) {
 	assert.Equal(t, 42, m3.prs[0].Number)
 }
 
-// TestPRReviewWorktreePath verifies the pr-<number>-<branch-slug> naming convention.
+// TestPRReviewWorktreePath verifies the pr-<number>-<branch-slug> naming convention
+// and that paths are scoped to the repo name to avoid cross-project collisions.
 func TestPRReviewWorktreePath(t *testing.T) {
 	tests := []struct {
-		name       string
-		repoPath   string
-		prNumber   int
-		branch     string
-		wantSuffix string
+		name     string
+		repoPath string
+		prNumber int
+		branch   string
+		wantPath string
 	}{
 		{
-			name:       "simple branch name",
-			repoPath:   "/home/user/nexus",
-			prNumber:   42,
-			branch:     "feat-my-feature",
-			wantSuffix: "pr-42-feat-my-feature",
+			name:     "simple branch name",
+			repoPath: "/home/user/nexus",
+			prNumber: 42,
+			branch:   "feat-my-feature",
+			wantPath: "/home/user/worktrees/nexus/pr-42-feat-my-feature",
 		},
 		{
-			name:       "branch with slashes",
-			repoPath:   "/home/user/nexus",
-			prNumber:   7,
-			branch:     "feat/issue-7-login",
-			wantSuffix: "pr-7-feat-issue-7-login",
+			name:     "branch with slashes",
+			repoPath: "/home/user/nexus",
+			prNumber: 7,
+			branch:   "feat/issue-7-login",
+			wantPath: "/home/user/worktrees/nexus/pr-7-feat-issue-7-login",
 		},
 		{
-			name:       "main branch",
-			repoPath:   "/home/user/nexus",
-			prNumber:   1,
-			branch:     "main",
-			wantSuffix: "pr-1-main",
+			name:     "main branch",
+			repoPath: "/home/user/nexus",
+			prNumber: 1,
+			branch:   "main",
+			wantPath: "/home/user/worktrees/nexus/pr-1-main",
+		},
+		{
+			name:     "different repo does not collide with nexus",
+			repoPath: "/home/user/nova",
+			prNumber: 42,
+			branch:   "feat-my-feature",
+			wantPath: "/home/user/worktrees/nova/pr-42-feat-my-feature",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := prReviewWorktreePath(tt.repoPath, tt.prNumber, tt.branch)
-			assert.True(t, strings.HasSuffix(got, tt.wantSuffix),
-				"expected path to end with %q, got %q", tt.wantSuffix, got)
+			assert.Equal(t, tt.wantPath, got)
 		})
 	}
 }
