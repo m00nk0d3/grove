@@ -623,6 +623,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ctxScrollOffset = 0
 				m.currentPage = 0
 			case "r", "R":
+				if m.syncing {
+					return m, nil
+				}
 				m.syncing = true
 				return m, tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd())
 			case "n":
