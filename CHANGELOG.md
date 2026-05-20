@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.4.1] - 2026-05-20
+
+### Fixed
+
+- **Linux threw a full tantrum when nexus tried to update itself** — turns out Linux gets *real* possessive about executables that are currently running (ETXTBSY — aka "no bro you literally cannot replace yourself while you exist"). Self-update now writes to a temp file and swaps atomically so Linux stops having an existential crisis mid-update. `fix(updater)` (f2dd7c7)
+
 ## [v0.4.0] - 2026-05-20
 
 ### Added
