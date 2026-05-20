@@ -3506,6 +3506,100 @@ func TestPRReviewWorktreePath(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Issue #90: jump to existing session on Enter
+// ---------------------------------------------------------------------------
+
+// TestModel_Enter_Issue_JumpsToExistingSession verifies that pressing Enter on
+// an issue in viewIssues focuses an existing live session for that issue's
+// worktree instead of opening the create modal.
+func TestModel_Enter_Issue_JumpsToExistingSession(t *testing.T) {
+	pid := 99999 // Use a PID that is almost certainly not alive so we can
+	// control liveness via ShellPID == nil (no PID means "keep alive").
+	tests := []struct {
+		name         string
+		issue        domain.Issue
+		worktrees    []domain.Worktree
+		sessions     []domain.Session
+		wantModalNil bool // true = should have jumped (no modal opened)
+		wantCmdNil   bool
+	}{
+		{
+			name:  "active session for issue worktree → focus, no modal",
+			issue: domain.Issue{Number: 42, Title: "Do something"},
+			worktrees: []domain.Worktree{
+				{Path: "/wt/feat-issue-42-do-something", Branch: "feat/issue-42-do-something"},
+			},
+			sessions: []domain.Session{
+				{ID: 1, WorktreePath: "/wt/feat-issue-42-do-something", Status: domain.StatusActive},
+				// ShellPID nil → treated as alive (no PID = Windows-style session)
+			},
+			wantModalNil: true,
+			wantCmdNil:   false,
+		},
+		{
+			name:  "no session for issue worktree → opens create modal",
+			issue: domain.Issue{Number: 7, Title: "Fix bug"},
+			worktrees: []domain.Worktree{
+				{Path: "/wt/feat-issue-7-fix-bug", Branch: "feat/issue-7-fix-bug"},
+			},
+			sessions:     []domain.Session{},
+			wantModalNil: false, // modal should open
+			wantCmdNil:   true,
+		},
+		{
+			name:  "stale session (dead PID) for issue worktree → opens create modal",
+			issue: domain.Issue{Number: 5, Title: "Stale"},
+			worktrees: []domain.Worktree{
+				{Path: "/wt/feat-issue-5-stale", Branch: "feat/issue-5-stale"},
+			},
+			sessions: []domain.Session{
+				{ID: 2, WorktreePath: "/wt/feat-issue-5-stale", Status: domain.StatusActive, ShellPID: &pid},
+			},
+			wantModalNil: false, // stale → modal
+			wantCmdNil:   true,
+		},
+		{
+			name:  "no worktree for issue → opens create modal",
+			issue: domain.Issue{Number: 3, Title: "No worktree"},
+			worktrees: []domain.Worktree{
+				{Path: "/wt/unrelated", Branch: "feat/unrelated"},
+			},
+			sessions:     []domain.Session{},
+			wantModalNil: false,
+			wantCmdNil:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel()
+			require.NotNil(t, m)
+			m.view = viewIssues
+			m.issues = []domain.Issue{tt.issue}
+			m.selectedIssueIdx = 0
+			m.Worktrees = tt.worktrees
+			m.sessions = tt.sessions
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			result, ok := updated.(*Model)
+			require.True(t, ok)
+
+			if tt.wantModalNil {
+				assert.Nil(t, result.activeModal, "no modal should open when jumping to existing session")
+			} else {
+				assert.NotNil(t, result.activeModal, "create modal should open when no session exists")
+			}
+
+			if tt.wantCmdNil {
+				assert.Nil(t, cmd)
+			} else {
+				assert.NotNil(t, cmd, "a focus cmd should be returned when session exists")
+			}
+		})
+	}
+}
+
 // TestModel_CtrlR_InPRView_WithNoSelectedPR_ShowsError verifies that Ctrl+R with
 // no PRs available surfaces a friendly error rather than panicking.
 func TestModel_CtrlR_InPRView_WithNoSelectedPR_ShowsError(t *testing.T) {
@@ -3612,4 +3706,102 @@ func TestModel_ProvisionPRReviewWorktreeCmd_ReusesExistingWorktree(t *testing.T)
 	require.True(t, ok)
 	assert.Nil(t, doneMsg.err, "should not error when reusing existing worktree")
 	assert.Equal(t, "/home/user/worktrees/feat-existing", doneMsg.worktreePath)
+}
+
+// TestModel_Enter_PR_JumpsToExistingSession verifies that pressing Enter on a
+// PR in viewPRs focuses an existing live session for that PR's branch worktree
+// instead of opening the checkout modal or showing an error.
+func TestModel_Enter_PR_JumpsToExistingSession(t *testing.T) {
+	pid := 99999 // almost certainly not alive
+	tests := []struct {
+		name         string
+		pr           domain.PullRequest
+		worktrees    []domain.Worktree
+		sessions     []domain.Session
+		wantModalNil bool
+		wantCmdNil   bool
+		wantErrEmpty bool
+	}{
+		{
+			name: "active session for PR worktree → focus, no modal, no error",
+			pr:   domain.PullRequest{Number: 10, Title: "My PR", Branch: "feat/issue-10-my-pr", State: "OPEN"},
+			worktrees: []domain.Worktree{
+				{Path: "/wt/feat-issue-10-my-pr", Branch: "feat/issue-10-my-pr"},
+			},
+			sessions: []domain.Session{
+				{ID: 1, WorktreePath: "/wt/feat-issue-10-my-pr", Status: domain.StatusActive},
+			},
+			wantModalNil: true,
+			wantCmdNil:   false,
+			wantErrEmpty: true,
+		},
+		{
+			name:      "no worktree and no session for PR → opens checkout modal",
+			pr:        domain.PullRequest{Number: 11, Title: "New PR", Branch: "feat/new-pr", State: "OPEN"},
+			worktrees: []domain.Worktree{},
+			sessions:  []domain.Session{},
+			wantModalNil: false,
+			wantCmdNil:   true,
+			wantErrEmpty: true,
+		},
+		{
+			name: "worktree exists but no active session → error (existing behavior preserved)",
+			pr:   domain.PullRequest{Number: 12, Title: "Existing WT", Branch: "feat/existing", State: "OPEN"},
+			worktrees: []domain.Worktree{
+				{Path: "/wt/feat-existing", Branch: "feat/existing"},
+			},
+			sessions:     []domain.Session{},
+			wantModalNil: true,
+			wantCmdNil:   false, // clearErrorCmd is returned
+			wantErrEmpty: false, // error is set
+		},
+		{
+			name: "stale session (dead PID) → falls through to existing WT error",
+			pr:   domain.PullRequest{Number: 13, Title: "Stale", Branch: "feat/stale", State: "OPEN"},
+			worktrees: []domain.Worktree{
+				{Path: "/wt/feat-stale", Branch: "feat/stale"},
+			},
+			sessions: []domain.Session{
+				{ID: 2, WorktreePath: "/wt/feat-stale", Status: domain.StatusActive, ShellPID: &pid},
+			},
+			wantModalNil: true,
+			wantCmdNil:   false,
+			wantErrEmpty: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel()
+			require.NotNil(t, m)
+			m.view = viewPRs
+			m.prs = []domain.PullRequest{tt.pr}
+			m.selectedPRIdx = 0
+			m.Worktrees = tt.worktrees
+			m.sessions = tt.sessions
+			m.RepoPath = "/repo/nexus"
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			result, ok := updated.(*Model)
+			require.True(t, ok)
+
+			if tt.wantModalNil {
+				assert.Nil(t, result.activeModal)
+			} else {
+				assert.NotNil(t, result.activeModal, "checkout modal should open")
+			}
+
+			if tt.wantCmdNil {
+				assert.Nil(t, cmd)
+			} else {
+				assert.NotNil(t, cmd)
+			}
+
+			if tt.wantErrEmpty {
+				assert.Empty(t, result.statusErr)
+			} else {
+				assert.NotEmpty(t, result.statusErr)
+			}
+		})
+	}
 }
