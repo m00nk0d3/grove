@@ -3805,3 +3805,60 @@ func TestModel_Enter_PR_JumpsToExistingSession(t *testing.T) {
 		})
 	}
 }
+
+// TestModel_RKey_TriggersFullRefresh verifies that pressing 'r' or 'R' fires both
+// refreshWorktreesCmd and syncGitHubCmd from any view.
+func TestModel_RKey_TriggersFullRefresh(t *testing.T) {
+	cases := []struct {
+		view activeView
+		name string
+		key  rune
+	}{
+		{viewWorktrees, "worktrees_r", 'r'},
+		{viewWorktrees, "worktrees_R", 'R'},
+		{viewIssues, "issues_r", 'r'},
+		{viewIssues, "issues_R", 'R'},
+		{viewPRs, "prs_r", 'r'},
+		{viewPRs, "prs_R", 'R'},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel()
+			require.NotNil(t, m)
+			m.view = tc.view
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+
+			result, ok := updated.(*Model)
+			require.True(t, ok)
+			assert.True(t, result.syncing, "'%c' must set syncing=true", tc.key)
+			assert.NotNil(t, cmd, "'%c' must return a non-nil Cmd (batch of refresh+sync)", tc.key)
+		})
+	}
+}
+
+// TestModel_RKey_NoOpWhenAlreadySyncing verifies that pressing 'r' while a sync
+// is already in progress is a no-op (no duplicate batch fired).
+func TestModel_RKey_NoOpWhenAlreadySyncing(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+	m.syncing = true
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	assert.Nil(t, cmd, "'r' while syncing must return nil Cmd")
+}
+
+// TestModel_RKey_NotFiredWithModalOpen verifies that pressing 'r' while a modal
+// is open is consumed by the modal and does NOT trigger a global refresh.
+func TestModel_RKey_NotFiredWithModalOpen(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+	m.activeModal = modal.NewHelpModal()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	result, ok := updated.(*Model)
+	require.True(t, ok)
+	assert.False(t, result.syncing, "'r' with modal open must NOT set syncing=true")
+}
