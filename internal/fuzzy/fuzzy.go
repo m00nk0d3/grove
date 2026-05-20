@@ -3,7 +3,6 @@ package fuzzy
 import (
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/m00nk0d3/nexus/internal/domain"
 )
@@ -62,7 +61,7 @@ func Score(query, candidate string) int {
 	}
 
 	// position bonus: favour matches that start earlier
-	positionBonus := utf8.RuneCountInString(candidate) - firstMatch
+	positionBonus := len(cRunes) - firstMatch
 	totalScore += positionBonus
 
 	return totalScore
@@ -73,6 +72,9 @@ func Score(query, candidate string) int {
 // When query is empty every item is returned in its original order. Otherwise
 // items are scored via Score(query, item.Label); items that score 0 are dropped
 // and the remainder are sorted highest-score-first.
+//
+// Note: scoring is performed against item.Label only; item.Sub matching is
+// deferred to a later phase.
 func FilterAndRank(query string, items []domain.SearchResult) []domain.SearchResult {
 	if query == "" {
 		out := make([]domain.SearchResult, len(items))

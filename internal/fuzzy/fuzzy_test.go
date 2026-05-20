@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/m00nk0d3/nexus/internal/domain"
-	"github.com/m00nk0d3/nexus/internal/tui/fuzzy"
+	"github.com/m00nk0d3/nexus/internal/fuzzy"
 )
 
 // ---------------------------------------------------------------------------
@@ -83,10 +83,8 @@ func TestScore(t *testing.T) {
 		{
 			name:      "query not a subsequence returns zero",
 			query:     "ba",
-			candidate: "abc", // 'b' appears after 'a', but 'a' after 'b' doesn't exist
-			wantZero:  false, // "ba" IS a subsequence of "abc"? No: b(idx1) then a must be after idx1 — 'c' at idx2 ≠ 'a' → not a subsequence
-			// actually: b is at index 1, then we look for 'a' at index >=2 — no 'a' there → not a subsequence
-			wantGT: -1,
+			candidate: "abc", // 'b' is at index 1; 'a' must appear at index >=2 — it does not
+			wantZero:  true,
 		},
 	}
 
