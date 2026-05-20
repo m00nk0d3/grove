@@ -10,10 +10,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/m00nk0d3/nexus/internal/data"
 	"github.com/m00nk0d3/nexus/internal/logging"
+	"github.com/m00nk0d3/nexus/internal/updater"
 	"github.com/m00nk0d3/nexus/internal/version"
 )
 
 func run() error {
+	// Clean up any leftover .old binary from a previous Windows self-update.
+	updater.CleanupOldBinary()
 	// Initialise structured logger; non-fatal if it fails (falls back to discard).
 	// Sets it as the slog default so any log.slog.Info/Warn/Error calls in the
 	// codebase are automatically routed to the log file.

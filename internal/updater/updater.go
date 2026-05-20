@@ -201,11 +201,8 @@ func SelfUpdate(ctx context.Context, tagName string) error {
 		return fmt.Errorf("self-update: chmod: %w", err)
 	}
 
-	if err := os.Rename(binaryPath, currentExe); err != nil {
-		if runtime.GOOS == "windows" {
-			return fmt.Errorf("self-update: cannot replace running binary on Windows; please download manually from %s", url)
-		}
-		return fmt.Errorf("self-update: replace binary: %w", err)
+	if err := replaceBinary(binaryPath, currentExe); err != nil {
+		return fmt.Errorf("self-update: %w", err)
 	}
 
 	slog.Debug("self-update", "status", "Done! Please restart nexus.")
@@ -348,4 +345,54 @@ func verifyChecksum(path, expectedHex string) error {
 		return fmt.Errorf("checksum mismatch: got %s, want %s", got, expectedHex)
 	}
 	return nil
+}
+
+// replaceBinary replaces currentExe with the file at newPath.
+//
+// On non-Windows platforms this is a straightforward atomic rename.
+// On Windows you cannot rename a file on top of a running executable, but you
+// CAN rename the running executable away (the OS holds its open handle by
+// inode, not by name). The strategy is therefore:
+//  1. Rename currentExe → currentExe+".old"  (always succeeds on Windows)
+//  2. Rename newPath    → currentExe          (target no longer exists)
+//
+// The ".old" file cannot be deleted while the process is running; call
+// CleanupOldBinary on the next startup to remove it.
+func replaceBinary(newPath, currentExe string) error {
+	if runtime.GOOS != "windows" {
+		if err := os.Rename(newPath, currentExe); err != nil {
+			return fmt.Errorf("replace binary: %w", err)
+		}
+		return nil
+	}
+
+	oldExe := currentExe + ".old"
+	// Remove any leftover .old from a previous update so the rename below
+	// doesn't fail if the file already exists.
+	_ = os.Remove(oldExe)
+
+	if err := os.Rename(currentExe, oldExe); err != nil {
+		return fmt.Errorf("rename current binary: %w", err)
+	}
+	if err := os.Rename(newPath, currentExe); err != nil {
+		// Best-effort rollback: put the original back.
+		_ = os.Rename(oldExe, currentExe)
+		return fmt.Errorf("replace binary: %w", err)
+	}
+	// oldExe will be cleaned up on the next startup by CleanupOldBinary.
+	return nil
+}
+
+// CleanupOldBinary removes the "<executable>.old" file left behind by a
+// Windows self-update. It is a no-op on other platforms and silently ignores
+// any errors (the file may not exist or may still be locked).
+func CleanupOldBinary() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	_ = os.Remove(exe + ".old")
 }

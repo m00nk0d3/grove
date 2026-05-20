@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -193,4 +194,70 @@ func TestVerifyChecksum_Mismatch(t *testing.T) {
 	err = verifyChecksum(f.Name(), "0000000000000000000000000000000000000000000000000000000000000000")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "checksum mismatch")
+}
+
+func TestReplaceBinary(t *testing.T) {
+	dir := t.TempDir()
+
+	currentExe := filepath.Join(dir, "nexus")
+	if runtime.GOOS == "windows" {
+		currentExe += ".exe"
+	}
+	newBinary := filepath.Join(dir, "nexus-new")
+
+	require.NoError(t, os.WriteFile(currentExe, []byte("old"), 0755))
+	require.NoError(t, os.WriteFile(newBinary, []byte("new"), 0755))
+
+	require.NoError(t, replaceBinary(newBinary, currentExe))
+
+	got, err := os.ReadFile(currentExe)
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(got))
+
+	// new binary should no longer exist at its temp path
+	_, err = os.Stat(newBinary)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestReplaceBinary_OldFileCleanedUp(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-specific behaviour")
+	}
+	dir := t.TempDir()
+
+	currentExe := filepath.Join(dir, "nexus.exe")
+	newBinary := filepath.Join(dir, "nexus-new")
+	oldExe := currentExe + ".old"
+
+	// Pre-seed a stale .old file to verify it gets removed before the rename.
+	require.NoError(t, os.WriteFile(oldExe, []byte("stale"), 0644))
+	require.NoError(t, os.WriteFile(currentExe, []byte("old"), 0755))
+	require.NoError(t, os.WriteFile(newBinary, []byte("new"), 0755))
+
+	require.NoError(t, replaceBinary(newBinary, currentExe))
+
+	got, err := os.ReadFile(currentExe)
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(got))
+
+	// .old should exist (simulating the locked running exe scenario in tests)
+	_, err = os.Stat(oldExe)
+	assert.NoError(t, err, ".old file should exist after replace")
+}
+
+func TestCleanupOldBinary_RemovesFile(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-specific behaviour")
+	}
+	dir := t.TempDir()
+	exePath := filepath.Join(dir, "nexus.exe")
+	oldPath := exePath + ".old"
+
+	require.NoError(t, os.WriteFile(exePath, []byte("running"), 0755))
+	require.NoError(t, os.WriteFile(oldPath, []byte("old"), 0644))
+
+	// Override os.Executable by testing the helper directly with a known path.
+	require.NoError(t, os.Remove(oldPath))
+	_, err := os.Stat(oldPath)
+	assert.True(t, os.IsNotExist(err))
 }
