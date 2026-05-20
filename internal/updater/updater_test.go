@@ -220,12 +220,12 @@ func TestReplaceBinary(t *testing.T) {
 }
 
 func TestReplaceBinary_OldFileCleanedUp(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows-specific behaviour")
-	}
 	dir := t.TempDir()
 
-	currentExe := filepath.Join(dir, "nexus.exe")
+	currentExe := filepath.Join(dir, "nexus")
+	if runtime.GOOS == "windows" {
+		currentExe += ".exe"
+	}
 	newBinary := filepath.Join(dir, "nexus-new")
 	oldExe := currentExe + ".old"
 
@@ -246,11 +246,11 @@ func TestReplaceBinary_OldFileCleanedUp(t *testing.T) {
 }
 
 func TestCleanupOldBinary_RemovesFile(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows-specific behaviour")
-	}
 	dir := t.TempDir()
-	exePath := filepath.Join(dir, "nexus.exe")
+	exePath := filepath.Join(dir, "nexus")
+	if runtime.GOOS == "windows" {
+		exePath += ".exe"
+	}
 	oldPath := exePath + ".old"
 
 	require.NoError(t, os.WriteFile(exePath, []byte("running"), 0755))
