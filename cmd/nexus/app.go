@@ -491,6 +491,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, nil
 				}
+				// If an active session already exists for this issue's worktree, jump to it.
+				if s := m.sessionForIssue(issue); s != nil {
+					return m, m.focusSessionCmd(*s)
+				}
 				m.activeModal = modal.NewCreateModalForIssue(issue, m.RepoPath, computeParentBranches(m.issues, m.Worktrees)...)
 				return m, nil
 			case viewPRs:
@@ -499,6 +503,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				pr := m.prs[m.selectedPRIdx]
 				path := prWorktreePath(m.RepoPath, pr.Branch)
+				// If an active session already exists for this PR's worktree, jump to it.
+				if s := m.sessionForPR(pr); s != nil {
+					return m, m.focusSessionCmd(*s)
+				}
 				// Guard: if any existing worktree already uses this branch, show an error.
 				for _, wt := range m.Worktrees {
 					if wt.Branch == pr.Branch {
@@ -1900,6 +1908,48 @@ func (m *Model) selectedIssue() (domain.Issue, bool) {
 	}
 
 	return m.issues[m.selectedIssueIdx], true
+}
+
+// sessionForIssue returns the first live session whose worktree branch contains
+// "issue-<N>-" for the given issue. Returns nil when no matching live session
+// is found.
+func (m *Model) sessionForIssue(issue domain.Issue) *domain.Session {
+	needle := fmt.Sprintf("issue-%d-", issue.Number)
+	for _, wt := range m.Worktrees {
+		if !strings.Contains(wt.Branch, needle) {
+			continue
+		}
+		for i, s := range m.sessions {
+			if !pathsEqual(s.WorktreePath, wt.Path) {
+				continue
+			}
+			if s.ShellPID != nil && !pidAlive(*s.ShellPID) {
+				continue // stale — skip
+			}
+			return &m.sessions[i]
+		}
+	}
+	return nil
+}
+
+// sessionForPR returns the first live session whose worktree branch matches
+// the PR's branch. Returns nil when no matching live session is found.
+func (m *Model) sessionForPR(pr domain.PullRequest) *domain.Session {
+	for _, wt := range m.Worktrees {
+		if wt.Branch != pr.Branch {
+			continue
+		}
+		for i, s := range m.sessions {
+			if !pathsEqual(s.WorktreePath, wt.Path) {
+				continue
+			}
+			if s.ShellPID != nil && !pidAlive(*s.ShellPID) {
+				continue // stale — skip
+			}
+			return &m.sessions[i]
+		}
+	}
+	return nil
 }
 
 func (m *Model) clampSelectedIdx() {
