@@ -68,7 +68,8 @@ type lazyLoadContextMsg struct {
 	worktree domain.Worktree
 }
 
-// browserOpenErrMsg carries an error from opening an issue or PR in the browser.
+// browserOpenErrMsg carries an error from launching an external process
+// (browser, editor, gh CLI, etc.).
 type browserOpenErrMsg struct{ err error }
 
 // agentDoneMsg is dispatched when an AI agent process exits.
@@ -2486,6 +2487,7 @@ func openFileInEditorCmd(relPath, repoPath string) tea.Cmd {
 
 // openCommitInBrowserCmd opens the given commit SHA in the browser via the gh CLI.
 func openCommitInBrowserCmd(hash, repoPath string) tea.Cmd {
-	cmd := exec.Command("gh", "-C", repoPath, "browse", hash)
+	cmd := exec.Command("gh", "browse", hash)
+	cmd.Dir = repoPath
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
 }
