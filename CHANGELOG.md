@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.4.3] - 2026-05-21
+
+### Fixed
+
+- **Worktree creation threw a fit on repos that use `master` instead of `main`** — nexus was hardcoding `main` as the base branch like it was 2018. Now it asks the remote what the actual default branch is. `master`, `main`, `trunk`, whatever — it handles it. `fix(worktree)` (f1dc5c3)
+- **Auto-updater silently died when nexus was installed in `/usr/bin`** — it tried to rename a root-owned binary, got EACCES, and just... said nothing useful. Now it stages the downloaded binary to `~/.cache/nexus/nexus.staged` and tells you exactly what `sudo` command to run. `fix(updater)` (4874f40)
+- **Issues list was mixing up projects** — the GitHub cache had no repo scoping, so running nexus from nova showed nexus issues and vice versa. Cache now keyed by repo path. Your issues stay in your lane. `fix(cache)` (e5cc91e)
+
 ## [v0.4.2] - 2026-05-20
 
 ### Fixed
