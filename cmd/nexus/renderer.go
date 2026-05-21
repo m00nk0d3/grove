@@ -21,7 +21,7 @@ import (
 const (
 	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Spc] Agents | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
 	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
-	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [Ctrl+R] | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
+	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [Ctrl+R] Review | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
 	footerHintsDefault   = footerHintsWorktrees
 	actionBarHints       = "[enter] Open  [c-d] Delete  [c-l] Lock | [f1] Help"
 	defaultTermWidth     = 120

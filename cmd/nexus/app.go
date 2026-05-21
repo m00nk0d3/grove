@@ -319,8 +319,6 @@ type Model struct {
 	claudePromptInput  textinput.Model // text input for entering the Claude prompt
 
 	// Fuzzy finder state
-	fuzzyFiles    []string              // files from git ls-files
-	fuzzyBranches []string              // branches from git branch -a
 	fuzzyAllItems []domain.SearchResult // full unfiltered search index
 
 	// Fuzzy overlay state
@@ -1060,24 +1058,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fuzzyResultsReadyMsg:
 		m.fuzzyAllItems = msg.results
-		// Also extract the file and branch slices for convenience
-		m.fuzzyFiles = m.fuzzyFiles[:0]
-		m.fuzzyBranches = m.fuzzyBranches[:0]
-		for _, r := range msg.results {
-			switch r.Kind {
-			case domain.KindFile:
-				if f, ok := r.Payload.(string); ok {
-					m.fuzzyFiles = append(m.fuzzyFiles, f)
-				}
-			case domain.KindBranch:
-				if b, ok := r.Payload.(string); ok {
-					m.fuzzyBranches = append(m.fuzzyBranches, b)
-				}
-			}
-		}
+		// Always clear the loading flag regardless of whether the overlay is
+		// still open — prevents stale loading state if the user closed the
+		// overlay before the index finished building.
+		m.fuzzyLoading = false
 		// If the overlay is still open, populate results now that the index is ready.
 		if m.fuzzyActive {
-			m.fuzzyLoading = false
 			query := m.fuzzyInput.Value()
 			m.fuzzyResults = fuzzy.FilterAndRank(query, m.fuzzyAllItems)
 			m.fuzzySelIdx = 0

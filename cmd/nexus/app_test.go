@@ -3930,7 +3930,7 @@ func TestUpdate_FuzzyOpenMsg(t *testing.T) {
 }
 
 // TestUpdate_FuzzyResultsReadyMsg verifies that fuzzyResultsReadyMsg populates
-// m.fuzzyAllItems and extracts the file/branch convenience slices correctly.
+// m.fuzzyAllItems and always clears fuzzyLoading, even when the overlay is closed.
 func TestUpdate_FuzzyResultsReadyMsg(t *testing.T) {
 	m := NewModel()
 	require.NotNil(t, m)
@@ -3951,11 +3951,128 @@ func TestUpdate_FuzzyResultsReadyMsg(t *testing.T) {
 	require.True(t, ok)
 
 	assert.Len(t, result.fuzzyAllItems, 6, "fuzzyAllItems should contain all 6 results")
-	assert.Len(t, result.fuzzyFiles, 2, "fuzzyFiles should contain 2 file results")
-	assert.Len(t, result.fuzzyBranches, 2, "fuzzyBranches should contain 2 branch results")
+}
 
-	assert.Contains(t, result.fuzzyFiles, "cmd/main.go")
-	assert.Contains(t, result.fuzzyFiles, "internal/app.go")
-	assert.Contains(t, result.fuzzyBranches, "main")
-	assert.Contains(t, result.fuzzyBranches, "feat/foo")
+// TestUpdate_FuzzyResultsReadyMsg_ClearsLoadingWhenOverlayClosed verifies that
+// fuzzyLoading is reset to false even when the overlay is not currently open.
+func TestUpdate_FuzzyResultsReadyMsg_ClearsLoadingWhenOverlayClosed(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	// Simulate: user opened overlay, triggering async build, then closed before results arrived.
+	m.fuzzyLoading = true
+	m.fuzzyActive = false
+
+	_, _ = m.Update(fuzzyResultsReadyMsg{results: []domain.SearchResult{}})
+
+	assert.False(t, m.fuzzyLoading, "fuzzyLoading must be cleared even when overlay is closed")
+}
+
+// ---------------------------------------------------------------------------
+// fuzzyConfirmSelection tests
+// ---------------------------------------------------------------------------
+
+func TestFuzzyConfirmSelection_EmptyResults_ReturnsNil(t *testing.T) {
+	m := NewModel()
+	m.fuzzyResults = nil
+	cmd := m.fuzzyConfirmSelection()
+	assert.Nil(t, cmd)
+}
+
+func TestFuzzyConfirmSelection_IdxOutOfBounds_ReturnsNil(t *testing.T) {
+	m := NewModel()
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindFile, Label: "x.go", Icon: "📄", Payload: "x.go"},
+	}
+	m.fuzzySelIdx = 5
+	cmd := m.fuzzyConfirmSelection()
+	assert.Nil(t, cmd)
+}
+
+func TestFuzzyConfirmSelection_WorktreeSelection(t *testing.T) {
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: "/wt/alpha", Branch: "feat/alpha"},
+		{Path: "/wt/beta", Branch: "feat/beta"},
+	}
+	m.view = viewIssues // start on a different view
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindWorktree, Label: "/wt/beta", Sub: "feat/beta", Icon: "🌿", Payload: domain.Worktree{Path: "/wt/beta", Branch: "feat/beta"}},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd, "worktree selection returns no async Cmd")
+	assert.Equal(t, viewWorktrees, m.view, "should switch to worktrees view")
+	assert.Equal(t, 1, m.selectedIdx, "should select /wt/beta (index 1)")
+	assert.Equal(t, 0, m.ctxScrollOffset)
+	assert.Equal(t, 0, m.currentPage)
+}
+
+func TestFuzzyConfirmSelection_IssueSelection(t *testing.T) {
+	m := NewModel()
+	m.issues = []domain.Issue{
+		{Number: 1, Title: "First"},
+		{Number: 42, Title: "Fix auth"},
+	}
+	m.view = viewWorktrees
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindIssue, Label: "Fix auth", Sub: "#42", Icon: "🐛", Payload: domain.Issue{Number: 42, Title: "Fix auth"}},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, viewIssues, m.view)
+	assert.Equal(t, 1, m.selectedIssueIdx, "should select issue at index 1 (Number=42)")
+}
+
+func TestFuzzyConfirmSelection_PRSelection(t *testing.T) {
+	m := NewModel()
+	m.prs = []domain.PullRequest{
+		{Number: 10, Title: "First PR"},
+		{Number: 20, Title: "Add feature"},
+	}
+	m.view = viewWorktrees
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindPR, Label: "Add feature", Sub: "#20", Icon: "🔀", Payload: domain.PullRequest{Number: 20, Title: "Add feature"}},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, viewPRs, m.view)
+	assert.Equal(t, 1, m.selectedPRIdx, "should select PR at index 1 (Number=20)")
+}
+
+func TestFuzzyConfirmSelection_ToastKinds(t *testing.T) {
+	toastCases := []struct {
+		kind    domain.ResultKind
+		label   string
+		icon    string
+		payload any
+	}{
+		{domain.KindFile, "internal/auth.go", "📄", "internal/auth.go"},
+		{domain.KindBranch, "feat/login", "🌿", "feat/login"},
+		{domain.KindAgent, "fix the null pointer", "🤖", data.AgentRun{AgentName: "copilot", Prompt: "fix the null pointer"}},
+		{domain.KindCommit, "add jwt middleware", "📦", "abc1234"},
+	}
+
+	for _, tc := range toastCases {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			m := NewModel()
+			m.fuzzyResults = []domain.SearchResult{
+				{Kind: tc.kind, Label: tc.label, Icon: tc.icon, Payload: tc.payload},
+			}
+			m.fuzzySelIdx = 0
+
+			cmd := m.fuzzyConfirmSelection()
+
+			assert.NotNil(t, cmd, "%s: should return a clearMsgCmd", tc.kind)
+			assert.Contains(t, m.statusMsg, tc.label, "%s: statusMsg should contain the label", tc.kind)
+		})
+	}
 }
