@@ -74,7 +74,7 @@ func Score(query, candidate string) int {
 // and the remainder are sorted highest-score-first.
 //
 // Note: scoring is performed against item.Label only; item.Sub matching is
-// deferred to a later phase.
+// deferred to a later phase (e.g. searching "#42" won't surface issue #42 by number).
 func FilterAndRank(query string, items []domain.SearchResult) []domain.SearchResult {
 	if query == "" {
 		out := make([]domain.SearchResult, len(items))

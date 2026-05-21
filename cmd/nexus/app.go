@@ -68,7 +68,8 @@ type lazyLoadContextMsg struct {
 	worktree domain.Worktree
 }
 
-// browserOpenErrMsg carries an error from opening an issue or PR in the browser.
+// browserOpenErrMsg carries an error from launching an external process
+// (browser, editor, gh CLI, etc.).
 type browserOpenErrMsg struct{ err error }
 
 // agentDoneMsg is dispatched when an AI agent process exits.
@@ -614,6 +615,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.selectedWorktree(); ok {
 				m.activeModal = modal.NewDeleteModal(selected)
 			}
+		case tea.KeyCtrlF:
+			return m, m.openFuzzyCmd()
 		case tea.KeyCtrlR:
 			if m.view != viewPRs {
 				m.statusErr = "PR Review (Ctrl+R) is only available in the PRs view — press P to switch"
@@ -788,19 +791,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusErr = "No active session for this worktree"
 				return m, clearErrorCmd()
 			case "/":
-				m.fuzzyInput.SetValue("")
-				focusCmd := m.fuzzyInput.Focus()
-				m.fuzzyActive = true
-				m.fuzzySelIdx = 0
-				if len(m.fuzzyAllItems) > 0 {
-					m.fuzzyLoading = false
-					m.fuzzyResults = fuzzy.FilterAndRank("", m.fuzzyAllItems)
-				} else {
-					m.fuzzyLoading = true
-					m.fuzzyResults = nil
-					return m, tea.Batch(focusCmd, func() tea.Msg { return fuzzyOpenMsg{} })
-				}
-				return m, focusCmd
+				return m, m.openFuzzyCmd()
 			}
 		}
 
@@ -2455,9 +2446,61 @@ func (m *Model) fuzzyConfirmSelection() tea.Cmd {
 				}
 			}
 		}
-	case domain.KindFile, domain.KindBranch, domain.KindAgent, domain.KindCommit:
-		m.statusMsg = fmt.Sprintf("Selected: %s  %s", result.Icon, result.Label)
-		return clearMsgCmd()
+	case domain.KindFile:
+		if relPath, ok := result.Payload.(string); ok {
+			return openFileInEditorCmd(relPath, m.RepoPath)
+		}
+	case domain.KindBranch:
+		if branch, ok := result.Payload.(string); ok {
+			path := prWorktreePath(m.RepoPath, branch)
+			m.activeModal = modal.NewBranchCheckoutModal(branch, path)
+		}
+	case domain.KindCommit:
+		if hash, ok := result.Payload.(string); ok {
+			return openCommitInBrowserCmd(hash, m.RepoPath)
+		}
+	case domain.KindAgent:
+		// No-op — future: show detail modal.
 	}
 	return nil
+}
+
+// openFuzzyCmd opens the fuzzy finder overlay, triggering a background index build
+// when the search index has not yet been populated.
+func (m *Model) openFuzzyCmd() tea.Cmd {
+	m.fuzzyInput.SetValue("")
+	focusCmd := m.fuzzyInput.Focus()
+	m.fuzzyActive = true
+	m.fuzzySelIdx = 0
+	if len(m.fuzzyAllItems) > 0 {
+		m.fuzzyLoading = false
+		m.fuzzyResults = fuzzy.FilterAndRank("", m.fuzzyAllItems)
+		return focusCmd
+	}
+	m.fuzzyLoading = true
+	m.fuzzyResults = nil
+	return tea.Batch(focusCmd, func() tea.Msg { return fuzzyOpenMsg{} })
+}
+
+// openFileInEditorCmd opens relPath (relative to repoPath) in the user's configured
+// $EDITOR. Falls back to "vi" on Unix-like systems and "notepad" on Windows.
+func openFileInEditorCmd(relPath, repoPath string) tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		if runtime.GOOS == "windows" {
+			editor = "notepad"
+		} else {
+			editor = "vi"
+		}
+	}
+	fullPath := filepath.Join(repoPath, relPath)
+	cmd := exec.Command(editor, fullPath)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
+}
+
+// openCommitInBrowserCmd opens the given commit SHA in the browser via the gh CLI.
+func openCommitInBrowserCmd(hash, repoPath string) tea.Cmd {
+	cmd := exec.Command("gh", "browse", hash)
+	cmd.Dir = repoPath
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
 }
