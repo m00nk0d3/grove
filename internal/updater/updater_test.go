@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -244,6 +245,67 @@ func TestReplaceBinary_OldFileCleanedUp(t *testing.T) {
 	_, err = os.Stat(oldExe)
 	assert.NoError(t, err, ".old file should exist after replace")
 }
+
+func TestStageBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cross-filesystem move behaves differently on Windows; covered by moveFile tests")
+	}
+	dir := t.TempDir()
+	binaryPath := filepath.Join(dir, "nexus-new")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("newbinary"), 0755))
+
+	staged, err := stageBinary(binaryPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Remove(staged) })
+
+	// Original should be gone (moved, not copied).
+	_, statErr := os.Stat(binaryPath)
+	assert.True(t, os.IsNotExist(statErr), "source file should have been moved")
+
+	got, err := os.ReadFile(staged)
+	require.NoError(t, err)
+	assert.Equal(t, "newbinary", string(got))
+}
+
+func TestReplaceBinary_PermissionDenied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write-protection works differently on Windows")
+	}
+	dir := t.TempDir()
+	roDir := filepath.Join(dir, "ro")
+	require.NoError(t, os.MkdirAll(roDir, 0755))
+
+	currentExe := filepath.Join(roDir, "nexus")
+	require.NoError(t, os.WriteFile(currentExe, []byte("old"), 0755))
+
+	// Make the directory read-only so os.Rename fails with EACCES.
+	require.NoError(t, os.Chmod(roDir, 0555))
+	t.Cleanup(func() { os.Chmod(roDir, 0755) })
+
+	newBinary := filepath.Join(dir, "nexus-new")
+	require.NoError(t, os.WriteFile(newBinary, []byte("new"), 0755))
+
+	err := replaceBinary(newBinary, currentExe)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, os.ErrPermission), "expected ErrPermission, got: %v", err)
+
+	// Original binary must still be intact (no partial replacement).
+	got, readErr := os.ReadFile(currentExe)
+	require.NoError(t, readErr)
+	assert.Equal(t, "old", string(got))
+}
+
+func TestInstallCmd(t *testing.T) {
+	staged := "/home/user/.cache/nexus/nexus.staged"
+	target := "/usr/bin/nexus"
+	cmd := installCmd(staged, target)
+	if runtime.GOOS == "windows" {
+		assert.Contains(t, cmd, "copy")
+	} else {
+		assert.Equal(t, "sudo install -m755 /home/user/.cache/nexus/nexus.staged /usr/bin/nexus", cmd)
+	}
+}
+
 
 func TestCleanupOldBinary_RemovesFile(t *testing.T) {
 	dir := t.TempDir()

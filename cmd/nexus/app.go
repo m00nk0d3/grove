@@ -967,7 +967,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case selfUpdateDoneMsg:
 		m.selfUpdating = false
 		if msg.err != nil {
-			m.statusErr = fmt.Sprintf("Update failed: %v", msg.err)
+			var permErr *updater.PermissionError
+			if errors.As(msg.err, &permErr) {
+				m.statusErr = fmt.Sprintf("Update staged — run: %s", permErr.InstallCmd)
+				slog.Info("self-update requires elevated permissions",
+					"staged_path", permErr.StagedPath,
+					"install_cmd", permErr.InstallCmd)
+			} else {
+				m.statusErr = fmt.Sprintf("Update failed: %v", msg.err)
+			}
 			return m, clearErrorCmd()
 		}
 		m.statusMsg = "✓ Updated successfully! Please restart nexus to use the new version."

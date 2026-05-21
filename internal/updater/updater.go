@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -29,6 +30,55 @@ var githubReleaseBase = "https://github.com/m00nk0d3/nexus/releases/download"
 // maxDownloadBytes caps the size of any single HTTP download (archive or checksums file)
 // to prevent runaway disk writes from unexpectedly large or malformed responses.
 const maxDownloadBytes = 200 * 1024 * 1024 // 200 MB
+
+// PermissionError is returned by SelfUpdate when the running binary lives in a
+// directory the current user cannot write to (e.g. /usr/bin). The new binary
+// has already been staged at StagedPath; the user can apply it by running
+// InstallCmd (typically with sudo on Linux/macOS).
+type PermissionError struct {
+	StagedPath string
+	CurrentExe string
+	InstallCmd string
+	cause      error
+}
+
+func (e *PermissionError) Error() string {
+	return fmt.Sprintf("cannot replace %s (permission denied); staged update at %s — run: %s",
+		e.CurrentExe, e.StagedPath, e.InstallCmd)
+}
+
+func (e *PermissionError) Unwrap() error { return e.cause }
+
+// stageBinary moves the downloaded binary at binaryPath to a persistent cache
+// location so the user can apply it manually. Returns the staged path.
+func stageBinary(binaryPath string) (string, error) {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("get cache dir: %w", err)
+	}
+	dir := filepath.Join(cacheDir, "nexus")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create cache dir: %w", err)
+	}
+	name := "nexus.staged"
+	if runtime.GOOS == "windows" {
+		name = "nexus.exe.staged"
+	}
+	staged := filepath.Join(dir, name)
+	if err := moveFile(binaryPath, staged); err != nil {
+		return "", fmt.Errorf("move to cache: %w", err)
+	}
+	return staged, nil
+}
+
+// installCmd returns the shell command the user should run to apply the staged
+// binary to the target location.
+func installCmd(staged, target string) string {
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf(`copy /Y "%s" "%s"`, staged, target)
+	}
+	return fmt.Sprintf("sudo install -m755 %s %s", staged, target)
+}
 
 // ReleaseInfo holds the relevant fields returned by the GitHub releases/latest API.
 type ReleaseInfo struct {
@@ -202,6 +252,19 @@ func SelfUpdate(ctx context.Context, tagName string) error {
 	}
 
 	if err := replaceBinary(binaryPath, currentExe); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			staged, stageErr := stageBinary(binaryPath)
+			if stageErr == nil {
+				cmd := installCmd(staged, currentExe)
+				return &PermissionError{
+					StagedPath: staged,
+					CurrentExe: currentExe,
+					InstallCmd: cmd,
+					cause:      err,
+				}
+			}
+			slog.Debug("self-update: stage failed after permission denied", "err", stageErr)
+		}
 		return fmt.Errorf("self-update: %w", err)
 	}
 
