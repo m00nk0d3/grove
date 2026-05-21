@@ -3969,6 +3969,32 @@ func TestUpdate_FuzzyResultsReadyMsg_ClearsLoadingWhenOverlayClosed(t *testing.T
 }
 
 // ---------------------------------------------------------------------------
+// fuzzy keybinding tests
+// ---------------------------------------------------------------------------
+
+// TestFuzzyOpensOnSlash verifies that pressing "/" activates the fuzzy overlay.
+func TestFuzzyOpensOnSlash(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = t.TempDir()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	result := updated.(*Model)
+
+	assert.True(t, result.fuzzyActive, "'/' should activate the fuzzy overlay")
+}
+
+// TestFuzzyOpensOnCtrlF verifies that Ctrl+F activates the fuzzy overlay.
+func TestFuzzyOpensOnCtrlF(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = t.TempDir()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	result := updated.(*Model)
+
+	assert.True(t, result.fuzzyActive, "Ctrl+F should activate the fuzzy overlay")
+}
+
+// ---------------------------------------------------------------------------
 // fuzzyConfirmSelection tests
 // ---------------------------------------------------------------------------
 
@@ -4048,31 +4074,58 @@ func TestFuzzyConfirmSelection_PRSelection(t *testing.T) {
 	assert.Equal(t, 1, m.selectedPRIdx, "should select PR at index 1 (Number=20)")
 }
 
-func TestFuzzyConfirmSelection_ToastKinds(t *testing.T) {
-	toastCases := []struct {
-		kind    domain.ResultKind
-		label   string
-		icon    string
-		payload any
-	}{
-		{domain.KindFile, "internal/auth.go", "📄", "internal/auth.go"},
-		{domain.KindBranch, "feat/login", "🌿", "feat/login"},
-		{domain.KindAgent, "fix the null pointer", "🤖", data.AgentRun{AgentName: "copilot", Prompt: "fix the null pointer"}},
-		{domain.KindCommit, "add jwt middleware", "📦", "abc1234"},
+func TestFuzzyConfirmSelection_FileSelection_ReturnsCmd(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = "/repo"
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindFile, Label: "internal/auth.go", Icon: "📄", Payload: "internal/auth.go"},
 	}
+	m.fuzzySelIdx = 0
 
-	for _, tc := range toastCases {
-		t.Run(string(tc.kind), func(t *testing.T) {
-			m := NewModel()
-			m.fuzzyResults = []domain.SearchResult{
-				{Kind: tc.kind, Label: tc.label, Icon: tc.icon, Payload: tc.payload},
-			}
-			m.fuzzySelIdx = 0
+	cmd := m.fuzzyConfirmSelection()
 
-			cmd := m.fuzzyConfirmSelection()
-
-			assert.NotNil(t, cmd, "%s: should return a clearMsgCmd", tc.kind)
-			assert.Contains(t, m.statusMsg, tc.label, "%s: statusMsg should contain the label", tc.kind)
-		})
-	}
+	assert.NotNil(t, cmd, "file selection should return an exec Cmd")
+	assert.Empty(t, m.statusMsg, "file selection should not set statusMsg")
 }
+
+func TestFuzzyConfirmSelection_BranchSelection_OpensModal(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = "/repo/main"
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindBranch, Label: "feat/login", Icon: "🌿", Payload: "feat/login"},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd, "branch selection should return nil Cmd (modal handles the action)")
+	assert.NotNil(t, m.activeModal, "branch selection should open a BranchCheckoutModal")
+}
+
+func TestFuzzyConfirmSelection_AgentSelection_IsNoOp(t *testing.T) {
+	m := NewModel()
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindAgent, Label: "fix the null pointer", Icon: "🤖", Payload: data.AgentRun{AgentName: "copilot", Prompt: "fix the null pointer"}},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd, "agent selection is a no-op")
+	assert.Empty(t, m.statusMsg, "agent selection should not set statusMsg")
+}
+
+func TestFuzzyConfirmSelection_CommitSelection_ReturnsCmd(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = "/repo"
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindCommit, Label: "add jwt middleware", Icon: "📦", Payload: "abc1234"},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.NotNil(t, cmd, "commit selection should return a gh browse Cmd")
+	assert.Empty(t, m.statusMsg, "commit selection should not set statusMsg")
+}
+
