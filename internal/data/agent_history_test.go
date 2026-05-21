@@ -124,3 +124,82 @@ func TestLogAgentRun_ClosedDB(t *testing.T) {
 	assert.Contains(t, err.Error(), "log agent run",
 		"error should include 'log agent run' context string")
 }
+
+// TestGetAgentHistory verifies the GetAgentHistory function across a range of scenarios.
+func TestGetAgentHistory(t *testing.T) {
+	t.Run("empty DB returns empty slice", func(t *testing.T) {
+		db, err := data.NewDB(":memory:")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		runs, err := data.GetAgentHistory(db)
+		require.NoError(t, err)
+		assert.Empty(t, runs)
+	})
+
+	t.Run("single inserted run returns correct fields", func(t *testing.T) {
+		db, err := data.NewDB(":memory:")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		now := time.Now().UTC().Truncate(time.Second)
+		entry := data.AgentHistoryEntry{
+			AgentName: "copilot",
+			Prompt:    "fix the null pointer",
+			ExitCode:  0,
+			StartedAt: now,
+			EndedAt:   now.Add(5 * time.Second),
+		}
+		require.NoError(t, data.LogAgentRun(db, entry))
+
+		runs, err := data.GetAgentHistory(db)
+		require.NoError(t, err)
+		require.Len(t, runs, 1)
+		assert.Equal(t, "copilot", runs[0].AgentName)
+		assert.Equal(t, "fix the null pointer", runs[0].Prompt)
+		assert.Equal(t, now, runs[0].StartedAt)
+	})
+
+	t.Run("multiple runs returns all of them", func(t *testing.T) {
+		db, err := data.NewDB(":memory:")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		for i := 0; i < 3; i++ {
+			entry := data.AgentHistoryEntry{
+				AgentName: "copilot",
+				Prompt:    "prompt",
+				ExitCode:  0,
+				StartedAt: time.Now(),
+				EndedAt:   time.Now(),
+			}
+			require.NoError(t, data.LogAgentRun(db, entry))
+		}
+
+		runs, err := data.GetAgentHistory(db)
+		require.NoError(t, err)
+		assert.Len(t, runs, 3)
+		// Spot-check that the agent name is correct.
+		assert.Equal(t, "copilot", runs[0].AgentName)
+	})
+
+	t.Run("run with NULL prompt returns empty string", func(t *testing.T) {
+		db, err := data.NewDB(":memory:")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		// Insert a row with a NULL prompt directly to bypass AgentHistoryEntry.
+		_, err = db.Conn.Exec(
+			`INSERT INTO agent_history (agent_name, prompt, exit_code, started_at, ended_at)
+			 VALUES (?, NULL, ?, ?, ?)`,
+			"claude", 0, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339),
+		)
+		require.NoError(t, err)
+
+		runs, err := data.GetAgentHistory(db)
+		require.NoError(t, err)
+		require.Len(t, runs, 1)
+		assert.Equal(t, "claude", runs[0].AgentName)
+		assert.Equal(t, "", runs[0].Prompt, "NULL prompt should be empty string")
+	})
+}
