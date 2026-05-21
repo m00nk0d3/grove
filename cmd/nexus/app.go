@@ -354,6 +354,11 @@ func NewModel() *Model {
 		themeIdx:  themeIdx,
 		statusErr: configErr,
 		focused:   panelList,
+		fuzzyInput: func() textinput.Model {
+			ti := textinput.New()
+			ti.Placeholder = "Search worktrees, issues, PRs, files..."
+			return ti
+		}(),
 	}
 }
 
@@ -528,21 +533,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			default:
-				// j/k vim navigation when the input is empty or after rune input.
-				if keyMsg.Type == tea.KeyRunes {
-					switch keyMsg.String() {
-					case "j":
-						if m.fuzzySelIdx < len(m.fuzzyResults)-1 {
-							m.fuzzySelIdx++
-						}
-						return m, nil
-					case "k":
-						if m.fuzzySelIdx > 0 {
-							m.fuzzySelIdx--
-						}
-						return m, nil
-					}
-				}
 				var inputCmd tea.Cmd
 				m.fuzzyInput, inputCmd = m.fuzzyInput.Update(keyMsg)
 				query := m.fuzzyInput.Value()
@@ -800,10 +790,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusErr = "No active session for this worktree"
 				return m, clearErrorCmd()
 			case "/":
-				ti := textinput.New()
-				ti.Placeholder = "Search worktrees, issues, PRs, files..."
-				focusCmd := ti.Focus()
-				m.fuzzyInput = ti
+				m.fuzzyInput.SetValue("")
+				focusCmd := m.fuzzyInput.Focus()
 				m.fuzzyActive = true
 				m.fuzzySelIdx = 0
 				if len(m.fuzzyAllItems) > 0 {

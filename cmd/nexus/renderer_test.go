@@ -143,7 +143,7 @@ func TestRenderFull_ContainsFooterKeyHints(t *testing.T) {
 	}{
 		{
 			name:   "footer contains navigation and action hints",
-			wantIn: []string{"[Enter] Select", "[t] Settings", "[q/esc] Quit"},
+			wantIn: []string{"[Enter] Select", "[t] Settings", "[/] Fuzzy", "[q/esc]"},
 		},
 		{
 			name:   "action bar contains worktree commands",
@@ -1177,7 +1177,8 @@ func TestRenderFull_FooterContainsTabAndJKHints(t *testing.T) {
 	assert.Contains(t, view, "[j/k]")
 	// Old hints must still be present
 	assert.Contains(t, view, "[Enter] Select")
-	assert.Contains(t, view, "[q/esc] Quit")
+	assert.Contains(t, view, "[q/esc]")
+	assert.Contains(t, view, "[/] Fuzzy")
 }
 
 // ---------------------------------------------------------------------------

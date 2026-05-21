@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [/] Fuzzy | [q/esc] Quit"
-	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [t] Settings | [g] GH | [/] Fuzzy | [q/esc] Quit"
-	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [Ctrl+R] Review | [t] Settings | [g] GH | [/] Fuzzy | [q/esc] Quit"
+	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Spc] Agents | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
+	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
+	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [Ctrl+R] | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
 	footerHintsDefault   = footerHintsWorktrees
 	actionBarHints       = "[enter] Open  [c-d] Delete  [c-l] Lock | [f1] Help"
 	defaultTermWidth     = 120
@@ -1242,17 +1242,17 @@ func kindBadge(k domain.ResultKind) string {
 	case domain.KindWorktree:
 		return "worktree"
 	case domain.KindIssue:
-		return "issue  "
+		return "issue"
 	case domain.KindPR:
-		return "pr     "
+		return "pr"
 	case domain.KindFile:
-		return "file   "
+		return "file"
 	case domain.KindBranch:
-		return "branch "
+		return "branch"
 	case domain.KindAgent:
-		return "agent  "
+		return "agent"
 	case domain.KindCommit:
-		return "commit "
+		return "commit"
 	default:
 		return string(k)
 	}
@@ -1333,6 +1333,7 @@ func renderFuzzyOverlay(input textinput.Model, results []domain.SearchResult, se
 			icon := r.Icon
 			badge := lipgloss.NewStyle().
 				Foreground(mutedColor).
+				Width(8).
 				Render(kindBadge(r.Kind))
 			label := r.Label
 			sub := r.Sub
