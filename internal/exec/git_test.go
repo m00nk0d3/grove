@@ -427,6 +427,46 @@ func TestGitCommand_AddWorktreeNewBranch(t *testing.T) {
 	}
 }
 
+func TestGitCommand_DefaultBranch(t *testing.T) {
+	tests := []struct {
+		name      string
+		output    string
+		runErr    error
+		wantBranch string
+	}{
+		{
+			name:       "returns main when origin/HEAD points to main",
+			output:     "origin/main\n",
+			wantBranch: "main",
+		},
+		{
+			name:       "returns master when origin/HEAD points to master",
+			output:     "origin/master\n",
+			wantBranch: "master",
+		},
+		{
+			name:       "falls back to main when symbolic-ref fails (no remote)",
+			runErr:     errors.New("not a symbolic ref"),
+			wantBranch: "main",
+		},
+		{
+			name:       "handles ref without slash prefix gracefully",
+			output:     "develop\n",
+			wantBranch: "develop",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := func(_ string, _ ...string) (string, error) {
+				return tt.output, tt.runErr
+			}
+			cmd := NewGitCommandWithRunner("/repo", runner)
+			assert.Equal(t, tt.wantBranch, cmd.DefaultBranch())
+		})
+	}
+}
+
 func TestGitCommand_RemoveWorktree(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -1139,14 +1139,14 @@ func (m *Model) syncGitHubCmd() tea.Cmd {
 }
 
 // addWorktreeCmd returns a Cmd that creates a new git worktree with a new branch.
-// baseBranch is the branch to base off; empty string defaults to "main".
+// baseBranch is the branch to base off; empty string auto-detects the repo's default branch.
 func (m *Model) addWorktreeCmd(branch, path, baseBranch string) tea.Cmd {
-	if baseBranch == "" {
-		baseBranch = "main"
-	}
 	repoPath := m.RepoPath
 	return func() tea.Msg {
 		cmd := internalexec.NewGitCommand(repoPath)
+		if baseBranch == "" {
+			baseBranch = cmd.DefaultBranch()
+		}
 		err := cmd.AddWorktreeNewBranch(path, branch, baseBranch)
 		return worktreeOpDoneMsg{err: err}
 	}

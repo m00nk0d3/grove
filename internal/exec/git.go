@@ -95,6 +95,22 @@ func (g *GitCommand) FetchRemoteBranch(branch string) error {
 	return g.runNoOutput("fetch remote branch", "fetch", "origin", branch)
 }
 
+// DefaultBranch returns the repository's default branch by reading the
+// remote HEAD symbolic ref (e.g. "origin/main" → "main", "origin/master" → "master").
+// Falls back to "main" when the ref cannot be resolved (no remote, unborn HEAD, etc.).
+func (g *GitCommand) DefaultBranch() string {
+	output, err := g.run("default branch", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return "main"
+	}
+	ref := strings.TrimSpace(output)
+	// ref is typically "origin/<branch>" — strip the remote prefix.
+	if _, branch, ok := strings.Cut(ref, "/"); ok {
+		return branch
+	}
+	return ref
+}
+
 // CheckoutPRWorktree fetches a remote branch and creates a new worktree tracking it.
 // Uses -B so it works even if a local branch by that name already exists.
 func (g *GitCommand) CheckoutPRWorktree(path, branch string) error {
