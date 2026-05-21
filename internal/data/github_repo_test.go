@@ -24,7 +24,7 @@ func newTestDB(t *testing.T) *DB {
 // ---------------------------------------------------------------------------
 
 func TestGitHubRepository_GetPRs_EmptyDB(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	prs, err := repo.GetPRs()
 
@@ -33,7 +33,7 @@ func TestGitHubRepository_GetPRs_EmptyDB(t *testing.T) {
 }
 
 func TestGitHubRepository_UpsertAndGetPRs(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	input := []domain.PullRequest{
 		{Number: 1, Title: "Add login", Branch: "feat/login", Author: "alice", State: "OPEN", Labels: []string{"enhancement"}, IsDraft: false},
@@ -62,7 +62,7 @@ func TestGitHubRepository_UpsertAndGetPRs(t *testing.T) {
 }
 
 func TestGitHubRepository_UpsertPRs_UpdatesExisting(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	original := []domain.PullRequest{
 		{Number: 1, Title: "Original title", Branch: "feat/original", Author: "alice", State: "OPEN", Labels: []string{}, IsDraft: false},
@@ -87,7 +87,7 @@ func TestGitHubRepository_UpsertPRs_UpdatesExisting(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGitHubRepository_GetIssues_EmptyDB(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	issues, err := repo.GetIssues()
 
@@ -96,7 +96,7 @@ func TestGitHubRepository_GetIssues_EmptyDB(t *testing.T) {
 }
 
 func TestGitHubRepository_UpsertAndGetIssues(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	input := []domain.Issue{
 		{Number: 10, Title: "Fix the bug", Labels: []string{"bug"}},
@@ -123,7 +123,7 @@ func TestGitHubRepository_UpsertAndGetIssues(t *testing.T) {
 }
 
 func TestGitHubRepository_UpsertAndGetIssues_WithHierarchy(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	parentNum := 10
 	input := []domain.Issue{
@@ -156,7 +156,7 @@ func TestGitHubRepository_UpsertAndGetIssues_WithHierarchy(t *testing.T) {
 }
 
 func TestGitHubRepository_UpsertIssues_UpdatesExisting(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	original := []domain.Issue{
 		{Number: 5, Title: "Original issue", Labels: []string{"bug"}},
@@ -180,7 +180,7 @@ func TestGitHubRepository_UpsertIssues_UpdatesExisting(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGitHubRepository_SyncPRs_Success(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	rawJSON := `[
 		{"number":1,"title":"Add login","headRefName":"feat/login","author":{"login":"alice"},"state":"OPEN","labels":[{"name":"enhancement"}],"isDraft":false},
@@ -213,7 +213,7 @@ func TestGitHubRepository_SyncPRs_Success(t *testing.T) {
 }
 
 func TestGitHubRepository_SyncPRs_CLIError_PreservesCachedData(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	// Pre-load cache with one PR.
 	cached := []domain.PullRequest{
@@ -240,7 +240,7 @@ func TestGitHubRepository_SyncPRs_CLIError_PreservesCachedData(t *testing.T) {
 }
 
 func TestGitHubRepository_SyncIssues_Success(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	rawJSON := `[
 		{"number":10,"title":"Fix the bug","labels":[{"name":"bug"}]},
@@ -271,8 +271,46 @@ func TestGitHubRepository_SyncIssues_Success(t *testing.T) {
 	assert.Equal(t, "Add a feature", got[11].Title)
 }
 
+func TestGitHubRepository_IsolatedByRepoPath(t *testing.T) {
+	db := newTestDB(t)
+	nexus := NewGitHubRepository(db, "/home/user/development/nexus")
+	nova := NewGitHubRepository(db, "/home/user/development/nova")
+
+	// Insert issues for nexus.
+	require.NoError(t, nexus.UpsertIssues([]domain.Issue{
+		{Number: 1, Title: "Nexus issue", Labels: []string{"bug"}},
+	}))
+	// Insert a different issue with the same number for nova.
+	require.NoError(t, nova.UpsertIssues([]domain.Issue{
+		{Number: 1, Title: "Nova issue", Labels: []string{"feature"}},
+		{Number: 2, Title: "Nova issue 2", Labels: []string{}},
+	}))
+
+	nexusIssues, err := nexus.GetIssues()
+	require.NoError(t, err)
+	require.Len(t, nexusIssues, 1, "nexus should only see its own issues")
+	assert.Equal(t, "Nexus issue", nexusIssues[0].Title)
+
+	novaIssues, err := nova.GetIssues()
+	require.NoError(t, err)
+	require.Len(t, novaIssues, 2, "nova should only see its own issues")
+	assert.Equal(t, "Nova issue", novaIssues[0].Title)
+
+	// PRs are isolated too.
+	require.NoError(t, nexus.UpsertPRs([]domain.PullRequest{
+		{Number: 10, Title: "Nexus PR", Branch: "feat/nexus", Author: "alice", State: "OPEN", Labels: []string{}},
+	}))
+	nexusPRs, err := nexus.GetPRs()
+	require.NoError(t, err)
+	require.Len(t, nexusPRs, 1)
+
+	novaPRs, err := nova.GetPRs()
+	require.NoError(t, err)
+	assert.Empty(t, novaPRs, "nova should not see nexus PRs")
+}
+
 func TestGitHubRepository_SyncIssues_CLIError_PreservesCachedData(t *testing.T) {
-	repo := NewGitHubRepository(newTestDB(t))
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	// Pre-load cache with one issue.
 	cached := []domain.Issue{

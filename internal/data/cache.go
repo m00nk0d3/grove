@@ -16,12 +16,12 @@ const (
 	CacheTableIssues CacheTable = "github_issues"
 )
 
-// IsCacheStale reports whether the most recent synced_at in the given table
-// is older than ttl, or the table is empty (stale = needs refresh).
-func IsCacheStale(db *DB, table CacheTable, ttl time.Duration) (bool, error) {
+// IsCacheStale reports whether the most recent synced_at for repoPath in the
+// given table is older than ttl, or no rows exist for that repo (stale = needs refresh).
+func IsCacheStale(db *DB, table CacheTable, ttl time.Duration, repoPath string) (bool, error) {
 	var raw sql.NullString
-	query := fmt.Sprintf("SELECT MAX(synced_at) FROM %s", table)
-	if err := db.Conn.QueryRow(query).Scan(&raw); err != nil {
+	query := fmt.Sprintf("SELECT MAX(synced_at) FROM %s WHERE repo_path = ?", table)
+	if err := db.Conn.QueryRow(query, repoPath).Scan(&raw); err != nil {
 		return true, fmt.Errorf("is cache stale %s: %w", table, err)
 	}
 	if !raw.Valid || raw.String == "" {

@@ -10,13 +10,17 @@ import (
 )
 
 // GitHubRepository persists and retrieves GitHub PR and Issue data from SQLite.
+// All reads and writes are scoped to repoPath so that nexus instances run from
+// different repositories never mix their cached issues or PRs.
 type GitHubRepository struct {
-	db *DB
+	db       *DB
+	repoPath string
 }
 
-// NewGitHubRepository creates a new GitHubRepository backed by the given DB.
-func NewGitHubRepository(db *DB) *GitHubRepository {
-	return &GitHubRepository{db: db}
+// NewGitHubRepository creates a new GitHubRepository backed by the given DB,
+// scoped to repoPath (typically the result of os.Getwd() at startup).
+func NewGitHubRepository(db *DB, repoPath string) *GitHubRepository {
+	return &GitHubRepository{db: db, repoPath: repoPath}
 }
 
 // UpsertPRs inserts or replaces all provided pull requests in the cache.
@@ -28,9 +32,9 @@ func (r *GitHubRepository) UpsertPRs(prs []domain.PullRequest) error {
 		}
 
 		_, err = r.db.Conn.Exec(`
-			INSERT INTO github_prs (number, title, branch, author, state, is_draft, labels, synced_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-			ON CONFLICT(number) DO UPDATE SET
+			INSERT INTO github_prs (number, repo_path, title, branch, author, state, is_draft, labels, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(number, repo_path) DO UPDATE SET
 				title     = excluded.title,
 				branch    = excluded.branch,
 				author    = excluded.author,
@@ -38,7 +42,7 @@ func (r *GitHubRepository) UpsertPRs(prs []domain.PullRequest) error {
 				is_draft  = excluded.is_draft,
 				labels    = excluded.labels,
 				synced_at = CURRENT_TIMESTAMP
-		`, pr.Number, pr.Title, pr.Branch, pr.Author, pr.State, pr.IsDraft, string(labels))
+		`, pr.Number, r.repoPath, pr.Title, pr.Branch, pr.Author, pr.State, pr.IsDraft, string(labels))
 		if err != nil {
 			return fmt.Errorf("upsert prs: %w", err)
 		}
@@ -46,13 +50,14 @@ func (r *GitHubRepository) UpsertPRs(prs []domain.PullRequest) error {
 	return nil
 }
 
-// GetPRs returns all cached pull requests from the database.
+// GetPRs returns all cached pull requests for this repository.
 func (r *GitHubRepository) GetPRs() ([]domain.PullRequest, error) {
 	rows, err := r.db.Conn.Query(`
 		SELECT number, title, branch, author, state, is_draft, labels
 		FROM github_prs
+		WHERE repo_path = ?
 		ORDER BY number
-	`)
+	`, r.repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("get prs: %w", err)
 	}
@@ -109,15 +114,15 @@ func (r *GitHubRepository) UpsertIssues(issues []domain.Issue) error {
 		}
 
 		_, err = r.db.Conn.Exec(`
-			INSERT INTO github_issues (number, title, state, labels, parent_number, sub_issue_numbers, synced_at)
-			VALUES (?, ?, '', ?, ?, ?, CURRENT_TIMESTAMP)
-			ON CONFLICT(number) DO UPDATE SET
+			INSERT INTO github_issues (number, repo_path, title, state, labels, parent_number, sub_issue_numbers, synced_at)
+			VALUES (?, ?, ?, '', ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(number, repo_path) DO UPDATE SET
 				title              = excluded.title,
 				labels             = excluded.labels,
 				parent_number      = excluded.parent_number,
 				sub_issue_numbers  = excluded.sub_issue_numbers,
 				synced_at          = CURRENT_TIMESTAMP
-		`, issue.Number, issue.Title, string(labels), parentNum, string(subNumsJSON))
+		`, issue.Number, r.repoPath, issue.Title, string(labels), parentNum, string(subNumsJSON))
 		if err != nil {
 			return fmt.Errorf("upsert issues: %w", err)
 		}
@@ -125,13 +130,14 @@ func (r *GitHubRepository) UpsertIssues(issues []domain.Issue) error {
 	return nil
 }
 
-// GetIssues returns all cached issues from the database.
+// GetIssues returns all cached issues for this repository.
 func (r *GitHubRepository) GetIssues() ([]domain.Issue, error) {
 	rows, err := r.db.Conn.Query(`
 		SELECT number, title, labels, parent_number, sub_issue_numbers
 		FROM github_issues
+		WHERE repo_path = ?
 		ORDER BY number
-	`)
+	`, r.repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("get issues: %w", err)
 	}

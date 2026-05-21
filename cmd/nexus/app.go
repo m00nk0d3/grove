@@ -1070,11 +1070,11 @@ func (m *Model) syncGitHubCmd() tea.Cmd {
 	return func() tea.Msg {
 		// If db is available, check cache staleness before hitting the CLI.
 		if db != nil {
-			prStale, _ := data.IsCacheStale(db, data.CacheTablePRs, ttl)
-			issStale, _ := data.IsCacheStale(db, data.CacheTableIssues, ttl)
+			prStale, _ := data.IsCacheStale(db, data.CacheTablePRs, ttl, repoPath)
+			issStale, _ := data.IsCacheStale(db, data.CacheTableIssues, ttl, repoPath)
 			if !prStale && !issStale {
 				// Cache is fresh — return cached rows without calling gh.
-				repo := data.NewGitHubRepository(db)
+				repo := data.NewGitHubRepository(db, repoPath)
 				prs, err := repo.GetPRs()
 				if err == nil {
 					issues, err2 := repo.GetIssues()
@@ -1133,7 +1133,7 @@ func (m *Model) syncGitHubCmd() tea.Cmd {
 		// Persist enriched issues and PRs to DB so the next fresh-cache read
 		// returns hierarchy-enriched data rather than a flat list.
 		if db != nil {
-			ghRepo := data.NewGitHubRepository(db)
+			ghRepo := data.NewGitHubRepository(db, repoPath)
 			if issErr == nil {
 				_ = ghRepo.UpsertIssues(issues)
 			}
