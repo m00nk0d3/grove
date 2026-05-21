@@ -20,6 +20,7 @@ import (
 	"github.com/m00nk0d3/nexus/internal/data"
 	"github.com/m00nk0d3/nexus/internal/domain"
 	internalexec "github.com/m00nk0d3/nexus/internal/exec"
+	"github.com/m00nk0d3/nexus/internal/fuzzy"
 	"github.com/m00nk0d3/nexus/internal/tui/modal"
 	"github.com/m00nk0d3/nexus/internal/tui/styles"
 	"github.com/m00nk0d3/nexus/internal/updater"
@@ -318,9 +319,14 @@ type Model struct {
 	claudePromptInput  textinput.Model // text input for entering the Claude prompt
 
 	// Fuzzy finder state
-	fuzzyFiles    []string              // files from git ls-files
-	fuzzyBranches []string              // branches from git branch -a
 	fuzzyAllItems []domain.SearchResult // full unfiltered search index
+
+	// Fuzzy overlay state
+	fuzzyActive  bool                  // true while the fuzzy finder overlay is open
+	fuzzyInput   textinput.Model       // text input for the fuzzy query
+	fuzzyResults []domain.SearchResult // filtered+ranked results for the current query
+	fuzzySelIdx  int                   // selected result index
+	fuzzyLoading bool                  // true while the search index is being built
 }
 
 // NewModel creates and returns a new Model instance with all required fields initialized.
@@ -346,6 +352,11 @@ func NewModel() *Model {
 		themeIdx:  themeIdx,
 		statusErr: configErr,
 		focused:   panelList,
+		fuzzyInput: func() textinput.Model {
+			ti := textinput.New()
+			ti.Placeholder = "Search worktrees, issues, PRs, files..."
+			return ti
+		}(),
 	}
 }
 
@@ -488,6 +499,47 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// Non-key message: fall through to the main switch to handle it normally.
+	}
+
+	// While the fuzzy finder overlay is open, route key events here.
+	// Non-key messages (e.g. fuzzyResultsReadyMsg, tea.WindowSizeMsg) fall
+	// through to the main switch so background events are never dropped.
+	if m.fuzzyActive {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.Type {
+			case tea.KeyEsc:
+				m.fuzzyActive = false
+				m.fuzzyInput.SetValue("")
+				m.fuzzyResults = nil
+				m.fuzzySelIdx = 0
+				return m, nil
+			case tea.KeyEnter:
+				cmd := m.fuzzyConfirmSelection()
+				m.fuzzyActive = false
+				m.fuzzyInput.SetValue("")
+				m.fuzzyResults = nil
+				m.fuzzySelIdx = 0
+				return m, cmd
+			case tea.KeyUp:
+				if m.fuzzySelIdx > 0 {
+					m.fuzzySelIdx--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.fuzzySelIdx < len(m.fuzzyResults)-1 {
+					m.fuzzySelIdx++
+				}
+				return m, nil
+			default:
+				var inputCmd tea.Cmd
+				m.fuzzyInput, inputCmd = m.fuzzyInput.Update(keyMsg)
+				query := m.fuzzyInput.Value()
+				m.fuzzyResults = fuzzy.FilterAndRank(query, m.fuzzyAllItems)
+				m.fuzzySelIdx = 0
+				return m, inputCmd
+			}
+		}
+		// Non-key message: fall through to the main switch.
 	}
 
 	switch msg := msg.(type) {
@@ -735,6 +787,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.statusErr = "No active session for this worktree"
 				return m, clearErrorCmd()
+			case "/":
+				m.fuzzyInput.SetValue("")
+				focusCmd := m.fuzzyInput.Focus()
+				m.fuzzyActive = true
+				m.fuzzySelIdx = 0
+				if len(m.fuzzyAllItems) > 0 {
+					m.fuzzyLoading = false
+					m.fuzzyResults = fuzzy.FilterAndRank("", m.fuzzyAllItems)
+				} else {
+					m.fuzzyLoading = true
+					m.fuzzyResults = nil
+					return m, tea.Batch(focusCmd, func() tea.Msg { return fuzzyOpenMsg{} })
+				}
+				return m, focusCmd
 			}
 		}
 
@@ -1003,20 +1069,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fuzzyResultsReadyMsg:
 		m.fuzzyAllItems = msg.results
-		// Also extract the file and branch slices for convenience
-		m.fuzzyFiles = m.fuzzyFiles[:0]
-		m.fuzzyBranches = m.fuzzyBranches[:0]
-		for _, r := range msg.results {
-			switch r.Kind {
-			case domain.KindFile:
-				if f, ok := r.Payload.(string); ok {
-					m.fuzzyFiles = append(m.fuzzyFiles, f)
-				}
-			case domain.KindBranch:
-				if b, ok := r.Payload.(string); ok {
-					m.fuzzyBranches = append(m.fuzzyBranches, b)
-				}
-			}
+		// Always clear the loading flag regardless of whether the overlay is
+		// still open — prevents stale loading state if the user closed the
+		// overlay before the index finished building.
+		m.fuzzyLoading = false
+		// If the overlay is still open, populate results now that the index is ready.
+		if m.fuzzyActive {
+			query := m.fuzzyInput.Value()
+			m.fuzzyResults = fuzzy.FilterAndRank(query, m.fuzzyAllItems)
+			m.fuzzySelIdx = 0
 		}
 	}
 
@@ -1060,6 +1121,12 @@ func (m *Model) View() string {
 	if m.claudePromptActive {
 		return overlay("Spawn Claude Code",
 			fmt.Sprintf("> %s\n\nEnter confirm (prompt optional)  •  Esc cancel", m.claudePromptInput.View()))
+	}
+
+	if m.fuzzyActive {
+		theme := styles.NewTheme(styles.Themes[m.themeIdx])
+		overlayContent := renderFuzzyOverlay(m.fuzzyInput, m.fuzzyResults, m.fuzzySelIdx, theme, m.fuzzyLoading, w)
+		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, overlayContent)
 	}
 
 	if m.selfUpdating {
@@ -2342,4 +2409,55 @@ func (m *Model) moveUp() {
 			}
 		}
 	}
+}
+
+// fuzzyConfirmSelection navigates the UI to the selected fuzzy result.
+// Returns a Cmd to execute as part of the selection (e.g. spawn a session), or nil.
+func (m *Model) fuzzyConfirmSelection() tea.Cmd {
+	if len(m.fuzzyResults) == 0 || m.fuzzySelIdx >= len(m.fuzzyResults) {
+		return nil
+	}
+	result := m.fuzzyResults[m.fuzzySelIdx]
+	switch result.Kind {
+	case domain.KindWorktree:
+		m.view = viewWorktrees
+		m.ctxScrollOffset = 0
+		m.currentPage = 0
+		if wt, ok := result.Payload.(domain.Worktree); ok {
+			for i, w := range m.Worktrees {
+				if w.Path == wt.Path {
+					m.selectedIdx = i
+					break
+				}
+			}
+		}
+	case domain.KindIssue:
+		m.view = viewIssues
+		m.ctxScrollOffset = 0
+		m.currentPage = 0
+		if iss, ok := result.Payload.(domain.Issue); ok {
+			for i, issue := range m.issues {
+				if issue.Number == iss.Number {
+					m.selectedIssueIdx = i
+					break
+				}
+			}
+		}
+	case domain.KindPR:
+		m.view = viewPRs
+		m.ctxScrollOffset = 0
+		m.currentPage = 0
+		if pr, ok := result.Payload.(domain.PullRequest); ok {
+			for i, p := range m.prs {
+				if p.Number == pr.Number {
+					m.selectedPRIdx = i
+					break
+				}
+			}
+		}
+	case domain.KindFile, domain.KindBranch, domain.KindAgent, domain.KindCommit:
+		m.statusMsg = fmt.Sprintf("Selected: %s  %s", result.Icon, result.Label)
+		return clearMsgCmd()
+	}
+	return nil
 }
