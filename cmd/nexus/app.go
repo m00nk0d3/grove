@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -103,6 +104,14 @@ type updateCheckedMsg struct {
 
 // selfUpdateDoneMsg carries the result of a self-update attempt.
 type selfUpdateDoneMsg struct{ err error }
+
+// fuzzyOpenMsg is dispatched when the user opens the fuzzy finder.
+type fuzzyOpenMsg struct{}
+
+// fuzzyResultsReadyMsg is dispatched when the async search index build is complete.
+type fuzzyResultsReadyMsg struct {
+	results []domain.SearchResult
+}
 
 // clearErrorCmd returns a Cmd that fires clearErrorMsg after 5 seconds.
 func clearErrorCmd() tea.Cmd {
@@ -307,6 +316,11 @@ type Model struct {
 	// Claude prompt state
 	claudePromptActive bool            // true while the inline Claude prompt is open
 	claudePromptInput  textinput.Model // text input for entering the Claude prompt
+
+	// Fuzzy finder state
+	fuzzyFiles    []string              // files from git ls-files
+	fuzzyBranches []string              // branches from git branch -a
+	fuzzyAllItems []domain.SearchResult // full unfiltered search index
 }
 
 // NewModel creates and returns a new Model instance with all required fields initialized.
@@ -983,6 +997,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusMsg = "✓ Updated successfully! Please restart nexus to use the new version."
 		return m, clearMsgCmd()
+
+	case fuzzyOpenMsg:
+		return m, m.buildSearchIndexCmd()
+
+	case fuzzyResultsReadyMsg:
+		m.fuzzyAllItems = msg.results
+		// Also extract the file and branch slices for convenience
+		m.fuzzyFiles = m.fuzzyFiles[:0]
+		m.fuzzyBranches = m.fuzzyBranches[:0]
+		for _, r := range msg.results {
+			switch r.Kind {
+			case domain.KindFile:
+				if f, ok := r.Payload.(string); ok {
+					m.fuzzyFiles = append(m.fuzzyFiles, f)
+				}
+			case domain.KindBranch:
+				if b, ok := r.Payload.(string); ok {
+					m.fuzzyBranches = append(m.fuzzyBranches, b)
+				}
+			}
+		}
 	}
 
 	return m, nil
@@ -1910,6 +1945,187 @@ func (m *Model) refreshWorktreesCmd() tea.Cmd {
 		cmd := internalexec.NewGitCommand(repoPath)
 		worktrees, err := cmd.ListWorktrees()
 		return worktreesRefreshedMsg{worktrees: worktrees, err: err}
+	}
+}
+
+// buildSearchIndexCmd builds the unified search index used by the fuzzy finder.
+// It concurrently fetches files, branches, agent history, and commits from the
+// repository, combining them with already-cached worktrees, issues, and PRs.
+// Errors from individual async sources are logged at debug level and skipped —
+// they are non-fatal so that a missing git binary or empty DB does not break
+// the fuzzy finder entirely.
+func (m *Model) buildSearchIndexCmd() tea.Cmd {
+	// Snapshot all model state upfront to avoid data races inside the goroutine.
+	worktrees := make([]domain.Worktree, len(m.Worktrees))
+	copy(worktrees, m.Worktrees)
+	issues := make([]domain.Issue, len(m.issues))
+	copy(issues, m.issues)
+	prs := make([]domain.PullRequest, len(m.prs))
+	copy(prs, m.prs)
+	repoPath := m.RepoPath
+	db := m.db
+
+	return func() tea.Msg {
+		var (
+			mu       sync.Mutex
+			allItems []domain.SearchResult
+			wg       sync.WaitGroup
+		)
+
+		// append is called from goroutines — always hold mu.
+		appendItems := func(items []domain.SearchResult) {
+			mu.Lock()
+			allItems = append(allItems, items...)
+			mu.Unlock()
+		}
+
+		// Seed from cached sources immediately (no I/O required).
+		var cached []domain.SearchResult
+		for _, wt := range worktrees {
+			cached = append(cached, domain.SearchResult{
+				Kind:    domain.KindWorktree,
+				Label:   wt.Path,
+				Sub:     wt.Branch,
+				Icon:    "🌿",
+				Payload: wt,
+			})
+		}
+		for _, iss := range issues {
+			cached = append(cached, domain.SearchResult{
+				Kind:    domain.KindIssue,
+				Label:   iss.Title,
+				Sub:     fmt.Sprintf("#%d", iss.Number),
+				Icon:    "🐛",
+				Payload: iss,
+			})
+		}
+		for _, pr := range prs {
+			cached = append(cached, domain.SearchResult{
+				Kind:    domain.KindPR,
+				Label:   pr.Title,
+				Sub:     fmt.Sprintf("#%d", pr.Number),
+				Icon:    "🔀",
+				Payload: pr,
+			})
+		}
+		appendItems(cached)
+
+		// git ls-files
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := exec.Command("git", "-C", repoPath, "ls-files").Output()
+			if err != nil {
+				slog.Debug("buildSearchIndexCmd: git ls-files failed", "err", err)
+				return
+			}
+			var items []domain.SearchResult
+			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if f == "" {
+					continue
+				}
+				items = append(items, domain.SearchResult{
+					Kind:    domain.KindFile,
+					Label:   f,
+					Sub:     "",
+					Icon:    "📄",
+					Payload: f,
+				})
+			}
+			appendItems(items)
+		}()
+
+		// git branch -a
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := exec.Command("git", "-C", repoPath, "branch", "-a").Output()
+			if err != nil {
+				slog.Debug("buildSearchIndexCmd: git branch -a failed", "err", err)
+				return
+			}
+			var items []domain.SearchResult
+			for _, line := range strings.Split(string(out), "\n") {
+				// Strip leading "* " (current branch marker) or leading spaces.
+				b := strings.TrimPrefix(line, "* ")
+				b = strings.TrimSpace(b)
+				if b == "" {
+					continue
+				}
+				items = append(items, domain.SearchResult{
+					Kind:    domain.KindBranch,
+					Label:   b,
+					Sub:     "",
+					Icon:    "🌿",
+					Payload: b,
+				})
+			}
+			appendItems(items)
+		}()
+
+		// agent history
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if db == nil {
+				return
+			}
+			history, err := data.GetAgentHistory(db)
+			if err != nil {
+				slog.Debug("buildSearchIndexCmd: get agent history failed", "err", err)
+				return
+			}
+			var items []domain.SearchResult
+			for _, h := range history {
+				label := h.Prompt
+				if label == "" {
+					label = h.AgentName
+				}
+				items = append(items, domain.SearchResult{
+					Kind:    domain.KindAgent,
+					Label:   label,
+					Sub:     h.AgentName,
+					Icon:    "🤖",
+					Payload: h,
+				})
+			}
+			appendItems(items)
+		}()
+
+		// git log --oneline -50
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := exec.Command("git", "-C", repoPath, "log", "--oneline", "-50").Output()
+			if err != nil {
+				slog.Debug("buildSearchIndexCmd: git log failed", "err", err)
+				return
+			}
+			var items []domain.SearchResult
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if line == "" {
+					continue
+				}
+				// First token is the hash; the remainder is the message.
+				parts := strings.SplitN(line, " ", 2)
+				hash := parts[0]
+				message := ""
+				if len(parts) == 2 {
+					message = parts[1]
+				}
+				items = append(items, domain.SearchResult{
+					Kind:    domain.KindCommit,
+					Label:   message,
+					Sub:     hash,
+					Icon:    "📦",
+					Payload: hash,
+				})
+			}
+			appendItems(items)
+		}()
+
+		wg.Wait()
+		return fuzzyResultsReadyMsg{results: allItems}
 	}
 }
 

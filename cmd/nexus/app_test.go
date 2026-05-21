@@ -3883,3 +3883,100 @@ func TestModel_RKey_NotFiredWithModalOpen(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, result.syncing, "'r' with modal open must NOT set syncing=true")
 }
+
+// TestBuildSearchIndexCmd verifies that buildSearchIndexCmd returns a
+// fuzzyResultsReadyMsg containing results for the cached sources (worktrees,
+// issues, PRs) and gracefully skips the async git/agent sources when there is
+// no real git repository at m.RepoPath.
+func TestBuildSearchIndexCmd(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	// Use a temp dir as the repo path so all git commands fail gracefully.
+	m.RepoPath = t.TempDir()
+
+	m.Worktrees = []domain.Worktree{
+		{Path: "/wt/main", Branch: "main"},
+		{Path: "/wt/feat", Branch: "feat/thing"},
+	}
+	m.issues = []domain.Issue{
+		{Number: 1, Title: "First issue"},
+		{Number: 2, Title: "Second issue"},
+	}
+	m.prs = []domain.PullRequest{
+		{Number: 10, Title: "Fix something", Branch: "fix/something"},
+	}
+
+	cmd := m.buildSearchIndexCmd()
+	require.NotNil(t, cmd, "buildSearchIndexCmd should return a non-nil tea.Cmd")
+
+	// Execute the returned Cmd to obtain the message.
+	msg := cmd()
+
+	ready, ok := msg.(fuzzyResultsReadyMsg)
+	require.True(t, ok, "expected fuzzyResultsReadyMsg, got %T", msg)
+
+	// Count results per kind.
+	kindCounts := map[domain.ResultKind]int{}
+	for _, r := range ready.results {
+		kindCounts[r.Kind]++
+	}
+
+	assert.Equal(t, 2, kindCounts[domain.KindWorktree], "should have 2 worktree results")
+	assert.Equal(t, 2, kindCounts[domain.KindIssue], "should have 2 issue results")
+	assert.Equal(t, 1, kindCounts[domain.KindPR], "should have 1 PR result")
+
+	// Verify a worktree result has the correct fields.
+	var wtResult *domain.SearchResult
+	for i := range ready.results {
+		if ready.results[i].Kind == domain.KindWorktree && ready.results[i].Sub == "main" {
+			wtResult = &ready.results[i]
+			break
+		}
+	}
+	require.NotNil(t, wtResult, "should find worktree result for 'main' branch")
+	assert.Equal(t, "/wt/main", wtResult.Label)
+	assert.Equal(t, "🌿", wtResult.Icon)
+}
+
+// TestUpdate_FuzzyOpenMsg verifies that sending fuzzyOpenMsg to Update() returns
+// a non-nil command (the async search index build).
+func TestUpdate_FuzzyOpenMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+	m.RepoPath = t.TempDir()
+
+	_, cmd := m.Update(fuzzyOpenMsg{})
+	assert.NotNil(t, cmd, "fuzzyOpenMsg should return a non-nil Cmd")
+}
+
+// TestUpdate_FuzzyResultsReadyMsg verifies that fuzzyResultsReadyMsg populates
+// m.fuzzyAllItems and extracts the file/branch convenience slices correctly.
+func TestUpdate_FuzzyResultsReadyMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	results := []domain.SearchResult{
+		{Kind: domain.KindFile, Label: "cmd/main.go", Icon: "📄", Payload: "cmd/main.go"},
+		{Kind: domain.KindFile, Label: "internal/app.go", Icon: "📄", Payload: "internal/app.go"},
+		{Kind: domain.KindBranch, Label: "main", Icon: "🌿", Payload: "main"},
+		{Kind: domain.KindBranch, Label: "feat/foo", Icon: "🌿", Payload: "feat/foo"},
+		{Kind: domain.KindWorktree, Label: "/wt/main", Sub: "main", Icon: "🌿", Payload: domain.Worktree{Path: "/wt/main", Branch: "main"}},
+		{Kind: domain.KindIssue, Label: "Fix bug", Sub: "#1", Icon: "🐛", Payload: domain.Issue{Number: 1, Title: "Fix bug"}},
+	}
+
+	updated, cmd := m.Update(fuzzyResultsReadyMsg{results: results})
+	assert.Nil(t, cmd, "fuzzyResultsReadyMsg should return nil Cmd")
+
+	result, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Len(t, result.fuzzyAllItems, 6, "fuzzyAllItems should contain all 6 results")
+	assert.Len(t, result.fuzzyFiles, 2, "fuzzyFiles should contain 2 file results")
+	assert.Len(t, result.fuzzyBranches, 2, "fuzzyBranches should contain 2 branch results")
+
+	assert.Contains(t, result.fuzzyFiles, "cmd/main.go")
+	assert.Contains(t, result.fuzzyFiles, "internal/app.go")
+	assert.Contains(t, result.fuzzyBranches, "main")
+	assert.Contains(t, result.fuzzyBranches, "feat/foo")
+}
