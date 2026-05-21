@@ -2876,21 +2876,22 @@ func TestBuildNewTerminalWithCmdCmd(t *testing.T) {
 // and (nil, false) when no supported emulator is detected.
 func TestBuildNewTabWithCmdCmd(t *testing.T) {
 	tests := []struct {
-		name         string
-		path         string
-		agentCmd     string
-		pidFile      string
-		goos         string
-		tmuxEnv      string
-		zellijEnv    string
-		kittyWinID   string
-		alacrittyS   string // ALACRITTY_SOCKET
-		wtSession    string // WT_SESSION
-		termProgram  string // TERM_PROGRAM
-		konsoleVer   string // KONSOLE_VERSION
-		wantOK       bool
-		wantExe      string
-		wantArgsContain []string
+		name              string
+		path              string
+		agentCmd          string
+		pidFile           string
+		goos              string
+		tmuxEnv           string
+		zellijEnv         string
+		zellijSessionName string // ZELLIJ_SESSION_NAME
+		kittyWinID        string
+		alacrittyS        string // ALACRITTY_SOCKET
+		wtSession         string // WT_SESSION
+		termProgram       string // TERM_PROGRAM
+		konsoleVer        string // KONSOLE_VERSION
+		wantOK            bool
+		wantExe           string
+		wantArgsContain   []string
 	}{
 		// --- Multiplexers ---
 		{
@@ -2921,6 +2922,16 @@ func TestBuildNewTabWithCmdCmd(t *testing.T) {
 			wantOK:    true,
 			wantExe:   "zellij",
 			wantArgsContain: []string{"run", "--cwd", "/repo/wt"},
+		},
+		{
+			name:              "zellij detected via ZELLIJ_SESSION_NAME with agentCmd",
+			path:              "/repo/wt",
+			agentCmd:          "aider",
+			goos:              "linux",
+			zellijSessionName: "my-session",
+			wantOK:            true,
+			wantExe:           "zellij",
+			wantArgsContain:   []string{"run", "--cwd", "/repo/wt"},
 		},
 		{
 			name:      "zellij without agentCmd opens plain shell",
@@ -3022,6 +3033,7 @@ func TestBuildNewTabWithCmdCmd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("TMUX", tt.tmuxEnv)
 			t.Setenv("ZELLIJ", tt.zellijEnv)
+			t.Setenv("ZELLIJ_SESSION_NAME", tt.zellijSessionName)
 			t.Setenv("KITTY_WINDOW_ID", tt.kittyWinID)
 			t.Setenv("ALACRITTY_SOCKET", tt.alacrittyS)
 			t.Setenv("WT_SESSION", tt.wtSession)
