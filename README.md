@@ -39,7 +39,9 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 - **Active sessions dashboard** — mission control for your worktrees: see exactly what's alive, what's idle, and what's absolutely on fire 🔥
 - **AI agent launchers** — spawn Claude Code, GitHub Copilot, or Aider in the correct worktree directory with a single keypress
 - **Auto-update notifications** — Nexus checks for new versions on startup and can update itself; no more `brew upgrade` guilt-trips
-- **Theme cycling** — switch between Digital Noir, Matrix, and Light themes on the fly with `t`
+- **Global fuzzy finder** — press `/` or `Ctrl+F` to search across worktrees, issues, PRs, files, branches, and agent history simultaneously; results update in real-time as you type
+- **AI-assisted PR review** — press `Ctrl+R` on any PR to auto-provision a review worktree and pre-seed your AI agent with a structured code-review prompt
+- **9 built-in themes** — Digital Noir, Matrix, Light, Everforest, Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, and One Dark; cycle them live with `t`
 - **In-app help** — press `f1` or `?` at any time for a searchable keybindings and troubleshooting reference
 - **Local persistence** — config lives in `~/.nexus/config.toml`; metadata is cached in SQLite so Nexus starts fast
 
@@ -179,10 +181,11 @@ Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
 
 | Key | Action |
 |---|---|
-| `a` | Spawn Claude Code |
-| `c` | Spawn GitHub Copilot |
-| `f` | Spawn Aider |
+| `a` | Spawn Claude Code (with optional inline prompt) |
+| `c` | Spawn GitHub Copilot (with optional inline prompt) |
+| `f` | Spawn Aider (opens file picker first) |
 | `Space` | Unified agent launcher (shows all agents and availability) |
+| `Ctrl+R` | AI-assisted PR review (PRs view only — auto-provisions worktree + pre-seeded prompt) |
 
 ### Views
 
@@ -198,7 +201,11 @@ Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
 | Key | Action |
 |---|---|
 | `f1` / `?` | Open help modal |
+| `/` / `Ctrl+F` | Open fuzzy finder (search worktrees, issues, PRs, files, branches) |
 | `g` | Open selected item in GitHub |
+| `r` | Force-refresh GitHub data (bypasses cache) |
+| `PgDown` / `n` | Next page (issues / PRs lists) |
+| `PgUp` | Previous page |
 | `q` / `Esc` / `Ctrl+C` | Quit |
 
 ---
@@ -216,7 +223,8 @@ auto_sync = true
 sync_interval_minutes = 5
 
 [appearance]
-# UI theme. Options: "digital-noir", "matrix", "light"
+# UI theme. Options: "digital-noir", "matrix", "light", "everforest",
+#            "tokyonight", "catppuccin", "kanagawa", "rose-pine", "onedark"
 theme = "digital-noir"
 
 [ai_agents]
@@ -247,6 +255,31 @@ Active sessions are displayed inline in the **Worktrees** view — no separate v
 - **`x`** — kill the active session for the selected worktree
 
 No more `ps aux | grep claude` crimes. It's all in one place.
+
+---
+
+## Fuzzy Finder
+
+Press `/` or `Ctrl+F` from anywhere to open the global fuzzy finder overlay. It searches across:
+
+- **Worktrees** — jump directly to any worktree
+- **Issues** — navigate to any GitHub issue
+- **Pull Requests** — navigate to any PR
+- **Files** — open modified/tracked files in `$EDITOR`
+- **Branches** — create a worktree from any local branch
+- **Agent history** — review past agent runs
+
+Results update in real-time as you type. `Enter` dispatches a smart action per result type. `Esc` closes the overlay without acting.
+
+---
+
+## AI-Assisted PR Review
+
+In the **PRs** view, press `Ctrl+R` on any pull request to trigger an AI-assisted review:
+
+1. Nexus auto-provisions a dedicated review worktree for the PR branch
+2. Opens the unified agent launcher pre-seeded with a structured code-review prompt covering correctness, security, performance, maintainability, and breaking changes
+3. Your AI agent starts reviewing with full repository context — no copy-pasting, no browser tab required
 
 ---
 

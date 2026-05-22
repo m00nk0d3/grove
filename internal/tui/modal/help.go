@@ -66,14 +66,19 @@ var keybindingGroups = []bindingGroup{
 			{"w / W", "Worktrees view"},
 			{"i / I", "Issues view"},
 			{"p / P", "PRs view"},
-			{"t", "Cycle themes"},
+			{"t", "Open settings (theme, GitHub, AI agents, worktrees)"},
 		},
 	},
 	{
 		title: "GLOBAL",
 		bindings: [][2]string{
 			{"f1 / ?", "Open this help modal"},
+			{"/ / Ctrl+F", "Open fuzzy finder"},
+			{"Ctrl+R", "AI-assisted PR review (PRs view)"},
 			{"g", "Open selected item in GitHub"},
+			{"r", "Force-refresh GitHub data"},
+			{"PgDown / n", "Next page"},
+			{"PgUp", "Previous page"},
 			{"Esc / q / Ctrl+C", "Quit"},
 		},
 	},
@@ -349,16 +354,28 @@ const tipsContent = `COMMON WORKFLOWS
    or Space to open the unified launcher. Nexus suspends
    itself and resumes when the agent exits.
 
-4. Keep GitHub data fresh
-   Nexus auto-syncs on startup and at the configured interval
-   (~5 min default).
+4. Search everything with the fuzzy finder
+   Press / or Ctrl+F to open the fuzzy finder overlay.
+   Start typing to instantly filter worktrees, issues, PRs,
+   files, branches, and agent history.
 
-5. Open an issue or PR in the browser
+5. AI-assisted PR review
+   In the PRs view, select a PR and press Ctrl+R.
+   Nexus provisions a review worktree and pre-seeds your
+   agent with a structured code-review prompt.
+
+6. Keep GitHub data fresh
+   Nexus auto-syncs on startup and at the configured interval
+   (~5 min default). Press r to force an immediate refresh.
+
+7. Open an issue or PR in the browser
    While in the Issues or PRs view, press g to open the
    selected item in your default browser via gh CLI.
 
-6. Switch themes on the fly
-   Press t to cycle through Digital Noir, Matrix, and Light.`
+8. Switch themes on the fly
+   Press t → open Settings → Appearance to cycle through
+   9 built-in themes: Digital Noir, Matrix, Light, Everforest,
+   Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, One Dark.`
 
 const troubleshootingContent = `COMMON ISSUES
 

@@ -56,17 +56,16 @@ go test ./...
 
 ### Release process
 
+Releases are automated via [GoReleaser](https://goreleaser.com/) and triggered by pushing a version tag.
+
 1. Merge all changes to `main` and ensure tests pass.
-2. Create a Git tag: `git tag v0.x.0 && git push origin v0.x.0`
-3. Build the release binary with the matching version string:
+2. Create and push a version tag:
    ```bash
-   go build \
-       -ldflags "-X github.com/m00nk0d3/nexus/internal/version.Version=v0.x.0" \
-       -o nexus \
-       ./cmd/nexus
+   git tag v0.x.0 && git push origin v0.x.0
    ```
-4. Attach the binary to the GitHub release created by the tag.
-5. Update `README.md` and this runbook if any user-facing behaviour changed.
+3. GoReleaser picks up the tag, builds cross-platform binaries (linux/darwin/windows, amd64/arm64), and publishes the GitHub Release automatically.
+4. Pre-releases (alpha/beta/RC) are tagged as `v0.x.0-beta.1` etc. — GoReleaser marks them as pre-releases automatically.
+5. Update `README.md`, `CHANGELOG.md`, and this runbook if any user-facing behaviour changed.
 
 ---
 
@@ -76,7 +75,7 @@ Nexus is a terminal UI for managing Git worktrees, syncing GitHub data, and laun
 
 ## Current status
 
-The repository currently contains the project plan and documentation scaffolding. The operational procedures below describe the intended runtime behavior once the app is implemented.
+Nexus is fully implemented and shipping. The latest release is available on the [GitHub Releases page](https://github.com/m00nk0d3/nexus/releases). See `CHANGELOG.md` for the full version history.
 
 ## Owners
 
@@ -109,13 +108,16 @@ Key settings:
 
 | Setting | Purpose |
 | --- | --- |
-| `github.token` | Optional PAT if `gh` auth is not used |
 | `github.auto_sync` | Enables background sync |
 | `github.sync_interval_minutes` | Refresh cadence |
-| `appearance.theme` | UI theme selection |
-| `ai_agents.*_enabled` | Toggles individual launchers |
-| `worktrees.root_dir` | Base repo path |
-| `worktrees.auto_link_prs` | Auto-associate PRs to branches |
+| `appearance.theme` | UI theme (`digital-noir`, `matrix`, `light`, `everforest`, `tokyonight`, `catppuccin`, `kanagawa`, `rose-pine`, `onedark`) |
+| `ai_agents.copilot_enabled` | Toggles Copilot launcher |
+| `ai_agents.claude_enabled` | Toggles Claude launcher |
+| `ai_agents.aider_enabled` | Toggles Aider launcher |
+| `ai_agents.claude_binary` | Override path to the `claude` binary |
+| `ai_agents.aider_binary` | Override path to the `aider` binary |
+| `worktrees.base_branch` | Default branch used when creating worktrees |
+| `worktrees.worktree_root` | Directory where new worktrees are created (relative to repo root) |
 
 ## Startup procedure
 
@@ -126,6 +128,12 @@ Key settings:
 5. Start background GitHub sync if enabled.
 
 ## Normal operations
+
+### Fuzzy finder
+
+- Press `/` or `Ctrl+F` to open the overlay from any view.
+- Type to filter across worktrees, issues, PRs, files, branches, and agent history.
+- `Enter` dispatches the contextual action; `Esc` dismisses without acting.
 
 ### Worktree management
 
