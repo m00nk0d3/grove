@@ -366,7 +366,7 @@ func (m *Model) Init() tea.Cmd {
 	m.syncing = true
 	// Always start the session tick — it handles both nexus-spawned shell sessions
 	// (requires m.db) and externally-started Copilot CLI sessions (no DB needed).
-	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(), sessionTickCmd(), checkForUpdateCmd())
+	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(false), sessionTickCmd(), checkForUpdateCmd())
 }
 
 // Update handles incoming messages and returns an updated model and command.
@@ -696,7 +696,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.syncing = true
-				return m, tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd())
+				return m, tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(true))
 			case "n":
 				m.nextPage()
 				return m, nil
@@ -977,7 +977,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncTickMsg:
 		m.syncing = true
-		return m, m.syncGitHubCmd()
+		return m, m.syncGitHubCmd(false)
 
 	case sessionTickMsg:
 		return m, m.checkSessionsCmd()
@@ -1159,13 +1159,15 @@ func (m *Model) openInBrowserCmd() tea.Cmd {
 }
 
 // syncGitHubCmd returns a Cmd that fetches open PRs and issues from GitHub in the background.
-func (m *Model) syncGitHubCmd() tea.Cmd {
+// When force is true, the TTL cache check is skipped and the GitHub CLI is always called.
+func (m *Model) syncGitHubCmd(force bool) tea.Cmd {
 	repoPath := m.RepoPath
 	db := m.db
 	ttl := m.Config.GitHub.SyncInterval()
 	return func() tea.Msg {
 		// If db is available, check cache staleness before hitting the CLI.
-		if db != nil {
+		// Skip this check when force=true (explicit user-initiated refresh).
+		if !force && db != nil {
 			prStale, _ := data.IsCacheStale(db, data.CacheTablePRs, ttl, repoPath)
 			issStale, _ := data.IsCacheStale(db, data.CacheTableIssues, ttl, repoPath)
 			if !prStale && !issStale {
