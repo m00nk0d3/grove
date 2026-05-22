@@ -62,85 +62,40 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 
 ## Installation
 
-### Download a pre-built binary (recommended)
-
-Grab the latest release from the [GitHub Releases page](https://github.com/m00nk0d3/nexus/releases).
-
-Assets follow the naming pattern `nexus_{version}_{os}_{arch}[.tar.gz|.zip]`:
-
-| Platform | Archive |
-|---|---|
-| Linux (amd64) | `nexus_{version}_linux_amd64.tar.gz` |
-| Linux (arm64) | `nexus_{version}_linux_arm64.tar.gz` |
-| macOS (Intel) | `nexus_{version}_darwin_amd64.tar.gz` |
-| macOS (Apple Silicon) | `nexus_{version}_darwin_arm64.tar.gz` |
-| Windows (amd64) | `nexus_{version}_windows_amd64.zip` |
-
-> **Pre-releases** (alpha / beta / RC) are also published on the Releases page and clearly marked. Use them to try upcoming features early.
-
-#### Linux / macOS
-
-The snippet below fetches the latest version automatically — no manual version hunting required:
+### Linux / macOS
 
 ```bash
-VERSION=$(curl -s https://api.github.com/repos/m00nk0d3/nexus/releases/latest \
-  | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
-curl -L "https://github.com/m00nk0d3/nexus/releases/latest/download/nexus_${VERSION}_linux_amd64.tar.gz" \
-  | tar -xz
-sudo mv nexus /usr/local/bin/
+curl -sSL https://raw.githubusercontent.com/m00nk0d3/nexus/main/install.sh | bash
 ```
 
-> Replace `linux_amd64` with `darwin_amd64` or `darwin_arm64` for macOS.
+Auto-detects your OS and architecture, downloads the right binary from GitHub Releases, and installs to `/usr/local/bin`.
 
-#### Windows (PowerShell)
+### Windows (PowerShell)
 
 ```powershell
-$version = (Invoke-RestMethod https://api.github.com/repos/m00nk0d3/nexus/releases/latest).tag_name.TrimStart('v')
-Invoke-WebRequest "https://github.com/m00nk0d3/nexus/releases/latest/download/nexus_${version}_windows_amd64.zip" `
-  -OutFile nexus.zip
-Expand-Archive nexus.zip -DestinationPath "$env:USERPROFILE\nexus"
-# Add to PATH for the current user (run once):
-[System.Environment]::SetEnvironmentVariable(
-  "PATH",
-  "$env:USERPROFILE\nexus;$([System.Environment]::GetEnvironmentVariable('PATH','User'))",
-  "User"
-)
+irm https://raw.githubusercontent.com/m00nk0d3/nexus/main/install.ps1 | iex
 ```
 
-Restart your terminal after updating the PATH.
+Downloads the latest `windows_amd64` release, installs to `%LOCALAPPDATA%\nexus\`, and adds it to your user `PATH` automatically. Restart your terminal after running.
 
-### Using go install
+### go install
 
-Works on all platforms — requires Go 1.25+.
+Works on all platforms — requires Go 1.22+.
 
 ```bash
 go install github.com/m00nk0d3/nexus/cmd/nexus@latest
 ```
 
-The binary is placed in `$GOPATH/bin` (Linux/macOS) or `%GOPATH%\bin` (Windows), which should already be on your `PATH` if Go is set up correctly.
-
 ### Build from source
-
-#### Linux / macOS
 
 ```bash
 git clone https://github.com/m00nk0d3/nexus
 cd nexus
-make build
-sudo mv nexus /usr/local/bin/
+go build -o nexus ./cmd/nexus
+./nexus
 ```
 
-#### Windows (PowerShell)
-
-```powershell
-git clone https://github.com/m00nk0d3/nexus
-cd nexus
-go build -o nexus.exe ./cmd/nexus
-# Move nexus.exe to a folder that's on your PATH, e.g.:
-Move-Item nexus.exe "$env:USERPROFILE\bin\nexus.exe"
-```
-
-> `make` targets are available via Git Bash or WSL on Windows.
+> Pre-built release archives are also available on the [GitHub Releases page](https://github.com/m00nk0d3/nexus/releases) if you prefer to install manually.
 
 ---
 
