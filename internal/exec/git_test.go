@@ -2,6 +2,7 @@ package exec
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/m00nk0d3/nexus/internal/domain"
@@ -158,6 +159,9 @@ func TestGitCommand_ListWorktrees(t *testing.T) {
 		listErr       error
 		statusOutputs map[string]string // worktree path -> git status --porcelain output
 		statusErr     error
+		// missingPaths overrides stat for specific paths to simulate non-existent dirs.
+		// nil means all paths are treated as existing (default for most test cases).
+		missingPaths  map[string]bool
 		want          []domain.Worktree
 		expectErr     string
 	}{
@@ -244,6 +248,34 @@ func TestGitCommand_ListWorktrees(t *testing.T) {
 			statusErr: errors.New("permission denied"),
 			expectErr: "check worktree status: permission denied",
 		},
+		{
+			name:     "prunable worktree with missing path is marked IsClean false without error",
+			repoPath: "/repo/main",
+			listOutput: "worktree /repo/main\n" +
+				"HEAD cccccccccccccccccccccccccccccccccccccccc\n" +
+				"branch refs/heads/main\n" +
+				"\n" +
+				"worktree /repo/gone\n" +
+				"HEAD dddddddddddddddddddddddddddddddddddddddd\n" +
+				"branch refs/heads/feature\n" +
+				"prunable gitdir file points to non-existent location\n",
+			statusOutputs: map[string]string{"/repo/main": ""},
+			missingPaths:  map[string]bool{"/repo/gone": true},
+			want: []domain.Worktree{
+				{
+					Path:      "/repo/main",
+					CommitSHA: "cccccccccccccccccccccccccccccccccccccccc",
+					Branch:    "main",
+					IsClean:   true,
+				},
+				{
+					Path:      "/repo/gone",
+					CommitSHA: "dddddddddddddddddddddddddddddddddddddddd",
+					Branch:    "feature",
+					IsClean:   false,
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -263,6 +295,13 @@ func TestGitCommand_ListWorktrees(t *testing.T) {
 			}
 
 			cmd := NewGitCommandWithRunner(tt.repoPath, runner)
+			// Stub stat: fake paths are treated as existing unless listed in missingPaths.
+			cmd.stat = func(path string) (os.FileInfo, error) {
+				if tt.missingPaths[path] {
+					return nil, os.ErrNotExist
+				}
+				return nil, nil
+			}
 
 			actual, err := cmd.ListWorktrees()
 

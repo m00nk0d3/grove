@@ -2,6 +2,7 @@ package exec
 
 import (
 	"fmt"
+	"os"
 	osexec "os/exec"
 	"strconv"
 	"strings"
@@ -24,6 +25,9 @@ const (
 type GitCommand struct {
 	repoPath string
 	runner   commandRunner
+	// stat is used to check whether a worktree path exists before running
+	// git status. Defaults to os.Stat; override in tests via withStat.
+	stat func(string) (os.FileInfo, error)
 }
 
 type commandRunner func(repoPath string, args ...string) (string, error)
@@ -38,6 +42,7 @@ func NewGitCommandWithRunner(repoPath string, runner commandRunner) *GitCommand 
 	return &GitCommand{
 		repoPath: repoPath,
 		runner:   runner,
+		stat:     os.Stat,
 	}
 }
 
@@ -67,6 +72,12 @@ func (g *GitCommand) ListWorktrees() ([]domain.Worktree, error) {
 }
 
 func (g *GitCommand) isWorktreeClean(path string) (bool, error) {
+	// Prunable/stale worktrees have a registered path that no longer exists on disk.
+	// Running git status on a missing directory would fail and abort the entire list.
+	// Treat these as "not clean" without propagating an error.
+	if _, err := g.stat(path); os.IsNotExist(err) {
+		return false, nil
+	}
 	output, err := g.runner(path, "status", "--porcelain")
 	if err != nil {
 		return false, fmt.Errorf("check worktree status: %w", err)

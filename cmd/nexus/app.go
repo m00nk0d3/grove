@@ -798,6 +798,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(msg.worktrees) > 0 {
 				m.RepoPath = msg.worktrees[0].Path
 			}
+		} else {
+			m.statusErr = fmt.Sprintf("failed to load worktrees: %v", msg.err)
+			return m, clearErrorCmd()
 		}
 
 	case browserOpenErrMsg:
