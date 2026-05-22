@@ -26,6 +26,7 @@ export function Nav({ className }: NavProps) {
         {/* Links */}
         <div className="hidden items-center gap-6 md:flex">
           {[
+            ['Demo', '#demo'],
             ['Features', '#features'],
             ['Install', '#install'],
             ['Keybindings', '#keybindings'],
