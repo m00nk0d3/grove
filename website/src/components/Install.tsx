@@ -22,12 +22,12 @@ const TABS = [
     label: 'Windows (PowerShell)',
     steps: [
       {
-        comment: '# One-line install',
+        comment: '# One-line install (downloads latest release)',
         code: 'irm https://raw.githubusercontent.com/m00nk0d3/nexus/main/install.ps1 | iex',
       },
       {
-        comment: '# Or with winget',
-        code: 'winget install m00nk0d3.nexus',
+        comment: '# Verify installation',
+        code: 'nexus --version',
       },
     ],
   },
