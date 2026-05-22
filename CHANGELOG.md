@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.5.0] - 2026-05-22
+
+### Added
+
+- **Global fuzzy finder overlay** — press `/` or `Ctrl+F` from anywhere in the TUI to search across worktrees, issues, PRs, files, branches, agent history, and commits simultaneously. Results update in real-time as you type. `Enter` dispatches a smart action per result type (switch worktree, navigate to issue/PR, open file in `$EDITOR`, create worktree from branch). `feat(fuzzy)` (#99)
+
+### Fixed
+
+- **Worktree list went blank when a stale/prunable worktree path no longer existed on disk** — nexus tried to run `git status` on the missing directory, the error bubbled up silently, and the entire list stayed empty. Prunable worktrees are now handled gracefully. `fix(worktree)` (1995002)
+
+### Changed
+
+- **`r` now always fetches fresh data from GitHub** — previously it would respect the cache TTL and return stale data if the cache was still "fresh". Manual refresh now always bypasses the cache and updates it afterwards. `feat(app)` (f85fb3b)
+
 ## [v0.4.3] - 2026-05-21
 
 ### Fixed
