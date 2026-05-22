@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -19,6 +20,7 @@ import (
 	"github.com/m00nk0d3/nexus/internal/data"
 	"github.com/m00nk0d3/nexus/internal/domain"
 	internalexec "github.com/m00nk0d3/nexus/internal/exec"
+	"github.com/m00nk0d3/nexus/internal/fuzzy"
 	"github.com/m00nk0d3/nexus/internal/tui/modal"
 	"github.com/m00nk0d3/nexus/internal/tui/styles"
 	"github.com/m00nk0d3/nexus/internal/updater"
@@ -66,7 +68,8 @@ type lazyLoadContextMsg struct {
 	worktree domain.Worktree
 }
 
-// browserOpenErrMsg carries an error from opening an issue or PR in the browser.
+// browserOpenErrMsg carries an error from launching an external process
+// (browser, editor, gh CLI, etc.).
 type browserOpenErrMsg struct{ err error }
 
 // agentDoneMsg is dispatched when an AI agent process exits.
@@ -103,6 +106,14 @@ type updateCheckedMsg struct {
 
 // selfUpdateDoneMsg carries the result of a self-update attempt.
 type selfUpdateDoneMsg struct{ err error }
+
+// fuzzyOpenMsg is dispatched when the user opens the fuzzy finder.
+type fuzzyOpenMsg struct{}
+
+// fuzzyResultsReadyMsg is dispatched when the async search index build is complete.
+type fuzzyResultsReadyMsg struct {
+	results []domain.SearchResult
+}
 
 // clearErrorCmd returns a Cmd that fires clearErrorMsg after 5 seconds.
 func clearErrorCmd() tea.Cmd {
@@ -307,6 +318,16 @@ type Model struct {
 	// Claude prompt state
 	claudePromptActive bool            // true while the inline Claude prompt is open
 	claudePromptInput  textinput.Model // text input for entering the Claude prompt
+
+	// Fuzzy finder state
+	fuzzyAllItems []domain.SearchResult // full unfiltered search index
+
+	// Fuzzy overlay state
+	fuzzyActive  bool                  // true while the fuzzy finder overlay is open
+	fuzzyInput   textinput.Model       // text input for the fuzzy query
+	fuzzyResults []domain.SearchResult // filtered+ranked results for the current query
+	fuzzySelIdx  int                   // selected result index
+	fuzzyLoading bool                  // true while the search index is being built
 }
 
 // NewModel creates and returns a new Model instance with all required fields initialized.
@@ -332,6 +353,11 @@ func NewModel() *Model {
 		themeIdx:  themeIdx,
 		statusErr: configErr,
 		focused:   panelList,
+		fuzzyInput: func() textinput.Model {
+			ti := textinput.New()
+			ti.Placeholder = "Search worktrees, issues, PRs, files..."
+			return ti
+		}(),
 	}
 }
 
@@ -476,6 +502,47 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Non-key message: fall through to the main switch to handle it normally.
 	}
 
+	// While the fuzzy finder overlay is open, route key events here.
+	// Non-key messages (e.g. fuzzyResultsReadyMsg, tea.WindowSizeMsg) fall
+	// through to the main switch so background events are never dropped.
+	if m.fuzzyActive {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.Type {
+			case tea.KeyEsc:
+				m.fuzzyActive = false
+				m.fuzzyInput.SetValue("")
+				m.fuzzyResults = nil
+				m.fuzzySelIdx = 0
+				return m, nil
+			case tea.KeyEnter:
+				cmd := m.fuzzyConfirmSelection()
+				m.fuzzyActive = false
+				m.fuzzyInput.SetValue("")
+				m.fuzzyResults = nil
+				m.fuzzySelIdx = 0
+				return m, cmd
+			case tea.KeyUp:
+				if m.fuzzySelIdx > 0 {
+					m.fuzzySelIdx--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.fuzzySelIdx < len(m.fuzzyResults)-1 {
+					m.fuzzySelIdx++
+				}
+				return m, nil
+			default:
+				var inputCmd tea.Cmd
+				m.fuzzyInput, inputCmd = m.fuzzyInput.Update(keyMsg)
+				query := m.fuzzyInput.Value()
+				m.fuzzyResults = fuzzy.FilterAndRank(query, m.fuzzyAllItems)
+				m.fuzzySelIdx = 0
+				return m, inputCmd
+			}
+		}
+		// Non-key message: fall through to the main switch.
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// Dismiss any visible error overlay on the next keypress.
@@ -548,6 +615,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.selectedWorktree(); ok {
 				m.activeModal = modal.NewDeleteModal(selected)
 			}
+		case tea.KeyCtrlF:
+			return m, m.openFuzzyCmd()
 		case tea.KeyCtrlR:
 			if m.view != viewPRs {
 				m.statusErr = "PR Review (Ctrl+R) is only available in the PRs view — press P to switch"
@@ -721,6 +790,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.statusErr = "No active session for this worktree"
 				return m, clearErrorCmd()
+			case "/":
+				return m, m.openFuzzyCmd()
 			}
 		}
 
@@ -983,6 +1054,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusMsg = "✓ Updated successfully! Please restart nexus to use the new version."
 		return m, clearMsgCmd()
+
+	case fuzzyOpenMsg:
+		return m, m.buildSearchIndexCmd()
+
+	case fuzzyResultsReadyMsg:
+		m.fuzzyAllItems = msg.results
+		// Always clear the loading flag regardless of whether the overlay is
+		// still open — prevents stale loading state if the user closed the
+		// overlay before the index finished building.
+		m.fuzzyLoading = false
+		// If the overlay is still open, populate results now that the index is ready.
+		if m.fuzzyActive {
+			query := m.fuzzyInput.Value()
+			m.fuzzyResults = fuzzy.FilterAndRank(query, m.fuzzyAllItems)
+			m.fuzzySelIdx = 0
+		}
 	}
 
 	return m, nil
@@ -1025,6 +1112,12 @@ func (m *Model) View() string {
 	if m.claudePromptActive {
 		return overlay("Spawn Claude Code",
 			fmt.Sprintf("> %s\n\nEnter confirm (prompt optional)  •  Esc cancel", m.claudePromptInput.View()))
+	}
+
+	if m.fuzzyActive {
+		theme := styles.NewTheme(styles.Themes[m.themeIdx])
+		overlayContent := renderFuzzyOverlay(m.fuzzyInput, m.fuzzyResults, m.fuzzySelIdx, theme, m.fuzzyLoading, w)
+		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, overlayContent)
 	}
 
 	if m.selfUpdating {
@@ -1913,6 +2006,187 @@ func (m *Model) refreshWorktreesCmd() tea.Cmd {
 	}
 }
 
+// buildSearchIndexCmd builds the unified search index used by the fuzzy finder.
+// It concurrently fetches files, branches, agent history, and commits from the
+// repository, combining them with already-cached worktrees, issues, and PRs.
+// Errors from individual async sources are logged at debug level and skipped —
+// they are non-fatal so that a missing git binary or empty DB does not break
+// the fuzzy finder entirely.
+func (m *Model) buildSearchIndexCmd() tea.Cmd {
+	// Snapshot all model state upfront to avoid data races inside the goroutine.
+	worktrees := make([]domain.Worktree, len(m.Worktrees))
+	copy(worktrees, m.Worktrees)
+	issues := make([]domain.Issue, len(m.issues))
+	copy(issues, m.issues)
+	prs := make([]domain.PullRequest, len(m.prs))
+	copy(prs, m.prs)
+	repoPath := m.RepoPath
+	db := m.db
+
+	return func() tea.Msg {
+		var (
+			mu       sync.Mutex
+			allItems []domain.SearchResult
+			wg       sync.WaitGroup
+		)
+
+		// append is called from goroutines — always hold mu.
+		appendItems := func(items []domain.SearchResult) {
+			mu.Lock()
+			allItems = append(allItems, items...)
+			mu.Unlock()
+		}
+
+		// Seed from cached sources immediately (no I/O required).
+		var cached []domain.SearchResult
+		for _, wt := range worktrees {
+			cached = append(cached, domain.SearchResult{
+				Kind:    domain.KindWorktree,
+				Label:   wt.Path,
+				Sub:     wt.Branch,
+				Icon:    "🌿",
+				Payload: wt,
+			})
+		}
+		for _, iss := range issues {
+			cached = append(cached, domain.SearchResult{
+				Kind:    domain.KindIssue,
+				Label:   iss.Title,
+				Sub:     fmt.Sprintf("#%d", iss.Number),
+				Icon:    "🐛",
+				Payload: iss,
+			})
+		}
+		for _, pr := range prs {
+			cached = append(cached, domain.SearchResult{
+				Kind:    domain.KindPR,
+				Label:   pr.Title,
+				Sub:     fmt.Sprintf("#%d", pr.Number),
+				Icon:    "🔀",
+				Payload: pr,
+			})
+		}
+		appendItems(cached)
+
+		// git ls-files
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := exec.Command("git", "-C", repoPath, "ls-files").Output()
+			if err != nil {
+				slog.Debug("buildSearchIndexCmd: git ls-files failed", "err", err)
+				return
+			}
+			var items []domain.SearchResult
+			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if f == "" {
+					continue
+				}
+				items = append(items, domain.SearchResult{
+					Kind:    domain.KindFile,
+					Label:   f,
+					Sub:     "",
+					Icon:    "📄",
+					Payload: f,
+				})
+			}
+			appendItems(items)
+		}()
+
+		// git branch -a
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := exec.Command("git", "-C", repoPath, "branch", "-a").Output()
+			if err != nil {
+				slog.Debug("buildSearchIndexCmd: git branch -a failed", "err", err)
+				return
+			}
+			var items []domain.SearchResult
+			for _, line := range strings.Split(string(out), "\n") {
+				// Strip leading "* " (current branch marker) or leading spaces.
+				b := strings.TrimPrefix(line, "* ")
+				b = strings.TrimSpace(b)
+				if b == "" {
+					continue
+				}
+				items = append(items, domain.SearchResult{
+					Kind:    domain.KindBranch,
+					Label:   b,
+					Sub:     "",
+					Icon:    "🌿",
+					Payload: b,
+				})
+			}
+			appendItems(items)
+		}()
+
+		// agent history
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if db == nil {
+				return
+			}
+			history, err := data.GetAgentHistory(db)
+			if err != nil {
+				slog.Debug("buildSearchIndexCmd: get agent history failed", "err", err)
+				return
+			}
+			var items []domain.SearchResult
+			for _, h := range history {
+				label := h.Prompt
+				if label == "" {
+					label = h.AgentName
+				}
+				items = append(items, domain.SearchResult{
+					Kind:    domain.KindAgent,
+					Label:   label,
+					Sub:     h.AgentName,
+					Icon:    "🤖",
+					Payload: h,
+				})
+			}
+			appendItems(items)
+		}()
+
+		// git log --oneline -50
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := exec.Command("git", "-C", repoPath, "log", "--oneline", "-50").Output()
+			if err != nil {
+				slog.Debug("buildSearchIndexCmd: git log failed", "err", err)
+				return
+			}
+			var items []domain.SearchResult
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if line == "" {
+					continue
+				}
+				// First token is the hash; the remainder is the message.
+				parts := strings.SplitN(line, " ", 2)
+				hash := parts[0]
+				message := ""
+				if len(parts) == 2 {
+					message = parts[1]
+				}
+				items = append(items, domain.SearchResult{
+					Kind:    domain.KindCommit,
+					Label:   message,
+					Sub:     hash,
+					Icon:    "📦",
+					Payload: hash,
+				})
+			}
+			appendItems(items)
+		}()
+
+		wg.Wait()
+		return fuzzyResultsReadyMsg{results: allItems}
+	}
+}
+
 func (m *Model) selectedWorktree() (domain.Worktree, bool) {
 	if len(m.Worktrees) == 0 || m.selectedIdx < 0 || m.selectedIdx >= len(m.Worktrees) {
 		return domain.Worktree{}, false
@@ -2126,4 +2400,107 @@ func (m *Model) moveUp() {
 			}
 		}
 	}
+}
+
+// fuzzyConfirmSelection navigates the UI to the selected fuzzy result.
+// Returns a Cmd to execute as part of the selection (e.g. spawn a session), or nil.
+func (m *Model) fuzzyConfirmSelection() tea.Cmd {
+	if len(m.fuzzyResults) == 0 || m.fuzzySelIdx >= len(m.fuzzyResults) {
+		return nil
+	}
+	result := m.fuzzyResults[m.fuzzySelIdx]
+	switch result.Kind {
+	case domain.KindWorktree:
+		m.view = viewWorktrees
+		m.ctxScrollOffset = 0
+		m.currentPage = 0
+		if wt, ok := result.Payload.(domain.Worktree); ok {
+			for i, w := range m.Worktrees {
+				if w.Path == wt.Path {
+					m.selectedIdx = i
+					break
+				}
+			}
+		}
+	case domain.KindIssue:
+		m.view = viewIssues
+		m.ctxScrollOffset = 0
+		m.currentPage = 0
+		if iss, ok := result.Payload.(domain.Issue); ok {
+			for i, issue := range m.issues {
+				if issue.Number == iss.Number {
+					m.selectedIssueIdx = i
+					break
+				}
+			}
+		}
+	case domain.KindPR:
+		m.view = viewPRs
+		m.ctxScrollOffset = 0
+		m.currentPage = 0
+		if pr, ok := result.Payload.(domain.PullRequest); ok {
+			for i, p := range m.prs {
+				if p.Number == pr.Number {
+					m.selectedPRIdx = i
+					break
+				}
+			}
+		}
+	case domain.KindFile:
+		if relPath, ok := result.Payload.(string); ok {
+			return openFileInEditorCmd(relPath, m.RepoPath)
+		}
+	case domain.KindBranch:
+		if branch, ok := result.Payload.(string); ok {
+			path := prWorktreePath(m.RepoPath, branch)
+			m.activeModal = modal.NewBranchCheckoutModal(branch, path)
+		}
+	case domain.KindCommit:
+		if hash, ok := result.Payload.(string); ok {
+			return openCommitInBrowserCmd(hash, m.RepoPath)
+		}
+	case domain.KindAgent:
+		// No-op — future: show detail modal.
+	}
+	return nil
+}
+
+// openFuzzyCmd opens the fuzzy finder overlay, triggering a background index build
+// when the search index has not yet been populated.
+func (m *Model) openFuzzyCmd() tea.Cmd {
+	m.fuzzyInput.SetValue("")
+	focusCmd := m.fuzzyInput.Focus()
+	m.fuzzyActive = true
+	m.fuzzySelIdx = 0
+	if len(m.fuzzyAllItems) > 0 {
+		m.fuzzyLoading = false
+		m.fuzzyResults = fuzzy.FilterAndRank("", m.fuzzyAllItems)
+		return focusCmd
+	}
+	m.fuzzyLoading = true
+	m.fuzzyResults = nil
+	return tea.Batch(focusCmd, func() tea.Msg { return fuzzyOpenMsg{} })
+}
+
+// openFileInEditorCmd opens relPath (relative to repoPath) in the user's configured
+// $EDITOR. Falls back to "vi" on Unix-like systems and "notepad" on Windows.
+func openFileInEditorCmd(relPath, repoPath string) tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		if runtime.GOOS == "windows" {
+			editor = "notepad"
+		} else {
+			editor = "vi"
+		}
+	}
+	fullPath := filepath.Join(repoPath, relPath)
+	cmd := exec.Command(editor, fullPath)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
+}
+
+// openCommitInBrowserCmd opens the given commit SHA in the browser via the gh CLI.
+func openCommitInBrowserCmd(hash, repoPath string) tea.Cmd {
+	cmd := exec.Command("gh", "browse", hash)
+	cmd.Dir = repoPath
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
 }

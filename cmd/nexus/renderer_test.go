@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/m00nk0d3/nexus/internal/domain"
@@ -142,7 +143,7 @@ func TestRenderFull_ContainsFooterKeyHints(t *testing.T) {
 	}{
 		{
 			name:   "footer contains navigation and action hints",
-			wantIn: []string{"[Enter] Select", "[t] Settings", "[q/esc] Quit"},
+			wantIn: []string{"[Enter] Select", "[t] Settings", "[/] Fuzzy", "[q/esc]"},
 		},
 		{
 			name:   "action bar contains worktree commands",
@@ -1176,7 +1177,8 @@ func TestRenderFull_FooterContainsTabAndJKHints(t *testing.T) {
 	assert.Contains(t, view, "[j/k]")
 	// Old hints must still be present
 	assert.Contains(t, view, "[Enter] Select")
-	assert.Contains(t, view, "[q/esc] Quit")
+	assert.Contains(t, view, "[q/esc]")
+	assert.Contains(t, view, "[/] Fuzzy")
 }
 
 // ---------------------------------------------------------------------------
@@ -2192,3 +2194,145 @@ func TestPathsEqual_NormalisedComparison(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3: Fuzzy Overlay tests
+// ---------------------------------------------------------------------------
+
+// TestRenderFuzzyOverlay_LoadingState verifies that the loading state shows
+// "Searching..." when no results are available yet.
+func TestRenderFuzzyOverlay_LoadingState(t *testing.T) {
+	theme := styles.NewTheme("digital-noir")
+	ti := textinput.New()
+
+	result := renderFuzzyOverlay(ti, nil, 0, theme, true, 120)
+
+	assert.Contains(t, result, "Searching...")
+}
+
+// TestRenderFuzzyOverlay_EmptyQuery verifies that all items are shown when the
+// query is empty and loading is false.
+func TestRenderFuzzyOverlay_EmptyQuery(t *testing.T) {
+	theme := styles.NewTheme("digital-noir")
+	ti := textinput.New()
+
+	items := []domain.SearchResult{
+		{Kind: domain.KindWorktree, Icon: "🗂", Label: "feat/issue-42-auth", Sub: "worktree"},
+		{Kind: domain.KindIssue, Icon: "📌", Label: "#42 Fix JWT auth", Sub: "#42"},
+	}
+
+	result := renderFuzzyOverlay(ti, items, 0, theme, false, 120)
+
+	assert.Contains(t, result, "feat/issue-42-auth")
+	assert.Contains(t, result, "#42 Fix JWT auth")
+	// Should not show "No results" when there are items
+	assert.NotContains(t, result, "No results")
+}
+
+// TestRenderFuzzyOverlay_NoMatches verifies that "No results" is shown when
+// the results slice is empty and loading is false.
+func TestRenderFuzzyOverlay_NoMatches(t *testing.T) {
+	theme := styles.NewTheme("digital-noir")
+	ti := textinput.New()
+	ti.SetValue("xyzzy-no-match")
+
+	result := renderFuzzyOverlay(ti, nil, 0, theme, false, 120)
+
+	assert.Contains(t, result, "No results")
+}
+
+// TestRenderFuzzyOverlay_ResultsPresent verifies that result rows include the
+// icon, kind badge, label, and sub text.
+func TestRenderFuzzyOverlay_ResultsPresent(t *testing.T) {
+	theme := styles.NewTheme("digital-noir")
+	ti := textinput.New()
+	ti.SetValue("auth")
+
+	items := []domain.SearchResult{
+		{Kind: domain.KindWorktree, Icon: "🗂", Label: "feat/issue-42-auth", Sub: ""},
+		{Kind: domain.KindIssue, Icon: "📌", Label: "Fix auth bug", Sub: "#42"},
+		{Kind: domain.KindPR, Icon: "🔀", Label: "Add auth middleware", Sub: "#38"},
+		{Kind: domain.KindFile, Icon: "📄", Label: "internal/auth/jwt.go", Sub: ""},
+	}
+
+	result := renderFuzzyOverlay(ti, items, 0, theme, false, 120)
+
+	assert.Contains(t, result, "feat/issue-42-auth")
+	assert.Contains(t, result, "Fix auth bug")
+	assert.Contains(t, result, "Add auth middleware")
+	assert.Contains(t, result, "internal/auth/jwt.go")
+	assert.Contains(t, result, "worktree")
+	assert.Contains(t, result, "issue")
+	assert.Contains(t, result, "pr")
+	assert.Contains(t, result, "file")
+}
+
+// TestRenderFuzzyOverlay_SelectedRowDistinct verifies that the selected row
+// index is rendered distinctly from unselected rows (contains the selected label).
+func TestRenderFuzzyOverlay_SelectedRowDistinct(t *testing.T) {
+	theme := styles.NewTheme("digital-noir")
+	ti := textinput.New()
+
+	items := []domain.SearchResult{
+		{Kind: domain.KindWorktree, Icon: "🗂", Label: "worktree-alpha", Sub: ""},
+		{Kind: domain.KindWorktree, Icon: "🗂", Label: "worktree-beta", Sub: ""},
+		{Kind: domain.KindWorktree, Icon: "🗂", Label: "worktree-gamma", Sub: ""},
+	}
+
+	tests := []struct {
+		name        string
+		selIdx      int
+		wantPresent string
+	}{
+		{"first item selected", 0, "worktree-alpha"},
+		{"second item selected", 1, "worktree-beta"},
+		{"third item selected", 2, "worktree-gamma"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := renderFuzzyOverlay(ti, items, tt.selIdx, theme, false, 120)
+			assert.Contains(t, result, tt.wantPresent)
+		})
+	}
+}
+
+// TestRenderFuzzyOverlay_InputVisible verifies the query text appears in the overlay.
+func TestRenderFuzzyOverlay_InputVisible(t *testing.T) {
+	theme := styles.NewTheme("digital-noir")
+	ti := textinput.New()
+	// Don't focus the input in tests — just verify the value is shown.
+	ti.SetValue("jwt")
+
+	items := []domain.SearchResult{
+		{Kind: domain.KindFile, Icon: "📄", Label: "auth/jwt.go", Sub: ""},
+	}
+
+	result := renderFuzzyOverlay(ti, items, 0, theme, false, 120)
+
+	assert.Contains(t, result, "[/]")
+	assert.Contains(t, result, "auth/jwt.go")
+}
+
+// TestRenderFuzzyOverlay_KindBadges verifies that kindBadge returns the expected
+// display string for each known ResultKind.
+func TestRenderFuzzyOverlay_KindBadges(t *testing.T) {
+	tests := []struct {
+		kind domain.ResultKind
+		want string
+	}{
+		{domain.KindWorktree, "worktree"},
+		{domain.KindIssue, "issue"},
+		{domain.KindPR, "pr"},
+		{domain.KindFile, "file"},
+		{domain.KindBranch, "branch"},
+		{domain.KindAgent, "agent"},
+		{domain.KindCommit, "commit"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.kind), func(t *testing.T) {
+			assert.Contains(t, kindBadge(tt.kind), tt.want)
+		})
+	}
+}
+

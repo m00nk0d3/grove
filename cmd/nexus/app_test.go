@@ -3883,3 +3883,270 @@ func TestModel_RKey_NotFiredWithModalOpen(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, result.syncing, "'r' with modal open must NOT set syncing=true")
 }
+
+// TestBuildSearchIndexCmd verifies that buildSearchIndexCmd returns a
+// fuzzyResultsReadyMsg containing results for the cached sources (worktrees,
+// issues, PRs) and gracefully skips the async git/agent sources when there is
+// no real git repository at m.RepoPath.
+func TestBuildSearchIndexCmd(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	// Use a temp dir as the repo path so all git commands fail gracefully.
+	m.RepoPath = t.TempDir()
+
+	m.Worktrees = []domain.Worktree{
+		{Path: "/wt/main", Branch: "main"},
+		{Path: "/wt/feat", Branch: "feat/thing"},
+	}
+	m.issues = []domain.Issue{
+		{Number: 1, Title: "First issue"},
+		{Number: 2, Title: "Second issue"},
+	}
+	m.prs = []domain.PullRequest{
+		{Number: 10, Title: "Fix something", Branch: "fix/something"},
+	}
+
+	cmd := m.buildSearchIndexCmd()
+	require.NotNil(t, cmd, "buildSearchIndexCmd should return a non-nil tea.Cmd")
+
+	// Execute the returned Cmd to obtain the message.
+	msg := cmd()
+
+	ready, ok := msg.(fuzzyResultsReadyMsg)
+	require.True(t, ok, "expected fuzzyResultsReadyMsg, got %T", msg)
+
+	// Count results per kind.
+	kindCounts := map[domain.ResultKind]int{}
+	for _, r := range ready.results {
+		kindCounts[r.Kind]++
+	}
+
+	assert.Equal(t, 2, kindCounts[domain.KindWorktree], "should have 2 worktree results")
+	assert.Equal(t, 2, kindCounts[domain.KindIssue], "should have 2 issue results")
+	assert.Equal(t, 1, kindCounts[domain.KindPR], "should have 1 PR result")
+
+	// Verify a worktree result has the correct fields.
+	var wtResult *domain.SearchResult
+	for i := range ready.results {
+		if ready.results[i].Kind == domain.KindWorktree && ready.results[i].Sub == "main" {
+			wtResult = &ready.results[i]
+			break
+		}
+	}
+	require.NotNil(t, wtResult, "should find worktree result for 'main' branch")
+	assert.Equal(t, "/wt/main", wtResult.Label)
+	assert.Equal(t, "🌿", wtResult.Icon)
+}
+
+// TestUpdate_FuzzyOpenMsg verifies that sending fuzzyOpenMsg to Update() returns
+// a non-nil command (the async search index build).
+func TestUpdate_FuzzyOpenMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+	m.RepoPath = t.TempDir()
+
+	_, cmd := m.Update(fuzzyOpenMsg{})
+	assert.NotNil(t, cmd, "fuzzyOpenMsg should return a non-nil Cmd")
+}
+
+// TestUpdate_FuzzyResultsReadyMsg verifies that fuzzyResultsReadyMsg populates
+// m.fuzzyAllItems and always clears fuzzyLoading, even when the overlay is closed.
+func TestUpdate_FuzzyResultsReadyMsg(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	results := []domain.SearchResult{
+		{Kind: domain.KindFile, Label: "cmd/main.go", Icon: "📄", Payload: "cmd/main.go"},
+		{Kind: domain.KindFile, Label: "internal/app.go", Icon: "📄", Payload: "internal/app.go"},
+		{Kind: domain.KindBranch, Label: "main", Icon: "🌿", Payload: "main"},
+		{Kind: domain.KindBranch, Label: "feat/foo", Icon: "🌿", Payload: "feat/foo"},
+		{Kind: domain.KindWorktree, Label: "/wt/main", Sub: "main", Icon: "🌿", Payload: domain.Worktree{Path: "/wt/main", Branch: "main"}},
+		{Kind: domain.KindIssue, Label: "Fix bug", Sub: "#1", Icon: "🐛", Payload: domain.Issue{Number: 1, Title: "Fix bug"}},
+	}
+
+	updated, cmd := m.Update(fuzzyResultsReadyMsg{results: results})
+	assert.Nil(t, cmd, "fuzzyResultsReadyMsg should return nil Cmd")
+
+	result, ok := updated.(*Model)
+	require.True(t, ok)
+
+	assert.Len(t, result.fuzzyAllItems, 6, "fuzzyAllItems should contain all 6 results")
+}
+
+// TestUpdate_FuzzyResultsReadyMsg_ClearsLoadingWhenOverlayClosed verifies that
+// fuzzyLoading is reset to false even when the overlay is not currently open.
+func TestUpdate_FuzzyResultsReadyMsg_ClearsLoadingWhenOverlayClosed(t *testing.T) {
+	m := NewModel()
+	require.NotNil(t, m)
+
+	// Simulate: user opened overlay, triggering async build, then closed before results arrived.
+	m.fuzzyLoading = true
+	m.fuzzyActive = false
+
+	_, _ = m.Update(fuzzyResultsReadyMsg{results: []domain.SearchResult{}})
+
+	assert.False(t, m.fuzzyLoading, "fuzzyLoading must be cleared even when overlay is closed")
+}
+
+// ---------------------------------------------------------------------------
+// fuzzy keybinding tests
+// ---------------------------------------------------------------------------
+
+// TestFuzzyOpensOnSlash verifies that pressing "/" activates the fuzzy overlay.
+func TestFuzzyOpensOnSlash(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = t.TempDir()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	result := updated.(*Model)
+
+	assert.True(t, result.fuzzyActive, "'/' should activate the fuzzy overlay")
+}
+
+// TestFuzzyOpensOnCtrlF verifies that Ctrl+F activates the fuzzy overlay.
+func TestFuzzyOpensOnCtrlF(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = t.TempDir()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	result := updated.(*Model)
+
+	assert.True(t, result.fuzzyActive, "Ctrl+F should activate the fuzzy overlay")
+}
+
+// ---------------------------------------------------------------------------
+// fuzzyConfirmSelection tests
+// ---------------------------------------------------------------------------
+
+func TestFuzzyConfirmSelection_EmptyResults_ReturnsNil(t *testing.T) {
+	m := NewModel()
+	m.fuzzyResults = nil
+	cmd := m.fuzzyConfirmSelection()
+	assert.Nil(t, cmd)
+}
+
+func TestFuzzyConfirmSelection_IdxOutOfBounds_ReturnsNil(t *testing.T) {
+	m := NewModel()
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindFile, Label: "x.go", Icon: "📄", Payload: "x.go"},
+	}
+	m.fuzzySelIdx = 5
+	cmd := m.fuzzyConfirmSelection()
+	assert.Nil(t, cmd)
+}
+
+func TestFuzzyConfirmSelection_WorktreeSelection(t *testing.T) {
+	m := NewModel()
+	m.Worktrees = []domain.Worktree{
+		{Path: "/wt/alpha", Branch: "feat/alpha"},
+		{Path: "/wt/beta", Branch: "feat/beta"},
+	}
+	m.view = viewIssues // start on a different view
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindWorktree, Label: "/wt/beta", Sub: "feat/beta", Icon: "🌿", Payload: domain.Worktree{Path: "/wt/beta", Branch: "feat/beta"}},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd, "worktree selection returns no async Cmd")
+	assert.Equal(t, viewWorktrees, m.view, "should switch to worktrees view")
+	assert.Equal(t, 1, m.selectedIdx, "should select /wt/beta (index 1)")
+	assert.Equal(t, 0, m.ctxScrollOffset)
+	assert.Equal(t, 0, m.currentPage)
+}
+
+func TestFuzzyConfirmSelection_IssueSelection(t *testing.T) {
+	m := NewModel()
+	m.issues = []domain.Issue{
+		{Number: 1, Title: "First"},
+		{Number: 42, Title: "Fix auth"},
+	}
+	m.view = viewWorktrees
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindIssue, Label: "Fix auth", Sub: "#42", Icon: "🐛", Payload: domain.Issue{Number: 42, Title: "Fix auth"}},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, viewIssues, m.view)
+	assert.Equal(t, 1, m.selectedIssueIdx, "should select issue at index 1 (Number=42)")
+}
+
+func TestFuzzyConfirmSelection_PRSelection(t *testing.T) {
+	m := NewModel()
+	m.prs = []domain.PullRequest{
+		{Number: 10, Title: "First PR"},
+		{Number: 20, Title: "Add feature"},
+	}
+	m.view = viewWorktrees
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindPR, Label: "Add feature", Sub: "#20", Icon: "🔀", Payload: domain.PullRequest{Number: 20, Title: "Add feature"}},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, viewPRs, m.view)
+	assert.Equal(t, 1, m.selectedPRIdx, "should select PR at index 1 (Number=20)")
+}
+
+func TestFuzzyConfirmSelection_FileSelection_ReturnsCmd(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = "/repo"
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindFile, Label: "internal/auth.go", Icon: "📄", Payload: "internal/auth.go"},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.NotNil(t, cmd, "file selection should return an exec Cmd")
+	assert.Empty(t, m.statusMsg, "file selection should not set statusMsg")
+}
+
+func TestFuzzyConfirmSelection_BranchSelection_OpensModal(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = "/repo/main"
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindBranch, Label: "feat/login", Icon: "🌿", Payload: "feat/login"},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd, "branch selection should return nil Cmd (modal handles the action)")
+	assert.NotNil(t, m.activeModal, "branch selection should open a BranchCheckoutModal")
+}
+
+func TestFuzzyConfirmSelection_AgentSelection_IsNoOp(t *testing.T) {
+	m := NewModel()
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindAgent, Label: "fix the null pointer", Icon: "🤖", Payload: data.AgentRun{AgentName: "copilot", Prompt: "fix the null pointer"}},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.Nil(t, cmd, "agent selection is a no-op")
+	assert.Empty(t, m.statusMsg, "agent selection should not set statusMsg")
+}
+
+func TestFuzzyConfirmSelection_CommitSelection_ReturnsCmd(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = "/repo"
+	m.fuzzyResults = []domain.SearchResult{
+		{Kind: domain.KindCommit, Label: "add jwt middleware", Icon: "📦", Payload: "abc1234"},
+	}
+	m.fuzzySelIdx = 0
+
+	cmd := m.fuzzyConfirmSelection()
+
+	assert.NotNil(t, cmd, "commit selection should return a gh browse Cmd")
+	assert.Empty(t, m.statusMsg, "commit selection should not set statusMsg")
+}
+

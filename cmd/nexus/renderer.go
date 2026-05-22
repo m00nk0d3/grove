@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 	libtable "github.com/charmbracelet/lipgloss/table"
 	"github.com/charmbracelet/x/ansi"
@@ -18,9 +19,9 @@ import (
 )
 
 const (
-	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Space] Agents | [t] Settings | [g] GH | [q/esc] Quit"
-	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [t] Settings | [g] GH | [q/esc] Quit"
-	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [Ctrl+R] Review | [t] Settings | [g] GH | [q/esc] Quit"
+	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Spc] Agents | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
+	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
+	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [Ctrl+R] Review | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
 	footerHintsDefault   = footerHintsWorktrees
 	actionBarHints       = "[enter] Open  [c-d] Delete  [c-l] Lock | [f1] Help"
 	defaultTermWidth     = 120
@@ -1233,4 +1234,169 @@ func buildPRHint(branch string, issues []domain.Issue, worktrees []domain.Worktr
 		}
 	}
 	return ""
+}
+
+// kindBadge returns a short display label for the given result kind.
+func kindBadge(k domain.ResultKind) string {
+	switch k {
+	case domain.KindWorktree:
+		return "worktree"
+	case domain.KindIssue:
+		return "issue"
+	case domain.KindPR:
+		return "pr"
+	case domain.KindFile:
+		return "file"
+	case domain.KindBranch:
+		return "branch"
+	case domain.KindAgent:
+		return "agent"
+	case domain.KindCommit:
+		return "commit"
+	default:
+		return string(k)
+	}
+}
+
+// renderFuzzyOverlay renders the floating fuzzy finder panel.
+//
+// Layout:
+//
+//	╭──────────────────────────────────────────╮
+//	│  > [input text]                     [/]  │
+//	│──────────────────────────────────────────│
+//	│  🗂 worktree  feat/issue-42-auth         │
+//	│  📌 issue     #42  Fix JWT auth...       │
+//	╰──────────────────────────────────────────╯
+func renderFuzzyOverlay(input textinput.Model, results []domain.SearchResult, selIdx int, theme styles.Theme, loading bool, termWidth int) string {
+	const maxVisible = 12
+
+	overlayWidth := termWidth - 8
+	if overlayWidth < 40 {
+		overlayWidth = 40
+	}
+	if overlayWidth > 100 {
+		overlayWidth = 100
+	}
+
+	// Inner content width: overlayWidth minus border (2) minus padding (2).
+	innerWidth := overlayWidth - 4
+
+	accentColor := lipgloss.Color(theme.Accent())
+	mutedColor := lipgloss.Color(theme.Muted())
+	fgColor := lipgloss.Color(theme.Fg())
+	bgColor := lipgloss.Color(theme.Bg())
+
+	// Header row: "  > [input]  [/]"
+	badge := lipgloss.NewStyle().
+		Foreground(accentColor).
+		Bold(true).
+		Render("[/]")
+	prompt := lipgloss.NewStyle().
+		Foreground(accentColor).
+		Render("> ")
+	inputView := input.View()
+	// Available width for the input field itself (subtract prompt + badge + spaces).
+	inputAreaWidth := innerWidth - lipgloss.Width(prompt) - lipgloss.Width(badge) - 2
+	if inputAreaWidth < 1 {
+		inputAreaWidth = 1
+	}
+	inputLine := lipgloss.NewStyle().
+		Width(innerWidth).
+		Render(prompt + truncateStr(inputView, inputAreaWidth) + "  " + badge)
+
+	divider := lipgloss.NewStyle().
+		Foreground(mutedColor).
+		Render(strings.Repeat("─", innerWidth))
+
+	// Build result rows.
+	var rows strings.Builder
+	switch {
+	case loading:
+		rows.WriteString(lipgloss.NewStyle().
+			Foreground(mutedColor).
+			Italic(true).
+			Width(innerWidth).
+			Render("Searching..."))
+	case len(results) == 0:
+		rows.WriteString(lipgloss.NewStyle().
+			Foreground(mutedColor).
+			Italic(true).
+			Width(innerWidth).
+			Render("No results"))
+	default:
+		visible := results
+		if len(visible) > maxVisible {
+			visible = visible[:maxVisible]
+		}
+		for i, r := range visible {
+			icon := r.Icon
+			badge := lipgloss.NewStyle().
+				Foreground(mutedColor).
+				Width(8).
+				Render(kindBadge(r.Kind))
+			label := r.Label
+			sub := r.Sub
+
+			// Compute available width for label + sub text.
+			iconW := runewidth.StringWidth(icon)
+			badgeW := lipgloss.Width(badge)
+			// "  " (2) between icon and badge, "  " (2) after badge, "  " (2) between label and sub.
+			fixedW := iconW + 2 + badgeW + 2
+			remaining := innerWidth - fixedW
+			if remaining < 1 {
+				remaining = 1
+			}
+			// Split remaining: 60% label, 40% sub.
+			labelW := (remaining * 60) / 100
+			subW := remaining - labelW
+			if subW < 4 {
+				subW = 0
+				labelW = remaining
+			}
+
+			labelStr := lipgloss.NewStyle().Width(labelW).Render(truncateStr(label, labelW))
+			subStr := ""
+			if subW > 0 {
+				subStr = lipgloss.NewStyle().
+					Foreground(mutedColor).
+					Width(subW).
+					Render(truncateStr(sub, subW))
+			}
+
+			line := fmt.Sprintf("%s  %s  %s%s", icon, badge, labelStr, subStr)
+
+			if i == selIdx {
+				line = lipgloss.NewStyle().
+					Background(lipgloss.Color(theme.Accent())).
+					Foreground(bgColor).
+					Bold(true).
+					Width(innerWidth).
+					Render(line)
+			} else {
+				line = lipgloss.NewStyle().
+					Foreground(fgColor).
+					Width(innerWidth).
+					Render(line)
+			}
+
+			if i > 0 {
+				rows.WriteString("\n")
+			}
+			rows.WriteString(line)
+		}
+		if len(results) > maxVisible {
+			more := fmt.Sprintf("…and %d more", len(results)-maxVisible)
+			rows.WriteString("\n" + lipgloss.NewStyle().Foreground(mutedColor).Width(innerWidth).Render(more))
+		}
+	}
+
+	content := inputLine + "\n" + divider + "\n" + rows.String()
+
+	return lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(accentColor).
+		Padding(0, 1).
+		Width(overlayWidth - 2). // -2: rounded border left+right
+		Render(content)
 }
