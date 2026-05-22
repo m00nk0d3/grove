@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0a0e27;
+  --color-surface: #0d1117;
+  --color-surface-2: #111827;
+  --color-border: #1e2a3a;
+  --color-accent: #00d9ff;
+  --color-accent-dim: #00a8c8;
+  --color-fg: #e2e8f0;
+  --color-muted: #4a5568;
+  --color-success: #00ff88;
+  --color-warning: #ffd700;
+  --color-danger: #ff4757;
+
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --font-sans: "Inter", system-ui, sans-serif;
+}
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background-color: #0a0e27;
+    color: #e2e8f0;
+    font-family: "Inter", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: rgba(0,217,255,0.25); }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: #0d1117; }
+  ::-webkit-scrollbar-thumb { background: #1e2a3a; border-radius: 3px; }
+}
+
+@layer utilities {
+  .glow-accent { text-shadow: 0 0 24px rgba(0,217,255,0.7); }
+  .glow-box { box-shadow: 0 0 0 1px rgba(0,217,255,0.15), 0 0 40px rgba(0,217,255,0.08); }
+  .glow-box-hover:hover { box-shadow: 0 0 0 1px rgba(0,217,255,0.35), 0 0 50px rgba(0,217,255,0.18); }
+  .scanline {
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,217,255,0.015) 2px,
+      rgba(0,217,255,0.015) 4px
+    );
+  }
+}
