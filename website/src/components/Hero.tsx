@@ -32,7 +32,7 @@ export function Hero() {
         className="mb-6 flex items-center gap-2 rounded-full border border-[#00d9ff]/20 bg-[#00d9ff]/5 px-4 py-1.5"
       >
         <span className="h-2 w-2 animate-pulse rounded-full bg-[#00ff88]" />
-        <span className="font-mono text-xs text-[#00d9ff]/80">v0.5.0 — Now with global fuzzy finder</span>
+        <span className="font-mono text-xs text-[#00d9ff]/80">v0.6.0 — Now with global fuzzy finder</span>
       </motion.div>
 
       {/* Headline */}
@@ -72,7 +72,7 @@ export function Hero() {
           className="group relative overflow-hidden rounded border border-[#00d9ff] bg-[#00d9ff]/10 px-8 py-3 font-mono text-sm font-medium text-[#00d9ff] transition-all hover:bg-[#00d9ff]/20"
           style={{ boxShadow: '0 0 30px rgba(0,217,255,0.2)' }}
         >
-          <span className="relative z-10">↓ Download v0.5.0</span>
+          <span className="relative z-10">↓ Download v0.6.0</span>
           <div className="absolute inset-0 translate-x-[-100%] bg-gradient-to-r from-transparent via-[#00d9ff]/10 to-transparent transition-transform duration-700 group-hover:translate-x-[100%]" />
         </a>
         <a

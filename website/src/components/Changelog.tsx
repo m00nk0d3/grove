@@ -2,10 +2,22 @@
 
 const RELEASES = [
   {
-    version: 'v0.5.0',
-    date: '2025',
+    version: 'v0.6.0',
+    date: '2026',
     tag: 'Latest',
     tagColor: '#00ff88',
+    highlights: [
+      'Ctrl+B cleanup modal — bulk-delete stale worktrees and branches in one shot',
+      'One-liner install scripts for Unix (install.sh) and Windows (install.ps1)',
+      'GitHub Pages landing site with live demo, install instructions, and favicon',
+      'Fix: r key now always forces a fresh remote fetch, bypassing cache TTL',
+    ],
+  },
+  {
+    version: 'v0.5.0',
+    date: '2025',
+    tag: 'Stable',
+    tagColor: '#00d9ff',
     highlights: [
       'Global fuzzy finder (/ or Ctrl+F) — search worktrees, issues, PRs, branches, and agent sessions',
       'Fuzzy results navigate directly to relevant worktrees and GitHub context',

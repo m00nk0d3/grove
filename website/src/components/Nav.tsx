@@ -16,10 +16,10 @@ export function Nav({ className }: NavProps) {
         {/* Logo */}
         <a href="#" className="flex items-center gap-2">
           <span className="font-mono text-xl font-bold tracking-widest text-[#00d9ff] glow-accent">
-            NEXUS
+            GROVE
           </span>
           <span className="rounded border border-[#00d9ff]/30 px-1.5 py-0.5 font-mono text-[10px] text-[#00d9ff]/70">
-            v0.5.0
+            v0.6.0
           </span>
         </a>
 

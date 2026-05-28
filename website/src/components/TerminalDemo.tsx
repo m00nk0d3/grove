@@ -4,7 +4,7 @@ const FRAMES: { prompt: string; output: string[] }[] = [
   {
     prompt: 'grove',
     output: [
-      '  NEXUS v0.5.0  ·  m00nk0d3/grove',
+      '  GROVE v0.6.0  ·  m00nk0d3/grove',
       '',
       '  Worktrees                    Sessions',
       '  ─────────────────────────    ─────────────',
