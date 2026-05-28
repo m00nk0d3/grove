@@ -1,4 +1,4 @@
-//go:build !windows
+﻿//go:build !windows
 
 package main
 
@@ -20,7 +20,7 @@ func setWindowsCmdLine(_ *exec.Cmd, _ string) {}
 // whether the tab is still open. Returns the shell PID, or 0 if the PID could
 // not be determined within 3 seconds.
 func spawnTerminalWindow(path string) (int, error) {
-	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-session-%d.pid", time.Now().UnixNano()))
+	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("grove-session-%d.pid", time.Now().UnixNano()))
 
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, "", pidFile, runtime.GOOS); ok {
 		if err := tabCmd.Start(); err == nil {
@@ -49,7 +49,7 @@ func spawnTerminalWindow(path string) (int, error) {
 
 // spawnAgentInTerminalWindow launches agentCmd at path, preferring a new tab
 // in the current terminal emulator when possible, falling back to a new window.
-// The TUI is not suspended — nexus keeps running in the original terminal.
+// The TUI is not suspended — grove keeps running in the original terminal.
 // Agent processes are tracked via AgentPID, not ShellPID, so no PID file is used.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, agentCmd, "", runtime.GOOS); ok {

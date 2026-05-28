@@ -1,12 +1,12 @@
-# Nexus Runbook
+﻿# Grove Runbook
 
-This runbook covers day-to-day operation of Nexus and the expected procedures around setup, configuration, troubleshooting, and maintenance.
+This runbook covers day-to-day operation of Grove and the expected procedures around setup, configuration, troubleshooting, and maintenance.
 
 ---
 
 ## Developer Setup
 
-This section is for contributors building and running Nexus from source.
+This section is for contributors building and running Grove from source.
 
 ### Prerequisites
 
@@ -19,8 +19,8 @@ This section is for contributors building and running Nexus from source.
 ### Clone the repository
 
 ```bash
-git clone https://github.com/m00nk0d3/nexus
-cd nexus
+git clone https://github.com/m00nk0d3/grove
+cd grove
 ```
 
 ### Build
@@ -32,21 +32,21 @@ go build ./...
 ### Run (without installing)
 
 ```bash
-go run ./cmd/nexus
+go run ./cmd/grove
 ```
 
-Run from inside a Git repository, otherwise Nexus will warn that no worktrees are available.
+Run from inside a Git repository, otherwise Grove will warn that no worktrees are available.
 
 ### Build a versioned binary
 
 ```bash
 go build \
-    -ldflags "-X github.com/m00nk0d3/nexus/internal/version.Version=v0.1.0" \
-    -o nexus \
-    ./cmd/nexus
+    -ldflags "-X github.com/m00nk0d3/grove/internal/version.Version=v0.1.0" \
+    -o grove \
+    ./cmd/grove
 ```
 
-Move the resulting `nexus` binary to a directory on your `PATH`.
+Move the resulting `grove` binary to a directory on your `PATH`.
 
 ### Run tests
 
@@ -71,11 +71,11 @@ Releases are automated via [GoReleaser](https://goreleaser.com/) and triggered b
 
 ## Purpose
 
-Nexus is a terminal UI for managing Git worktrees, syncing GitHub data, and launching AI coding agents with the right repository context.
+Grove is a terminal UI for managing Git worktrees, syncing GitHub data, and launching AI coding agents with the right repository context.
 
 ## Current status
 
-Nexus is fully implemented and shipping. The latest release is available on the [GitHub Releases page](https://github.com/m00nk0d3/nexus/releases). See `CHANGELOG.md` for the full version history.
+Grove is fully implemented and shipping. The latest release is available on the [GitHub Releases page](https://github.com/m00nk0d3/grove/releases). See `CHANGELOG.md` for the full version history.
 
 ## Owners
 
@@ -94,15 +94,15 @@ Nexus is fully implemented and shipping. The latest release is available on the 
 
 1. Clone the repository.
 2. Ensure `gh auth status` succeeds.
-3. Create the Nexus config directory: `~/.nexus/`
-4. Add `~/.nexus/config.toml`
-5. Start Nexus from the root of a git repository
+3. Create the Grove config directory: `~/.grove/`
+4. Add `~/.grove/config.toml`
+5. Start Grove from the root of a git repository
 
 ## Configuration
 
 Primary config file:
 
-`~/.nexus/config.toml`
+`~/.grove/config.toml`
 
 Key settings:
 
@@ -156,7 +156,7 @@ Key settings:
 
 ## Troubleshooting
 
-### Nexus will not start
+### Grove will not start
 
 Check:
 
@@ -198,7 +198,7 @@ Check:
 
 ### Corrupted local config
 
-1. Back up `~/.nexus/`.
+1. Back up `~/.grove/`.
 2. Remove or repair the broken TOML file.
 3. Restart with a minimal config.
 
@@ -212,17 +212,17 @@ Check:
 
 Back up:
 
-- `~/.nexus/config.toml`
+- `~/.grove/config.toml`
 - SQLite cache or local database files
-- logs under `~/.nexus/logs/`
+- logs under `~/.grove/logs/`
 
-Restore by copying the files back into the same paths and restarting Nexus.
+Restore by copying the files back into the same paths and restarting Grove.
 
 ## Logging
 
 Operational logs should live under:
 
-`~/.nexus/logs/nexus.log`
+`~/.grove/logs/grove.log`
 
 Use logs for:
 
@@ -250,5 +250,5 @@ Use logs for:
 ## Open questions
 
 - Should local persistence use a single SQLite file or separate caches?
-- Should Nexus prefer `gh` auth only, or allow PAT fallback by default?
+- Should Grove prefer `gh` auth only, or allow PAT fallback by default?
 - Should the app resume to the original shell context after agent launch or keep a visible handoff screen?

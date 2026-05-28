@@ -1,4 +1,4 @@
-package modal
+﻿package modal
 
 import (
 	"fmt"
@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/m00nk0d3/nexus/internal/tui/styles"
-	"github.com/m00nk0d3/nexus/internal/version"
+	"github.com/m00nk0d3/grove/internal/tui/styles"
+	"github.com/m00nk0d3/grove/internal/version"
 )
 
 type helpTab int
@@ -388,7 +388,7 @@ GitHub authentication failure
 Agent not found (Claude / Copilot / Aider)
   Symptom: "binary not found" error when spawning an agent.
   Fix: Install the missing tool, or disable it in config:
-    ~/.nexus/config.toml  →  ai_agents.claude_enabled = false
+    ~/.grove/config.toml  →  ai_agents.claude_enabled = false
   For Claude: https://docs.anthropic.com/en/docs/claude-code
   For Copilot: gh extension install github/gh-copilot
 
@@ -404,14 +404,14 @@ Worktree list is stale
 
 Config not loading
   Symptom: Warning banner on startup.
-  Fix: Check  ~/.nexus/config.toml  for TOML syntax errors.
+  Fix: Check  ~/.grove/config.toml  for TOML syntax errors.
   Delete or reset the file to restore defaults.`
 
 func aboutContent() string {
 	return fmt.Sprintf(`NEXUS — Git Worktree Orchestrator & AI Agent Hub
 
 Version:   %s
-Repo:      github.com/m00nk0d3/nexus
+Repo:      github.com/m00nk0d3/grove
 License:   MIT
 
 Built with the Charm.sh ecosystem:

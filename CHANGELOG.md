@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **Ctrl+B cleanup modal for stale worktrees and branches** — press `Ctrl+B` from the TUI to surface a modal listing stale/prunable worktrees and their associated branches. Lets you bulk-delete the mess you left behind. `feat(tui)` (#107) (4d79ec2)
-- **One-liner install scripts** — `install.sh` (Unix) and `install.ps1` (Windows) so you can get nexus running without touching `go install` or release assets manually. `feat(install)` (b5835f2)
-- **GitHub Pages landing site** — nexus now has a real homepage with a live demo GIF, install instructions, and a fancy favicon. `feat(website)` (11ec084, 75c5196)
+- **One-liner install scripts** — `install.sh` (Unix) and `install.ps1` (Windows) so you can get grove running without touching `go install` or release assets manually. `feat(install)` (b5835f2)
+- **GitHub Pages landing site** — grove now has a real homepage with a live demo GIF, install instructions, and a fancy favicon. `feat(website)` (11ec084, 75c5196)
 
 ### Fixed
 
@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **Worktree list went blank when a stale/prunable worktree path no longer existed on disk** — nexus tried to run `git status` on the missing directory, the error bubbled up silently, and the entire list stayed empty. Prunable worktrees are now handled gracefully. `fix(worktree)` (1995002)
+- **Worktree list went blank when a stale/prunable worktree path no longer existed on disk** — grove tried to run `git status` on the missing directory, the error bubbled up silently, and the entire list stayed empty. Prunable worktrees are now handled gracefully. `fix(worktree)` (1995002)
 
 ### Changed
 
@@ -44,9 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **Worktree creation threw a fit on repos that use `master` instead of `main`** — nexus was hardcoding `main` as the base branch like it was 2018. Now it asks the remote what the actual default branch is. `master`, `main`, `trunk`, whatever — it handles it. `fix(worktree)` (f1dc5c3)
-- **Auto-updater silently died when nexus was installed in `/usr/bin`** — it tried to rename a root-owned binary, got EACCES, and just... said nothing useful. Now it stages the downloaded binary to `~/.cache/nexus/nexus.staged` and tells you exactly what `sudo` command to run. `fix(updater)` (4874f40)
-- **Issues list was mixing up projects** — the GitHub cache had no repo scoping, so running nexus from nova showed nexus issues and vice versa. Cache now keyed by repo path. Your issues stay in your lane. `fix(cache)` (e5cc91e)
+- **Worktree creation threw a fit on repos that use `master` instead of `main`** — grove was hardcoding `main` as the base branch like it was 2018. Now it asks the remote what the actual default branch is. `master`, `main`, `trunk`, whatever — it handles it. `fix(worktree)` (f1dc5c3)
+- **Auto-updater silently died when grove was installed in `/usr/bin`** — it tried to rename a root-owned binary, got EACCES, and just... said nothing useful. Now it stages the downloaded binary to `~/.cache/grove/grove.staged` and tells you exactly what `sudo` command to run. `fix(updater)` (4874f40)
+- **Issues list was mixing up projects** — the GitHub cache had no repo scoping, so running grove from nova showed grove issues and vice versa. Cache now keyed by repo path. Your issues stay in your lane. `fix(cache)` (e5cc91e)
 
 ## [v0.4.2] - 2026-05-20
 
@@ -58,13 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **Linux threw a full tantrum when nexus tried to update itself** — turns out Linux gets *real* possessive about executables that are currently running (ETXTBSY — aka "no bro you literally cannot replace yourself while you exist"). Self-update now writes to a temp file and swaps atomically so Linux stops having an existential crisis mid-update. `fix(updater)` (f2dd7c7)
+- **Linux threw a full tantrum when grove tried to update itself** — turns out Linux gets *real* possessive about executables that are currently running (ETXTBSY — aka "no bro you literally cannot replace yourself while you exist"). Self-update now writes to a temp file and swaps atomically so Linux stops having an existential crisis mid-update. `fix(updater)` (f2dd7c7)
 
 ## [v0.4.0] - 2026-05-20
 
 ### Added
 
-- **Your AI bro can now review PRs like a senior dev at 2am** — nexus auto-provisions a worktree, drops into it, and fires up Copilot for an AI-assisted PR review. No more context-switching to a browser like an animal. `feat(tui)` (eda6eb8)
+- **Your AI bro can now review PRs like a senior dev at 2am** — grove auto-provisions a worktree, drops into it, and fires up Copilot for an AI-assisted PR review. No more context-switching to a browser like an animal. `feat(tui)` (eda6eb8)
 - **Enter actually does something useful on issues & PRs now** — pressing Enter on an issue or PR that already has a session jumps straight to it instead of making you feel lost. Muscle memory: restored. `feat(sessions)` (3063a9f)
 
 ### Fixed

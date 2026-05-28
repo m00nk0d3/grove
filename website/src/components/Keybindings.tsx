@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+﻿import { motion } from 'framer-motion'
 
 const GROUPS = [
   {
@@ -46,7 +46,7 @@ const GROUPS = [
       { key: 't', desc: 'Open settings / cycle theme' },
       { key: 'u', desc: 'Check for updates' },
       { key: 'f1 / ?', desc: 'Open help modal' },
-      { key: 'q / Ctrl+C', desc: 'Quit Nexus' },
+      { key: 'q / Ctrl+C', desc: 'Quit Grove' },
     ],
   },
 ]
@@ -67,7 +67,7 @@ export function Keybindings() {
           <p className="mt-4 text-[#4a5568]">
             Press <kbd className="rounded border border-[#1e2a3a] bg-[#0d1117] px-1.5 py-0.5 font-mono text-xs text-[#e2e8f0]">f1</kbd> or{' '}
             <kbd className="rounded border border-[#1e2a3a] bg-[#0d1117] px-1.5 py-0.5 font-mono text-xs text-[#e2e8f0]">?</kbd>{' '}
-            inside Nexus to view these live.
+            inside Grove to view these live.
           </p>
         </motion.div>
 

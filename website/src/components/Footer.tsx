@@ -1,4 +1,4 @@
-export function Footer() {
+﻿export function Footer() {
   const year = new Date().getFullYear()
 
   return (
@@ -38,7 +38,7 @@ export function Footer() {
             </a>
 
             <a
-              href="https://github.com/m00nk0d3/nexus"
+              href="https://github.com/m00nk0d3/grove"
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono text-sm text-[#4a5568] transition-colors hover:text-[#00d9ff]"
@@ -47,7 +47,7 @@ export function Footer() {
             </a>
 
             <a
-              href="https://github.com/m00nk0d3/nexus/blob/main/CHANGELOG.md"
+              href="https://github.com/m00nk0d3/grove/blob/main/CHANGELOG.md"
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono text-sm text-[#4a5568] transition-colors hover:text-[#00d9ff]"
@@ -56,7 +56,7 @@ export function Footer() {
             </a>
 
             <a
-              href="https://github.com/m00nk0d3/nexus/releases"
+              href="https://github.com/m00nk0d3/grove/releases"
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono text-sm text-[#4a5568] transition-colors hover:text-[#00d9ff]"

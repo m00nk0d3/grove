@@ -1,4 +1,4 @@
-package modal
+﻿package modal
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/m00nk0d3/nexus/internal/tui/styles"
+	"github.com/m00nk0d3/grove/internal/tui/styles"
 )
 
 const changelogMaxLines = 15
@@ -72,7 +72,7 @@ func (m *UpdateModal) View() string {
 		return st.Render(s)
 	}
 
-	b.WriteString("🚀 A shiny new version of nexus just dropped!\n\n")
+	b.WriteString("🚀 A shiny new version of grove just dropped!\n\n")
 	b.WriteString(fmt.Sprintf("  Running:   %s\n", m.current))
 	b.WriteString(fmt.Sprintf("  Available: %s\n", m.latest))
 
@@ -97,7 +97,7 @@ func (m *UpdateModal) View() string {
 
 	if m.activeSessions > 0 {
 		b.WriteString(fmt.Sprintf(
-			"\n%s  %d active session(s) vibing right now — they'll be fine,\n   but give nexus a restart after the update.\n",
+			"\n%s  %d active session(s) vibing right now — they'll be fine,\n   but give grove a restart after the update.\n",
 			styled(warnSt, "⚠"), m.activeSessions,
 		))
 	}

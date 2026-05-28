@@ -9,7 +9,7 @@ import (
 )
 
 const testChangelog = "## Changes\n- Fixed stuff\n- Added cool things"
-const testHTMLURL = "https://github.com/m00nk0d3/nexus/releases/v1.2.3"
+const testHTMLURL = "https://github.com/m00nk0d3/grove/releases/v1.2.3"
 
 func TestUpdateModal_Title(t *testing.T) {
 	m := NewUpdateModal("v1.0.0", "v1.2.3", "", "", 0)

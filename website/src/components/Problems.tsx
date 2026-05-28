@@ -1,25 +1,25 @@
-import { motion } from 'framer-motion'
+﻿import { motion } from 'framer-motion'
 
 const PROBLEMS = [
   {
     icon: '🔀',
     title: 'Context-switching hell',
-    body: 'Stashing changes, checking out branches, losing your editor state. Git worktrees solve this — but the CLI is clunky. Nexus puts your entire worktree landscape on one screen.',
+    body: 'Stashing changes, checking out branches, losing your editor state. Git worktrees solve this — but the CLI is clunky. Grove puts your entire worktree landscape on one screen.',
   },
   {
     icon: '🪟',
     title: 'The five-app shuffle',
-    body: 'Terminal for git, browser for GitHub, another terminal for the agent, Slack for the PR link. Nexus collapses all of that into a single pane of glass.',
+    body: 'Terminal for git, browser for GitHub, another terminal for the agent, Slack for the PR link. Grove collapses all of that into a single pane of glass.',
   },
   {
     icon: '🤖',
     title: 'AI agents without context',
-    body: 'Spinning up Claude or Copilot in the wrong directory wastes time and produces wrong answers. Nexus launches agents inside the correct worktree automatically.',
+    body: 'Spinning up Claude or Copilot in the wrong directory wastes time and produces wrong answers. Grove launches agents inside the correct worktree automatically.',
   },
   {
     icon: '🔍',
     title: '"Which branch was that?"',
-    body: 'Nexus links GitHub issues and PRs to their worktrees. No more git branch -a | grep vague-memory at 11pm.',
+    body: 'Grove links GitHub issues and PRs to their worktrees. No more git branch -a | grep vague-memory at 11pm.',
   },
 ]
 
@@ -35,9 +35,9 @@ export function Problems() {
           className="mb-14 text-center"
         >
           <p className="mb-3 font-mono text-sm text-[#00d9ff]">// why it exists</p>
-          <h2 className="text-4xl font-bold tracking-tight">The problems Nexus solves</h2>
+          <h2 className="text-4xl font-bold tracking-tight">The problems Grove solves</h2>
           <p className="mt-4 text-[#4a5568]">
-            Modern multi-feature development is painful. Here's where Nexus intervenes.
+            Modern multi-feature development is painful. Here's where Grove intervenes.
           </p>
         </motion.div>
 

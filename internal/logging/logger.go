@@ -34,9 +34,9 @@ func InitLogger(path string) (*slog.Logger, io.Closer, error) {
 func DefaultLogPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".", ".nexus", "logs", "nexus.log")
+		return filepath.Join(".", ".grove", "logs", "grove.log")
 	}
-	return filepath.Join(home, ".nexus", "logs", "nexus.log")
+	return filepath.Join(home, ".grove", "logs", "grove.log")
 }
 
 // RotateIfNeeded renames path to path+".1" when the file size exceeds maxLogSize.

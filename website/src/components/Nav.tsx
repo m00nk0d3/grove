@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils'
+﻿import { cn } from '@/lib/utils'
 
 interface NavProps {
   className?: string
@@ -44,7 +44,7 @@ export function Nav({ className }: NavProps) {
 
         {/* CTA */}
         <a
-          href="https://github.com/m00nk0d3/nexus"
+          href="https://github.com/m00nk0d3/grove"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 rounded border border-[#00d9ff]/40 bg-[#00d9ff]/5 px-4 py-2 font-mono text-sm text-[#00d9ff] transition-all hover:bg-[#00d9ff]/10 hover:border-[#00d9ff]/70"

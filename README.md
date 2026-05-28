@@ -1,32 +1,32 @@
-# NEXUS — Git Worktree Orchestrator & AI Agent Hub
+﻿# NEXUS — Git Worktree Orchestrator & AI Agent Hub
 
 > Manage Git worktrees, track GitHub PRs and Issues, launch AI coding agents, and keep tabs on every active session — all from a single terminal interface. No browser. No tab soup. Just vibes.
 
-![Latest Release](https://img.shields.io/github/v/release/m00nk0d3/nexus?logo=github&label=latest)
+![Latest Release](https://img.shields.io/github/v/release/m00nk0d3/grove?logo=github&label=latest)
 ![Go version](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 
 <!-- Screenshot placeholder — run `vhs demo.tape` to regenerate -->
-![Nexus TUI — 3-pane worktree dashboard](demo/nexus.gif)
+![Grove TUI — 3-pane worktree dashboard](demo/grove.gif)
 
 ---
 
-## Why Nexus?
+## Why Grove?
 
 Modern software development means juggling multiple things at once: several features in flight, a handful of open PRs waiting for review, GitHub issues to reference, and at least one AI agent that swears it can fix everything. Keeping all of that in sync — without losing your mind or your terminal history — is genuinely painful.
 
-**The problems Nexus solves:**
+**The problems Grove solves:**
 
-- **Context-switching hell.** Stashing changes, checking out branches, losing your editor state, repeating. Git worktrees are the solution, but their CLI is clunky and easy to forget. Nexus puts your entire worktree landscape on one screen and lets you jump between them instantly.
+- **Context-switching hell.** Stashing changes, checking out branches, losing your editor state, repeating. Git worktrees are the solution, but their CLI is clunky and easy to forget. Grove puts your entire worktree landscape on one screen and lets you jump between them instantly.
 
-- **The five-app shuffle.** Terminal for git, browser for GitHub, another terminal for the agent, Slack for the PR link, repeat. Nexus collapses all of that into a single pane of glass: worktrees, PRs, issues, and agent launchers — no browser tab required.
+- **The five-app shuffle.** Terminal for git, browser for GitHub, another terminal for the agent, Slack for the PR link, repeat. Grove collapses all of that into a single pane of glass: worktrees, PRs, issues, and agent launchers — no browser tab required.
 
-- **AI agents without context.** Spinning up Claude Code or Copilot in the wrong directory (or forgetting which worktree maps to which feature) wastes time and produces wrong answers. Nexus launches agents *inside the correct worktree* automatically, so your AI always has the right repo context.
+- **AI agents without context.** Spinning up Claude Code or Copilot in the wrong directory (or forgetting which worktree maps to which feature) wastes time and produces wrong answers. Grove launches agents *inside the correct worktree* automatically, so your AI always has the right repo context.
 
-- **"Which branch had that issue again?"** Nexus links GitHub issues and PRs to their worktrees so you always know what's where. No more `git branch -a | grep vague-memory`.
+- **"Which branch had that issue again?"** Grove links GitHub issues and PRs to their worktrees so you always know what's where. No more `git branch -a | grep vague-memory`.
 
-In short: if you work on multiple features simultaneously and use AI coding tools, Nexus removes the glue work so you can focus on the actual code.
+In short: if you work on multiple features simultaneously and use AI coding tools, Grove removes the glue work so you can focus on the actual code.
 
 ---
 
@@ -38,12 +38,12 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 - **Issue hierarchy & sub-issue branching** — navigate parent/child issue trees and spin up a worktree for any sub-issue in one move, with smart guards so you never branch off a ghost
 - **Active sessions dashboard** — mission control for your worktrees: see exactly what's alive, what's idle, and what's absolutely on fire 🔥
 - **AI agent launchers** — spawn Claude Code, GitHub Copilot, or Aider in the correct worktree directory with a single keypress
-- **Auto-update notifications** — Nexus checks for new versions on startup and can update itself; no more `brew upgrade` guilt-trips
+- **Auto-update notifications** — Grove checks for new versions on startup and can update itself; no more `brew upgrade` guilt-trips
 - **Global fuzzy finder** — press `/` or `Ctrl+F` to search across worktrees, issues, PRs, files, branches, and agent history simultaneously; results update in real-time as you type
 - **AI-assisted PR review** — press `Ctrl+R` on any PR to auto-provision a review worktree and pre-seed your AI agent with a structured code-review prompt
 - **9 built-in themes** — Digital Noir, Matrix, Light, Everforest, Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, and One Dark; cycle them live with `t`
 - **In-app help** — press `f1` or `?` at any time for a searchable keybindings and troubleshooting reference
-- **Local persistence** — config lives in `~/.nexus/config.toml`; metadata is cached in SQLite so Nexus starts fast
+- **Local persistence** — config lives in `~/.grove/config.toml`; metadata is cached in SQLite so Grove starts fast
 
 ---
 
@@ -65,7 +65,7 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 ### Linux / macOS
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/m00nk0d3/nexus/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash
 ```
 
 Auto-detects your OS and architecture, downloads the right binary from GitHub Releases, and installs to `/usr/local/bin`.
@@ -73,37 +73,37 @@ Auto-detects your OS and architecture, downloads the right binary from GitHub Re
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/m00nk0d3/nexus/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex
 ```
 
-Downloads the latest `windows_amd64` release, installs to `%LOCALAPPDATA%\nexus\`, and adds it to your user `PATH` automatically. Restart your terminal after running.
+Downloads the latest `windows_amd64` release, installs to `%LOCALAPPDATA%\grove\`, and adds it to your user `PATH` automatically. Restart your terminal after running.
 
 ### go install
 
 Works on all platforms — requires Go 1.22+.
 
 ```bash
-go install github.com/m00nk0d3/nexus/cmd/nexus@latest
+go install github.com/m00nk0d3/grove/cmd/grove@latest
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/m00nk0d3/nexus
-cd nexus
-go build -o nexus ./cmd/nexus
-./nexus
+git clone https://github.com/m00nk0d3/grove
+cd grove
+go build -o grove ./cmd/grove
+./grove
 ```
 
-> Pre-built release archives are also available on the [GitHub Releases page](https://github.com/m00nk0d3/nexus/releases) if you prefer to install manually.
+> Pre-built release archives are also available on the [GitHub Releases page](https://github.com/m00nk0d3/grove/releases) if you prefer to install manually.
 
 ---
 
 ## Quick Start
 
 1. `cd` into any Git repository
-2. Run `nexus`
-3. Nexus opens in the **Worktrees** view — use `j`/`k` to navigate the list
+2. Run `grove`
+3. Grove opens in the **Worktrees** view — use `j`/`k` to navigate the list
 4. Press `i` to switch to the Issues view, select an issue, and press `Enter` to create a new worktree for it
 5. Press `Enter` or `s` to open a shell inside the selected worktree
 6. Press `a`, `c`, `f`, or `Space` to launch an AI agent in that worktree's context
@@ -167,7 +167,7 @@ go build -o nexus ./cmd/nexus
 
 ## Configuration
 
-Nexus reads its config from `~/.nexus/config.toml`. The file is created with defaults on first run. All fields are optional.
+Grove reads its config from `~/.grove/config.toml`. The file is created with defaults on first run. All fields are optional.
 
 ```toml
 [github]
@@ -232,7 +232,7 @@ Results update in real-time as you type. `Enter` dispatches a smart action per r
 
 In the **PRs** view, press `Ctrl+R` on any pull request to trigger an AI-assisted review:
 
-1. Nexus auto-provisions a dedicated review worktree for the PR branch
+1. Grove auto-provisions a dedicated review worktree for the PR branch
 2. Opens the unified agent launcher pre-seeded with a structured code-review prompt covering correctness, security, performance, maintainability, and breaking changes
 3. Your AI agent starts reviewing with full repository context — no copy-pasting, no browser tab required
 
@@ -240,17 +240,17 @@ In the **PRs** view, press `Ctrl+R` on any pull request to trigger an AI-assiste
 
 ## Issue Hierarchy & Sub-Issue Branching
 
-Nexus understands GitHub's issue hierarchy (parent issues → sub-issues). In the **Issues** view:
+Grove understands GitHub's issue hierarchy (parent issues → sub-issues). In the **Issues** view:
 
 - Browse nested issue trees with indentation so you always know who's the parent
-- Select a sub-issue and press `Ctrl+N` — Nexus creates a worktree branching off the parent's branch automatically
-- If the parent issue has no branch yet, Nexus will warn you instead of silently creating something broken (we've all been there)
+- Select a sub-issue and press `Ctrl+N` — Grove creates a worktree branching off the parent's branch automatically
+- If the parent issue has no branch yet, Grove will warn you instead of silently creating something broken (we've all been there)
 
 ---
 
 ## Staying Up to Date
 
-Nexus checks for new versions on startup and lets you know when there's something fresher available. No manual `go install` archaeology required. When a new version drops, you'll see a notification and can trigger the self-update from inside the app.
+Grove checks for new versions on startup and lets you know when there's something fresher available. No manual `go install` archaeology required. When a new version drops, you'll see a notification and can trigger the self-update from inside the app.
 
 ---
 
@@ -266,13 +266,13 @@ gh extension install github/gh-copilot
 gh auth login
 ```
 
-Enable in config (default: `true`). Trigger in Nexus: **`c`**.
+Enable in config (default: `true`). Trigger in Grove: **`c`**.
 
 ### Claude Code
 
 Install via the official guide: <https://docs.anthropic.com/en/docs/claude-code>
 
-The binary must be named `claude` (or set `claude_binary` to its full path). Enable in config (default: `true`). Trigger in Nexus: **`a`**.
+The binary must be named `claude` (or set `claude_binary` to its full path). Enable in config (default: `true`). Trigger in Grove: **`a`**.
 
 ### Aider
 
@@ -280,7 +280,7 @@ The binary must be named `claude` (or set `claude_binary` to its full path). Ena
 pip install aider-chat
 ```
 
-Set `aider_enabled = true` in `~/.nexus/config.toml`. Trigger in Nexus: **`f`** for direct launch, or **`Space`** → select Aider in the unified launcher.
+Set `aider_enabled = true` in `~/.grove/config.toml`. Trigger in Grove: **`f`** for direct launch, or **`Space`** → select Aider in the unified launcher.
 
 ---
 
@@ -291,10 +291,10 @@ Set `aider_enabled = true` in `~/.nexus/config.toml`. Trigger in Nexus: **`f`** 
 | Empty issues / PRs list or "gh: not logged in" | Run `gh auth login` and follow the prompts |
 | "binary not found" when spawning an agent | Install the missing tool or set `*_enabled = false` in config |
 | No worktrees visible — "git not in PATH" | Ensure Git is installed: `git --version` |
-| Deleted worktrees still appear | Run `git worktree prune` in your repo, then press `r` in Nexus |
-| Warning banner on startup — config not loading | Check `~/.nexus/config.toml` for TOML syntax errors; delete to restore defaults |
+| Deleted worktrees still appear | Run `git worktree prune` in your repo, then press `r` in Grove |
+| Warning banner on startup — config not loading | Check `~/.grove/config.toml` for TOML syntax errors; delete to restore defaults |
 
-For more detail, press **`f1`** inside Nexus and open the **Troubleshooting** tab.
+For more detail, press **`f1`** inside Grove and open the **Troubleshooting** tab.
 
 ---
 
@@ -306,8 +306,8 @@ Contributions are welcome! Here's how to get set up and ship something.
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/m00nk0d3/nexus
-cd nexus
+git clone https://github.com/m00nk0d3/grove
+cd grove
 
 # 2. Verify Go 1.25+ is installed
 go version
@@ -321,8 +321,8 @@ make build
 # 5. Run tests
 make test
 
-# 6. Run Nexus locally (from inside any Git repo)
-go run ./cmd/nexus
+# 6. Run Grove locally (from inside any Git repo)
+go run ./cmd/grove
 ```
 
 For a full developer reference including release procedures and configuration details, see [docs/RUNBOOK.md](docs/RUNBOOK.md).
@@ -342,4 +342,4 @@ For a full developer reference including release procedures and configuration de
 
 ## License
 
-Nexus is released under the [MIT License](LICENSE).
+Grove is released under the [MIT License](LICENSE).

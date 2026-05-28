@@ -1,17 +1,17 @@
 version: 2
 
-project_name: nexus
+project_name: grove
 
 builds:
-  - main: ./cmd/nexus
-    binary: nexus
+  - main: ./cmd/grove
+    binary: grove
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     ignore:
       - goos: windows
         goarch: arm64
     ldflags:
-      - -X github.com/m00nk0d3/nexus/internal/version.Version={{.Version}}
+      - -X github.com/m00nk0d3/grove/internal/version.Version={{.Version}}
 
 archives:
   - formats: [tar.gz]

@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"fmt"
@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/m00nk0d3/nexus/internal/data"
-	"github.com/m00nk0d3/nexus/internal/logging"
-	"github.com/m00nk0d3/nexus/internal/updater"
-	"github.com/m00nk0d3/nexus/internal/version"
+	"github.com/m00nk0d3/grove/internal/data"
+	"github.com/m00nk0d3/grove/internal/logging"
+	"github.com/m00nk0d3/grove/internal/updater"
+	"github.com/m00nk0d3/grove/internal/version"
 )
 
 func run() error {
@@ -68,7 +68,7 @@ func run() error {
 
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
-		fmt.Printf("nexus version %s\n", version.Version)
+		fmt.Printf("grove version %s\n", version.Version)
 		return
 	}
 	if err := run(); err != nil {

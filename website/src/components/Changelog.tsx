@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+﻿import { motion } from 'framer-motion'
 
 const RELEASES = [
   {
@@ -106,7 +106,7 @@ export function Changelog() {
           className="mt-8 pl-16 text-center"
         >
           <a
-            href="https://github.com/m00nk0d3/nexus/blob/main/CHANGELOG.md"
+            href="https://github.com/m00nk0d3/grove/blob/main/CHANGELOG.md"
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono text-sm text-[#4a5568] underline underline-offset-4 transition-colors hover:text-[#00d9ff]"

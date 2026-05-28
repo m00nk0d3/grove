@@ -1,11 +1,11 @@
-package data
+﻿package data
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/m00nk0d3/nexus/internal/domain"
+	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -164,7 +164,7 @@ func TestSaveConfig(t *testing.T) {
 			setup: func(t *testing.T) (*domain.Config, string) {
 				t.Helper()
 				// Nest two levels deep — neither exists yet.
-				dir := filepath.Join(t.TempDir(), "new-parent", ".nexus")
+				dir := filepath.Join(t.TempDir(), "new-parent", ".grove")
 				cfg := domain.DefaultConfig()
 				return cfg, filepath.Join(dir, "config.toml")
 			},

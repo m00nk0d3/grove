@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="m00nk0d3/nexus"
-BINARY="nexus"
+REPO="m00nk0d3/grove"
+BINARY="grove"
 INSTALL_DIR="/usr/local/bin"
 
 # Detect OS
@@ -30,7 +30,7 @@ case "$ARCH" in
 esac
 
 # Fetch latest release version
-echo "Fetching latest Nexus release..."
+echo "Fetching latest Grove release..."
 VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
   | grep '"tag_name"' \
   | sed -E 's/.*"v([^"]+)".*/\1/')
@@ -40,7 +40,7 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-echo "Installing nexus v$VERSION for $OS/$ARCH..."
+echo "Installing grove v$VERSION for $OS/$ARCH..."
 
 ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/$REPO/releases/download/v${VERSION}/${ARCHIVE}"
@@ -63,5 +63,5 @@ fi
 echo ""
 echo "✓ nexus v$VERSION installed to $INSTALL_DIR/$BINARY"
 echo ""
-echo "Run: nexus"
+echo "Run: grove"
 echo "Docs: https://github.com/$REPO"

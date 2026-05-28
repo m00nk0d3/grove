@@ -1,8 +1,8 @@
-# Branch Protection Status
+﻿# Branch Protection Status
 
 ## ✅ BRANCH PROTECTION ACTIVE
 
-The GitHub repository `m00nk0d3/nexus` is now **public** with **branch protection fully configured**.
+The GitHub repository `m00nk0d3/grove` is now **public** with **branch protection fully configured**.
 
 ### Active Configuration
 ```

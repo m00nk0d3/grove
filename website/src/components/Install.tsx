@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
@@ -9,11 +9,11 @@ const TABS = [
     steps: [
       {
         comment: '# One-line install',
-        code: 'curl -sSL https://raw.githubusercontent.com/m00nk0d3/nexus/main/install.sh | bash',
+        code: 'curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash',
       },
       {
         comment: '# Verify installation',
-        code: 'nexus --version',
+        code: 'grove --version',
       },
     ],
   },
@@ -23,11 +23,11 @@ const TABS = [
     steps: [
       {
         comment: '# One-line install (downloads latest release)',
-        code: 'irm https://raw.githubusercontent.com/m00nk0d3/nexus/main/install.ps1 | iex',
+        code: 'irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex',
       },
       {
         comment: '# Verify installation',
-        code: 'nexus --version',
+        code: 'grove --version',
       },
     ],
   },
@@ -37,7 +37,7 @@ const TABS = [
     steps: [
       {
         comment: '# Requires Go 1.22+',
-        code: 'go install github.com/m00nk0d3/nexus/cmd/nexus@latest',
+        code: 'go install github.com/m00nk0d3/grove/cmd/grove@latest',
       },
     ],
   },
@@ -47,10 +47,10 @@ const TABS = [
     steps: [
       {
         comment: '# Clone and build',
-        code: `git clone https://github.com/m00nk0d3/nexus
-cd nexus
-go build -o nexus ./cmd/nexus
-./nexus`,
+        code: `git clone https://github.com/m00nk0d3/grove
+cd grove
+go build -o grove ./cmd/grove
+./grove`,
       },
     ],
   },
@@ -141,7 +141,7 @@ export function Install() {
           <div className="border-t border-[#1e2a3a] bg-[#0a0e27]/30 px-6 py-4">
             <p className="font-mono text-xs text-[#4a5568]">
               Config lives at{' '}
-              <code className="text-[#00d9ff]">~/.nexus/config.toml</code>. Set{' '}
+              <code className="text-[#00d9ff]">~/.grove/config.toml</code>. Set{' '}
               <code className="text-[#00d9ff]">worktree_root</code> to your repos folder and you're done.
             </p>
           </div>

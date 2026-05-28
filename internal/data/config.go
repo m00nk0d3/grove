@@ -5,18 +5,18 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/m00nk0d3/nexus/internal/domain"
+	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/pelletier/go-toml/v2"
 )
 
-// DefaultConfigPath returns the default path to the Nexus config file.
+// DefaultConfigPath returns the default path to the Grove config file.
 // Falls back to the current directory if the home directory cannot be determined.
 func DefaultConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
 	}
-	return filepath.Join(home, ".nexus", "config.toml")
+	return filepath.Join(home, ".grove", "config.toml")
 }
 
 // LoadConfig reads and parses the TOML config at path.

@@ -12,9 +12,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	libtable "github.com/charmbracelet/lipgloss/table"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m00nk0d3/nexus/internal/domain"
-	"github.com/m00nk0d3/nexus/internal/tui/styles"
-	"github.com/m00nk0d3/nexus/internal/version"
+	"github.com/m00nk0d3/grove/internal/domain"
+	"github.com/m00nk0d3/grove/internal/tui/styles"
+	"github.com/m00nk0d3/grove/internal/version"
 	"github.com/mattn/go-runewidth"
 )
 

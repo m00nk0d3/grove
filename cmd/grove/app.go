@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -17,14 +17,14 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/m00nk0d3/nexus/internal/data"
-	"github.com/m00nk0d3/nexus/internal/domain"
-	internalexec "github.com/m00nk0d3/nexus/internal/exec"
-	"github.com/m00nk0d3/nexus/internal/fuzzy"
-	"github.com/m00nk0d3/nexus/internal/tui/modal"
-	"github.com/m00nk0d3/nexus/internal/tui/styles"
-	"github.com/m00nk0d3/nexus/internal/updater"
-	"github.com/m00nk0d3/nexus/internal/version"
+	"github.com/m00nk0d3/grove/internal/data"
+	"github.com/m00nk0d3/grove/internal/domain"
+	internalexec "github.com/m00nk0d3/grove/internal/exec"
+	"github.com/m00nk0d3/grove/internal/fuzzy"
+	"github.com/m00nk0d3/grove/internal/tui/modal"
+	"github.com/m00nk0d3/grove/internal/tui/styles"
+	"github.com/m00nk0d3/grove/internal/updater"
+	"github.com/m00nk0d3/grove/internal/version"
 )
 
 // worktreeOpDoneMsg carries the result of an add/remove worktree operation.
@@ -376,7 +376,7 @@ func NewModel() *Model {
 // Init initializes the model and triggers an initial worktree list load and GitHub sync.
 func (m *Model) Init() tea.Cmd {
 	m.syncing = true
-	// Always start the session tick — it handles both nexus-spawned shell sessions
+	// Always start the session tick — it handles both grove-spawned shell sessions
 	// (requires m.db) and externally-started Copilot CLI sessions (no DB needed).
 	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(false), sessionTickCmd(), checkForUpdateCmd())
 }
@@ -737,7 +737,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, clearErrorCmd()
 				}
 				if !m.Config.AIAgents.CopilotEnabled {
-					m.statusErr = "Copilot is disabled — set copilot_enabled = true in ~/.nexus/config.toml"
+					m.statusErr = "Copilot is disabled — set copilot_enabled = true in ~/.grove/config.toml"
 					return m, clearErrorCmd()
 				}
 				if _, ok := m.selectedWorktree(); !ok {
@@ -760,7 +760,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, clearErrorCmd()
 				}
 				if !m.Config.AIAgents.ClaudeEnabled {
-					m.statusErr = "Claude is disabled — set claude_enabled = true in ~/.nexus/config.toml"
+					m.statusErr = "Claude is disabled — set claude_enabled = true in ~/.grove/config.toml"
 					return m, clearErrorCmd()
 				}
 				if _, ok := m.selectedWorktree(); !ok {
@@ -783,7 +783,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, clearErrorCmd()
 				}
 				if !m.Config.AIAgents.AiderEnabled {
-					m.statusErr = "Aider is disabled — set aider_enabled = true in ~/.nexus/config.toml"
+					m.statusErr = "Aider is disabled — set aider_enabled = true in ~/.grove/config.toml"
 					return m, clearErrorCmd()
 				}
 				selected, ok := m.selectedWorktree()
@@ -1073,7 +1073,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, clearErrorCmd()
 		}
-		m.statusMsg = "✓ Updated successfully! Please restart nexus to use the new version."
+		m.statusMsg = "✓ Updated successfully! Please restart grove to use the new version."
 		return m, clearMsgCmd()
 
 	case cleanupLoadedMsg:
@@ -1158,7 +1158,7 @@ func (m *Model) View() string {
 	}
 
 	if m.selfUpdating {
-		return overlay("Updating nexus", "Downloading and installing update...\n\nPlease wait.")
+		return overlay("Updating grove", "Downloading and installing update...\n\nPlease wait.")
 	}
 
 	if m.statusErr != "" {
@@ -1434,7 +1434,7 @@ func buildSpawnSession(db *data.DB, worktreePath, agentName string, pid int, pro
 
 // spawnCopilotCmd opens a new terminal tab/window running gh copilot at
 // worktreePath and dispatches agentDoneMsg once the launch completes.
-// The TUI is not suspended — nexus keeps running in the current terminal.
+// The TUI is not suspended — grove keeps running in the current terminal.
 func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
 	startedAt := time.Now()
 	db := m.db // capture m.db so the closure does not close over m (data race)
@@ -1502,7 +1502,7 @@ func buildClaudeCmd(worktreePath, prompt, binaryPath string) *exec.Cmd {
 
 // spawnClaudeCmd opens a new terminal tab/window running the Claude binary at
 // worktreePath and dispatches agentDoneMsg once the launch completes.
-// The TUI is not suspended — nexus keeps running in the current terminal.
+// The TUI is not suspended — grove keeps running in the current terminal.
 func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
 	binaryPath, err := resolveClaudeBinary(m.Config)
 	if err != nil {
@@ -1557,7 +1557,7 @@ func buildAiderCmd(worktreePath string, files []string, binaryPath string) *exec
 
 // spawnAiderCmd opens a new terminal tab/window running aider with the selected
 // files at worktreePath and dispatches agentDoneMsg once the launch completes.
-// The TUI is not suspended — nexus keeps running in the current terminal.
+// The TUI is not suspended — grove keeps running in the current terminal.
 func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
 	binaryPath, err := resolveAiderBinary(m.Config)
 	if err != nil {
@@ -1982,7 +1982,7 @@ func filterAliveSessions(sessions []domain.Session) []domain.Session {
 	return alive
 }
 
-// checkSessionsCmd reads all tracked sessions from the nexus DB and checks
+// checkSessionsCmd reads all tracked sessions from the grove DB and checks
 // whether each PID is still alive. Returns sessionStatusUpdatedMsg with the
 // live session list. Dead and stale sessions are removed from the DB when a DB
 // connection is available.
@@ -1993,7 +1993,7 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 		var alive []domain.Session
 
 		if db == nil {
-			// No nexus DB — perform PID health checks on in-memory sessions only.
+			// No grove DB — perform PID health checks on in-memory sessions only.
 			alive = filterAliveSessions(current)
 		} else {
 			all, err := data.GetSessions(db)

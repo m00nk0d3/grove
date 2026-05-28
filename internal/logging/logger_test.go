@@ -1,4 +1,4 @@
-package logging_test
+﻿package logging_test
 
 import (
 	"os"
@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/m00nk0d3/nexus/internal/logging"
+	"github.com/m00nk0d3/grove/internal/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLogger_WritesToFile(t *testing.T) {
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nexus.log")
+	logPath := filepath.Join(dir, "grove.log")
 
 	logger, closer, err := logging.InitLogger(logPath)
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestLogger_WritesToFile(t *testing.T) {
 
 func TestLogger_CreatesParentDirectories(t *testing.T) {
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "subdir", "nested", "nexus.log")
+	logPath := filepath.Join(dir, "subdir", "nested", "grove.log")
 
 	logger, closer, err := logging.InitLogger(logPath)
 	require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestLogger_CreatesParentDirectories(t *testing.T) {
 
 func TestLogger_RotatesAt10MB(t *testing.T) {
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nexus.log")
+	logPath := filepath.Join(dir, "grove.log")
 
 	// Write > 10MB to the log file
 	bigData := make([]byte, 11*1024*1024)
@@ -58,9 +58,9 @@ func TestLogger_RotatesAt10MB(t *testing.T) {
 	err = logging.RotateIfNeeded(logPath)
 	require.NoError(t, err)
 
-	// Original file should be renamed to nexus.log.1
+	// Original file should be renamed to grove.log.1
 	_, err = os.Stat(logPath + ".1")
-	assert.NoError(t, err, "rotated file should exist at nexus.log.1")
+	assert.NoError(t, err, "rotated file should exist at grove.log.1")
 
 	// Original path should no longer exist
 	_, err = os.Stat(logPath)
@@ -69,7 +69,7 @@ func TestLogger_RotatesAt10MB(t *testing.T) {
 
 func TestLogger_NoRotateUnder10MB(t *testing.T) {
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nexus.log")
+	logPath := filepath.Join(dir, "grove.log")
 
 	// Write < 10MB
 	smallData := []byte("small log content")

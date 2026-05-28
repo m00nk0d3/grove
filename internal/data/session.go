@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/m00nk0d3/nexus/internal/domain"
+	"github.com/m00nk0d3/grove/internal/domain"
 )
 
 // UpsertSession inserts or replaces a session row in active_sessions.

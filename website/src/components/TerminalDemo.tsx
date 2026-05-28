@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 
 const FRAMES: { prompt: string; output: string[] }[] = [
   {
-    prompt: 'nexus',
+    prompt: 'grove',
     output: [
-      '  NEXUS v0.5.0  ·  m00nk0d3/nexus',
+      '  NEXUS v0.5.0  ·  m00nk0d3/grove',
       '',
       '  Worktrees                    Sessions',
       '  ─────────────────────────    ─────────────',
@@ -129,7 +129,7 @@ export function TerminalDemo() {
         <span className="h-3 w-3 rounded-full bg-[#ff4757]" />
         <span className="h-3 w-3 rounded-full bg-[#ffd700]" />
         <span className="h-3 w-3 rounded-full bg-[#00ff88]" />
-        <span className="ml-3 font-mono text-xs text-[#4a5568]">nexus — ~/repos/myproject</span>
+        <span className="ml-3 font-mono text-xs text-[#4a5568]">grove — ~/repos/myproject</span>
         <div className="ml-auto flex items-center gap-1">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#00ff88]" />
           <span className="font-mono text-[10px] text-[#00ff88]/70">live</span>

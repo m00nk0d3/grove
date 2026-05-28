@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/m00nk0d3/nexus/internal/tui/styles"
+	"github.com/m00nk0d3/grove/internal/tui/styles"
 )
 
 type cleanupEntry struct {

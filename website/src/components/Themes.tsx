@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+﻿import { motion } from 'framer-motion'
 
 const THEMES = [
   { name: 'Digital Noir', id: 'digital-noir', bg: '#0a0e27', accent: '#00d9ff', fg: '#e2e8f0', default: true },
@@ -27,7 +27,7 @@ export function Themes() {
           <h2 className="text-4xl font-bold tracking-tight">9 built-in themes</h2>
           <p className="mt-4 text-[#4a5568]">
             Press <kbd className="rounded border border-[#1e2a3a] bg-[#0d1117] px-1.5 py-0.5 font-mono text-xs text-[#e2e8f0]">t</kbd> to
-            cycle through themes live, or set one in <code className="font-mono text-xs text-[#00d9ff]">~/.nexus/config.toml</code>.
+            cycle through themes live, or set one in <code className="font-mono text-xs text-[#00d9ff]">~/.grove/config.toml</code>.
           </p>
         </motion.div>
 

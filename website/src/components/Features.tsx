@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+﻿import { motion } from 'framer-motion'
 
 const FEATURES = [
   { icon: '🖥️', title: '3-Pane TUI', desc: 'Worktree list, GitHub context panel, and detail view — all in one terminal window.' },
@@ -6,13 +6,13 @@ const FEATURES = [
   { icon: '🔄', title: 'GitHub sync', desc: 'PRs and issues fetched via the gh CLI and kept fresh in the background automatically.' },
   { icon: '🔍', title: 'Global fuzzy finder', desc: 'Press / or Ctrl+F to search worktrees, issues, PRs, files, branches, and agent history in real-time.' },
   { icon: '🤖', title: 'AI agent launchers', desc: 'Spawn Claude Code, GitHub Copilot, or Aider in the correct worktree directory with a single keypress.' },
-  { icon: '🔬', title: 'AI-assisted PR review', desc: 'Press Ctrl+R on any PR — Nexus provisions a review worktree and pre-seeds your agent with a structured review prompt.' },
+  { icon: '🔬', title: 'AI-assisted PR review', desc: 'Press Ctrl+R on any PR — Grove provisions a review worktree and pre-seeds your agent with a structured review prompt.' },
   { icon: '🌳', title: 'Issue hierarchy', desc: 'Navigate parent/child issue trees and spin up a worktree for any sub-issue in one move.' },
   { icon: '📡', title: 'Active sessions dashboard', desc: 'See which agents are running, which shells are alive, and which worktrees are just sitting there pretending.' },
-  { icon: '⬆️', title: 'Auto-update', desc: 'Nexus checks for new versions on startup and self-updates in-app. No more brew upgrade guilt-trips.' },
+  { icon: '⬆️', title: 'Auto-update', desc: 'Grove checks for new versions on startup and self-updates in-app. No more brew upgrade guilt-trips.' },
   { icon: '🎨', title: '9 built-in themes', desc: 'Digital Noir, Matrix, Light, Everforest, Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, One Dark.' },
   { icon: '❓', title: 'In-app help', desc: 'Press f1 or ? at any time for a searchable keybindings and troubleshooting reference.' },
-  { icon: '💾', title: 'Local persistence', desc: 'Config in ~/.nexus/config.toml, metadata cached in SQLite — Nexus starts fast, every time.' },
+  { icon: '💾', title: 'Local persistence', desc: 'Config in ~/.grove/config.toml, metadata cached in SQLite — Grove starts fast, every time.' },
 ]
 
 export function Features() {

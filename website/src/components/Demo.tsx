@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+﻿import { motion } from 'framer-motion'
 
 export function Demo() {
   return (
@@ -41,7 +41,7 @@ export function Demo() {
               <span className="h-3 w-3 rounded-full bg-[#ff4757]" />
               <span className="h-3 w-3 rounded-full bg-[#ffd700]" />
               <span className="h-3 w-3 rounded-full bg-[#00ff88]" />
-              <span className="ml-4 font-mono text-xs text-[#4a5568]">nexus — ~/repos/myproject</span>
+              <span className="ml-4 font-mono text-xs text-[#4a5568]">grove — ~/repos/myproject</span>
               <div className="ml-auto flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#00ff88]" />
                 <span className="font-mono text-[10px] text-[#00ff88]/60">recording</span>
@@ -51,8 +51,8 @@ export function Demo() {
             {/* GIF */}
             <div className="bg-[#0a0e27]">
               <img
-                src="/nexus/nexus-demo.gif"
-                alt="Nexus TUI demo — worktree management, fuzzy finder, and AI agent launcher in action"
+                src="/grove/grove-demo.gif"
+                alt="Grove TUI demo — worktree management, fuzzy finder, and AI agent launcher in action"
                 className="w-full"
                 loading="lazy"
                 decoding="async"

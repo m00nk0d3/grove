@@ -1,4 +1,4 @@
-# Nexus: Git Worktree Orchestrator & AI Agent Hub - Development Plan v1.0
+﻿# Grove: Git Worktree Orchestrator & AI Agent Hub - Development Plan v1.0
 
 ## Problem Statement
 Developers managing multiple context-heavy development streams need a unified terminal interface to:
@@ -12,7 +12,7 @@ Build a Go TUI application using Charm.sh ecosystem (bubbletea, lipgloss, bubble
 - Use MVU architecture for reactive state management
 - Wrap `git worktree` CLI commands + GitHub API
 - Provide dashboard views for worktrees, GitHub data, and agent spawning
-- Store config in `~/.nexus/` with SQLite for context persistence
+- Store config in `~/.grove/` with SQLite for context persistence
 - Suspend itself to spawn external AI tools with proper context
 
 ---
@@ -27,9 +27,9 @@ Build a Go TUI application using Charm.sh ecosystem (bubbletea, lipgloss, bubble
 
 ### Directory Structure
 ```
-nexus/
+grove/
 ├── cmd/
-│   └── nexus/
+│   └── grove/
 │       └── main.go
 ├── internal/
 │   ├── tui/
@@ -72,7 +72,7 @@ nexus/
 #### Operations
 - **List** - Display all worktrees with branch, status, path
 - **Create** - Interactive modal to create new worktree (branch name, base branch)
-- **Switch** - Suspend Nexus, cd to worktree, resume
+- **Switch** - Suspend Grove, cd to worktree, resume
 - **Delete** - Remove worktree with confirmation
 - **Prune** - Clean up broken worktrees
 - **Lock/Unlock** - Lock worktrees to prevent accidental deletion
@@ -128,9 +128,9 @@ nexus/
 - When: User selects "Aider" + selects files to edit
 
 #### Spawning Mechanism
-- Use `tea.ExecProcess` to suspend Nexus
+- Use `tea.ExecProcess` to suspend Grove
 - Pass context as env vars or temp files
-- Resume Nexus when agent finishes
+- Resume Grove when agent finishes
 - Option to log agent interactions
 
 ---
@@ -138,7 +138,7 @@ nexus/
 ### 4. Persistent Storage & Configuration
 **Scope:** Store config, recent worktrees, context history
 
-#### Config File (`~/.nexus/config.toml`)
+#### Config File (`~/.grove/config.toml`)
 ```toml
 [github]
 token = "ghp_xxxx"  # or read from gh CLI
@@ -299,7 +299,7 @@ GLOBAL
 - [ ] Context builder (collect git state, file list)
 - [ ] Agent history tracking (SQLite)
 - [ ] Agent launcher screen
-- [ ] suspend/resume Nexus for agent execution
+- [ ] suspend/resume Grove for agent execution
 
 ### Phase 4: Polish & Refinement
 **Deliverable:** Production-ready v1.0
@@ -333,7 +333,7 @@ GLOBAL
 ### Error Handling
 - Graceful degradation if GitHub API fails (use cached data)
 - Display errors in status bar + error modal
-- Log errors to `~/.nexus/logs/nexus.log`
+- Log errors to `~/.grove/logs/grove.log`
 - Validate user input before executing git commands
 
 ### Performance
@@ -346,18 +346,18 @@ GLOBAL
 - Store GitHub token securely (prefer `gh` CLI auth over PAT)
 - Never log sensitive data (tokens, passwords)
 - Validate git commands to prevent injection
-- File permissions on `~/.nexus/` (0600)
+- File permissions on `~/.grove/` (0600)
 
 ---
 
 ## Edge Cases & Special Handling
 
 1. **Orphaned Worktrees** - Git worktree dir deleted but git metadata remains → offer prune
-2. **Stale PR Sync** - PR branch deleted but Nexus still shows it → mark as stale, offer cleanup
+2. **Stale PR Sync** - PR branch deleted but Grove still shows it → mark as stale, offer cleanup
 3. **Network Failures** - GitHub API unreachable → show cached data, retry with backoff
 4. **Agent Not Found** - User doesn't have Claude/Aider installed → show helpful error + install hint
-5. **Git Repo Not Found** - Nexus launched outside git repo → friendly error message
-6. **Multiple Repos** - Nexus open in one repo, user cd's to another → handle gracefully (warn or reload)
+5. **Git Repo Not Found** - Grove launched outside git repo → friendly error message
+6. **Multiple Repos** - Grove open in one repo, user cd's to another → handle gracefully (warn or reload)
 
 ---
 

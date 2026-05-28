@@ -1,4 +1,4 @@
-package updater
+﻿package updater
 
 import (
 	"crypto/sha256"
@@ -53,7 +53,7 @@ func TestIsNewer(t *testing.T) {
 }
 
 func TestCheckLatestRelease_Success(t *testing.T) {
-	want := ReleaseInfo{TagName: "v1.2.3", HTMLURL: "https://github.com/m00nk0d3/nexus/releases/tag/v1.2.3"}
+	want := ReleaseInfo{TagName: "v1.2.3", HTMLURL: "https://github.com/m00nk0d3/grove/releases/tag/v1.2.3"}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(want)
@@ -122,7 +122,7 @@ func TestDownloadURL(t *testing.T) {
 }
 
 func TestFetchChecksum_Success(t *testing.T) {
-	const filename = "nexus_1.2.3_linux_amd64.tar.gz"
+	const filename = "grove_1.2.3_linux_amd64.tar.gz"
 	const wantHash = "abc123def456"
 	body := wantHash + "  " + filename + "\ndeadbeef  other_file.tar.gz\n"
 
@@ -151,7 +151,7 @@ func TestFetchChecksum_NotFound(t *testing.T) {
 	githubReleaseBase = ts.URL
 	defer func() { githubReleaseBase = old }()
 
-	_, err := fetchChecksum(t.Context(), "v1.2.3", "nexus_1.2.3_linux_amd64.tar.gz")
+	_, err := fetchChecksum(t.Context(), "v1.2.3", "grove_1.2.3_linux_amd64.tar.gz")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
 }
@@ -166,7 +166,7 @@ func TestFetchChecksum_MissingEntry(t *testing.T) {
 	githubReleaseBase = ts.URL
 	defer func() { githubReleaseBase = old }()
 
-	_, err := fetchChecksum(t.Context(), "v1.2.3", "nexus_1.2.3_linux_amd64.tar.gz")
+	_, err := fetchChecksum(t.Context(), "v1.2.3", "grove_1.2.3_linux_amd64.tar.gz")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no entry for")
 }
@@ -176,7 +176,7 @@ func TestVerifyChecksum_Valid(t *testing.T) {
 	sum := sha256.Sum256(content)
 	expectedHex := hex.EncodeToString(sum[:])
 
-	f, err := os.CreateTemp(t.TempDir(), "nexus-test-*")
+	f, err := os.CreateTemp(t.TempDir(), "grove-test-*")
 	require.NoError(t, err)
 	_, err = f.Write(content)
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestVerifyChecksum_Valid(t *testing.T) {
 }
 
 func TestVerifyChecksum_Mismatch(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "nexus-test-*")
+	f, err := os.CreateTemp(t.TempDir(), "grove-test-*")
 	require.NoError(t, err)
 	_, err = f.Write([]byte("some content"))
 	require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestReplaceBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		currentExe += ".exe"
 	}
-	newBinary := filepath.Join(dir, "nexus-new")
+	newBinary := filepath.Join(dir, "grove-new")
 
 	require.NoError(t, os.WriteFile(currentExe, []byte("old"), 0755))
 	require.NoError(t, os.WriteFile(newBinary, []byte("new"), 0755))
@@ -227,7 +227,7 @@ func TestReplaceBinary_OldFileCleanedUp(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		currentExe += ".exe"
 	}
-	newBinary := filepath.Join(dir, "nexus-new")
+	newBinary := filepath.Join(dir, "grove-new")
 	oldExe := currentExe + ".old"
 
 	// Pre-seed a stale .old file to verify it gets removed before the rename.
@@ -251,7 +251,7 @@ func TestStageBinary(t *testing.T) {
 		t.Skip("cross-filesystem move behaves differently on Windows; covered by moveFile tests")
 	}
 	dir := t.TempDir()
-	binaryPath := filepath.Join(dir, "nexus-new")
+	binaryPath := filepath.Join(dir, "grove-new")
 	require.NoError(t, os.WriteFile(binaryPath, []byte("newbinary"), 0755))
 
 	staged, err := stageBinary(binaryPath)
@@ -282,7 +282,7 @@ func TestReplaceBinary_PermissionDenied(t *testing.T) {
 	require.NoError(t, os.Chmod(roDir, 0555))
 	t.Cleanup(func() { os.Chmod(roDir, 0755) })
 
-	newBinary := filepath.Join(dir, "nexus-new")
+	newBinary := filepath.Join(dir, "grove-new")
 	require.NoError(t, os.WriteFile(newBinary, []byte("new"), 0755))
 
 	err := replaceBinary(newBinary, currentExe)
@@ -296,13 +296,13 @@ func TestReplaceBinary_PermissionDenied(t *testing.T) {
 }
 
 func TestInstallCmd(t *testing.T) {
-	staged := "/home/user/.cache/nexus/nexus.staged"
-	target := "/usr/bin/nexus"
+	staged := "/home/user/.cache/grove/grove.staged"
+	target := "/usr/bin/grove"
 	cmd := installCmd(staged, target)
 	if runtime.GOOS == "windows" {
 		assert.Contains(t, cmd, "copy")
 	} else {
-		assert.Equal(t, "sudo install -m755 /home/user/.cache/nexus/nexus.staged /usr/bin/nexus", cmd)
+		assert.Equal(t, "sudo install -m755 /home/user/.cache/grove/grove.staged /usr/bin/grove", cmd)
 	}
 }
 

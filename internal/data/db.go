@@ -107,13 +107,13 @@ func (db *DB) applyMigration(name, content string) error {
 	return nil
 }
 
-// DefaultDBPath returns the default path for the Nexus SQLite database,
-// located at ~/.nexus/nexus.db. Falls back to ./nexus.db if the home
+// DefaultDBPath returns the default path for the Grove SQLite database,
+// located at ~/.grove/grove.db. Falls back to ./grove.db if the home
 // directory cannot be determined.
 func DefaultDBPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
 	}
-	return filepath.Join(home, ".nexus", "nexus.db")
+	return filepath.Join(home, ".grove", "grove.db")
 }

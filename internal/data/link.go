@@ -3,7 +3,7 @@ package data
 import (
 	"fmt"
 
-	"github.com/m00nk0d3/nexus/internal/domain"
+	"github.com/m00nk0d3/grove/internal/domain"
 )
 
 // LinkWorktreesToPRs matches each worktree to its corresponding pull request by

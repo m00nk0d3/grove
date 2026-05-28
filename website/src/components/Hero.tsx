@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+﻿import { motion } from 'framer-motion'
 import { TerminalDemo } from './TerminalDemo'
 
 export function Hero() {
@@ -76,7 +76,7 @@ export function Hero() {
           <div className="absolute inset-0 translate-x-[-100%] bg-gradient-to-r from-transparent via-[#00d9ff]/10 to-transparent transition-transform duration-700 group-hover:translate-x-[100%]" />
         </a>
         <a
-          href="https://github.com/m00nk0d3/nexus"
+          href="https://github.com/m00nk0d3/grove"
           target="_blank"
           rel="noopener noreferrer"
           className="rounded border border-[#1e2a3a] px-8 py-3 font-mono text-sm font-medium text-[#4a5568] transition-all hover:border-[#00d9ff]/30 hover:text-[#e2e8f0]"

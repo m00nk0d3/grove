@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/m00nk0d3/nexus/internal/domain"
+	"github.com/m00nk0d3/grove/internal/domain"
 )
 
 // SaveContextSnapshot persists a WorktreeContext to the context_snapshots table

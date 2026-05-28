@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/m00nk0d3/nexus/internal/domain"
+	"github.com/m00nk0d3/grove/internal/domain"
 )
 
 // parentRefRe matches common "this issue is a sub-issue of #N" patterns in issue bodies.

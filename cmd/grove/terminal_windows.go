@@ -1,4 +1,4 @@
-//go:build windows
+﻿//go:build windows
 
 package main
 
@@ -60,7 +60,7 @@ func spawnTerminalWindow(path string) (int, error) {
 	// (which stays alive as long as the tab is open) instead of the wt.exe
 	// launcher PID (which exits immediately after creating the tab).
 	if os.Getenv("WT_SESSION") != "" {
-		pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-session-%d.pid", time.Now().UnixNano()))
+		pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("grove-session-%d.pid", time.Now().UnixNano()))
 		// The PowerShell session writes its own PID to the temp file on start,
 		// then stays interactive. Deleting the file is handled by the caller.
 		psCmd := fmt.Sprintf(
@@ -79,7 +79,7 @@ func spawnTerminalWindow(path string) (int, error) {
 
 	// Other tab-capable emulators (tmux, zellij under Windows/WSL) — use
 	// Unix-style PID-file injection via buildNewTabWithCmdCmd.
-	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-session-%d.pid", time.Now().UnixNano()))
+	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("grove-session-%d.pid", time.Now().UnixNano()))
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, "", pidFile, "windows"); ok {
 		if err := tabCmd.Start(); err == nil {
 			pid := pollPIDFile(pidFile, agentPIDPollTimeout)
@@ -113,13 +113,13 @@ func spawnTerminalWindow(path string) (int, error) {
 
 // spawnAgentInTerminalWindow launches agentCmd at path in a new tab of the
 // current terminal emulator when possible, falling back to a new cmd.exe window.
-// The TUI is not suspended — nexus keeps running in the original terminal.
+// The TUI is not suspended — grove keeps running in the original terminal.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
 	// Windows Terminal: use the PID-file trick to capture the real PowerShell PID
 	// (wt.exe exits immediately after launching the tab, so tabCmd.Process.Pid
 	// would be dead by the time the health-check poller runs).
 	if os.Getenv("WT_SESSION") != "" {
-		pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("nexus-agent-%d.pid", time.Now().UnixNano()))
+		pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("grove-agent-%d.pid", time.Now().UnixNano()))
 		psCmd := fmt.Sprintf(
 			`[System.Diagnostics.Process]::GetCurrentProcess().Id | Set-Content -LiteralPath '%s'; %s`,
 			pidFile, agentCmd,

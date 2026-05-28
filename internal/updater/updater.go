@@ -1,4 +1,4 @@
-package updater
+﻿package updater
 
 import (
 	"archive/tar"
@@ -25,7 +25,7 @@ import (
 var githubAPIBase = "https://api.github.com"
 
 // githubReleaseBase is the base URL for release asset downloads. It can be overridden in tests.
-var githubReleaseBase = "https://github.com/m00nk0d3/nexus/releases/download"
+var githubReleaseBase = "https://github.com/m00nk0d3/grove/releases/download"
 
 // maxDownloadBytes caps the size of any single HTTP download (archive or checksums file)
 // to prevent runaway disk writes from unexpectedly large or malformed responses.
@@ -56,13 +56,13 @@ func stageBinary(binaryPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get cache dir: %w", err)
 	}
-	dir := filepath.Join(cacheDir, "nexus")
+	dir := filepath.Join(cacheDir, "grove")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create cache dir: %w", err)
 	}
-	name := "nexus.staged"
+	name := "grove.staged"
 	if runtime.GOOS == "windows" {
-		name = "nexus.exe.staged"
+		name = "grove.exe.staged"
 	}
 	staged := filepath.Join(dir, name)
 	if err := moveFile(binaryPath, staged); err != nil {
@@ -90,13 +90,13 @@ type ReleaseInfo struct {
 // CheckLatestRelease queries the GitHub releases API and returns the latest release info.
 // Returns an error if the request fails, times out, or returns a non-200 status.
 func CheckLatestRelease(ctx context.Context) (ReleaseInfo, error) {
-	url := githubAPIBase + "/repos/m00nk0d3/nexus/releases/latest"
+	url := githubAPIBase + "/repos/m00nk0d3/grove/releases/latest"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return ReleaseInfo{}, fmt.Errorf("update check: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "nexus-updater")
+	req.Header.Set("User-Agent", "grove-updater")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -180,7 +180,7 @@ func DownloadURL(tagName string) string {
 	// so the archive filename is e.g. "nexus_1.2.3_linux_amd64.tar.gz" while the
 	// release directory (tag) path still uses the full "v1.2.3".
 	version := strings.TrimPrefix(tagName, "v")
-	filename := fmt.Sprintf("nexus_%s_%s_%s.%s", version, runtime.GOOS, runtime.GOARCH, ext)
+	filename := fmt.Sprintf("grove_%s_%s_%s.%s", version, runtime.GOOS, runtime.GOARCH, ext)
 	return fmt.Sprintf("%s/%s/%s", githubReleaseBase, tagName, filename)
 }
 
@@ -196,7 +196,7 @@ func SelfUpdate(ctx context.Context, tagName string) error {
 	url := DownloadURL(tagName)
 	slog.Debug("self-update", "status", "Downloading "+url+"...")
 
-	archiveFile, err := os.CreateTemp(os.TempDir(), "nexus-update-archive-*")
+	archiveFile, err := os.CreateTemp(os.TempDir(), "grove-update-archive-*")
 	if err != nil {
 		return fmt.Errorf("self-update: create temp archive: %w", err)
 	}
@@ -222,7 +222,7 @@ func SelfUpdate(ctx context.Context, tagName string) error {
 
 	slog.Debug("self-update", "status", "Extracting...")
 
-	binaryFile, err := os.CreateTemp(os.TempDir(), "nexus-update-binary-*")
+	binaryFile, err := os.CreateTemp(os.TempDir(), "grove-update-binary-*")
 	if err != nil {
 		return fmt.Errorf("self-update: create temp binary: %w", err)
 	}
@@ -230,9 +230,9 @@ func SelfUpdate(ctx context.Context, tagName string) error {
 	binaryFile.Close()
 	defer os.Remove(binaryPath)
 
-	binaryName := "nexus"
+	binaryName := "grove"
 	if runtime.GOOS == "windows" {
-		binaryName = "nexus.exe"
+		binaryName = "grove.exe"
 	}
 
 	if runtime.GOOS == "windows" {
@@ -268,7 +268,7 @@ func SelfUpdate(ctx context.Context, tagName string) error {
 		return fmt.Errorf("self-update: %w", err)
 	}
 
-	slog.Debug("self-update", "status", "Done! Please restart nexus.")
+	slog.Debug("self-update", "status", "Done! Please restart grove.")
 	return nil
 }
 

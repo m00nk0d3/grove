@@ -4,11 +4,11 @@ param()
 
 $ErrorActionPreference = "Stop"
 
-$Repo     = "m00nk0d3/nexus"
-$Binary   = "nexus"
-$InstallDir = Join-Path $env:LOCALAPPDATA "nexus"
+$Repo     = "m00nk0d3/grove"
+$Binary   = "grove"
+$InstallDir = Join-Path $env:LOCALAPPDATA "grove"
 
-Write-Host "Fetching latest Nexus release..."
+Write-Host "Fetching latest Grove release..."
 
 # Fetch latest release version
 $apiUrl  = "https://api.github.com/repos/$Repo/releases/latest"
@@ -20,9 +20,9 @@ $version = $tag.TrimStart("v")
 $archive = "${Binary}_${version}_windows_amd64.zip"
 $url     = "https://github.com/$Repo/releases/download/$tag/$archive"
 
-Write-Host "Installing nexus v$version for windows/amd64..."
+Write-Host "Installing grove v$version for windows/amd64..."
 
-$tmp     = Join-Path $env:TEMP "nexus-install-$([System.IO.Path]::GetRandomFileName())"
+$tmp     = Join-Path $env:TEMP "grove-install-$([System.IO.Path]::GetRandomFileName())"
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
@@ -47,9 +47,9 @@ try {
     }
 
     Write-Host ""
-    Write-Host "[OK] nexus v$version installed to $InstallDir\$Binary.exe"
+    Write-Host "[OK] grove v$version installed to $InstallDir\$Binary.exe"
     Write-Host ""
-    Write-Host "Run: nexus"
+    Write-Host "Run: grove"
     Write-Host "Docs: https://github.com/$Repo"
 }
 finally {

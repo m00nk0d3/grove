@@ -244,7 +244,7 @@ func TestHelpModal_View_AboutTab_ShowsRepoURL(t *testing.T) {
 	m.activeTab = tabAbout
 	view := m.View()
 
-	assert.Contains(t, view, "github.com/m00nk0d3/nexus")
+	assert.Contains(t, view, "github.com/m00nk0d3/grove")
 }
 
 func TestHelpModal_View_ShowsHelpHint(t *testing.T) {

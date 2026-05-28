@@ -3,7 +3,7 @@ package exec
 import (
 	"fmt"
 
-	"github.com/m00nk0d3/nexus/internal/domain"
+	"github.com/m00nk0d3/grove/internal/domain"
 )
 
 const defaultLogCount = 10

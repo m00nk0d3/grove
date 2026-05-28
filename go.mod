@@ -1,4 +1,4 @@
-module github.com/m00nk0d3/nexus
+module github.com/m00nk0d3/grove
 
 go 1.25.0
 
