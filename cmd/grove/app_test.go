@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -1772,21 +1773,21 @@ func TestPRWorktreePath(t *testing.T) {
 	}{
 		{
 			name:     "simple branch no slashes",
-			repoPath: "/repos/nexus",
+			repoPath: filepath.Join("/repos", "nexus"),
 			branch:   "main",
-			wantPath: "/repos/worktrees/nexus/main",
+			wantPath: filepath.Join("/repos", "worktrees", "nexus", "main"),
 		},
 		{
 			name:     "branch with slashes converted to dashes",
-			repoPath: "/repos/nexus",
+			repoPath: filepath.Join("/repos", "nexus"),
 			branch:   "feat/issue-42-my-feature",
-			wantPath: "/repos/worktrees/nexus/feat-issue-42-my-feature",
+			wantPath: filepath.Join("/repos", "worktrees", "nexus", "feat-issue-42-my-feature"),
 		},
 		{
 			name:     "different repo does not collide with nexus",
-			repoPath: "/repos/nova",
+			repoPath: filepath.Join("/repos", "nova"),
 			branch:   "feat/issue-42-my-feature",
-			wantPath: "/repos/worktrees/nova/feat-issue-42-my-feature",
+			wantPath: filepath.Join("/repos", "worktrees", "nova", "feat-issue-42-my-feature"),
 		},
 	}
 	for _, tt := range tests {
@@ -3492,31 +3493,31 @@ func TestPRReviewWorktreePath(t *testing.T) {
 	}{
 		{
 			name:     "simple branch name",
-			repoPath: "/home/user/nexus",
+			repoPath: filepath.Join("/home", "user", "nexus"),
 			prNumber: 42,
 			branch:   "feat-my-feature",
-			wantPath: "/home/user/worktrees/nexus/pr-42-feat-my-feature",
+			wantPath: filepath.Join("/home", "user", "worktrees", "nexus", "pr-42-feat-my-feature"),
 		},
 		{
 			name:     "branch with slashes",
-			repoPath: "/home/user/nexus",
+			repoPath: filepath.Join("/home", "user", "nexus"),
 			prNumber: 7,
 			branch:   "feat/issue-7-login",
-			wantPath: "/home/user/worktrees/nexus/pr-7-feat-issue-7-login",
+			wantPath: filepath.Join("/home", "user", "worktrees", "nexus", "pr-7-feat-issue-7-login"),
 		},
 		{
 			name:     "main branch",
-			repoPath: "/home/user/nexus",
+			repoPath: filepath.Join("/home", "user", "nexus"),
 			prNumber: 1,
 			branch:   "main",
-			wantPath: "/home/user/worktrees/nexus/pr-1-main",
+			wantPath: filepath.Join("/home", "user", "worktrees", "nexus", "pr-1-main"),
 		},
 		{
 			name:     "different repo does not collide with nexus",
-			repoPath: "/home/user/nova",
+			repoPath: filepath.Join("/home", "user", "nova"),
 			prNumber: 42,
 			branch:   "feat-my-feature",
-			wantPath: "/home/user/worktrees/nova/pr-42-feat-my-feature",
+			wantPath: filepath.Join("/home", "user", "worktrees", "nova", "pr-42-feat-my-feature"),
 		},
 	}
 	for _, tt := range tests {

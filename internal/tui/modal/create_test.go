@@ -1,6 +1,7 @@
 package modal
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -158,13 +159,13 @@ func TestCreateModal_WorktreePath_IsScopedToRepoName(t *testing.T) {
 	}{
 		{
 			name:     "nexus repo scoped correctly",
-			repoPath: "/home/user/nexus",
-			wantPath: "/home/user/worktrees/nexus/feat-issue-5-create-delete-modals",
+			repoPath: filepath.Join("/home", "user", "nexus"),
+			wantPath: filepath.Join("/home", "user", "worktrees", "nexus", "feat-issue-5-create-delete-modals"),
 		},
 		{
 			name:     "nova repo scoped correctly — no collision with nexus",
-			repoPath: "/home/user/nova",
-			wantPath: "/home/user/worktrees/nova/feat-issue-5-create-delete-modals",
+			repoPath: filepath.Join("/home", "user", "nova"),
+			wantPath: filepath.Join("/home", "user", "worktrees", "nova", "feat-issue-5-create-delete-modals"),
 		},
 	}
 	for _, tt := range tests {
