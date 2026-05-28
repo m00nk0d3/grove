@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.6.0] - 2026-05-28
+
+### Added
+
+- **Ctrl+B cleanup modal for stale worktrees and branches** — press `Ctrl+B` from the TUI to surface a modal listing stale/prunable worktrees and their associated branches. Lets you bulk-delete the mess you left behind. `feat(tui)` (#107) (4d79ec2)
+- **One-liner install scripts** — `install.sh` (Unix) and `install.ps1` (Windows) so you can get nexus running without touching `go install` or release assets manually. `feat(install)` (b5835f2)
+- **GitHub Pages landing site** — nexus now has a real homepage with a live demo GIF, install instructions, and a fancy favicon. `feat(website)` (11ec084, 75c5196)
+
+### Fixed
+
+- **`r` key not forcing a fresh remote fetch** — pressing `r` was still returning cached data if the TTL hadn't expired. It now always hits GitHub and refreshes the cache. `fix(app)` (#105) (919ceea)
+
+### Documentation
+
+- Replace installation section in README with the new one-liner scripts. (f83780f)
+- Sync README, RUNBOOK, and in-app help with the v0.5.0 feature set. (7611150)
+
+### Changed
+
+- Redesigned favicon with a git node-graph icon. `style(website)` (203805b)
+
 ## [v0.5.0] - 2026-05-22
 
 ### Added
