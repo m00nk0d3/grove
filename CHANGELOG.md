@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.6.1] - 2026-05-28
+
+### Fixed
+
+- **Broken worktree git link no longer crashes the worktree list** — a worktree whose path exists on disk but has a missing/broken `.git` link caused `git status` to exit 128 with "fatal: not a git repository", aborting the entire list load. Now treated gracefully as dirty (IsClean=false) without propagating an error. `fix(exec)` (3cd6407)
+- **Cross-platform path assertions in tests** — test expectations used hardcoded Unix forward-slash paths, causing failures on Windows where `filepath.Join` produces backslashes. `fix(test)` (24d9735)
+- **Website asset rename** — `nexus-demo.gif` renamed to `grove-demo.gif` to match the rebrand. `fix(website)` (27acb0f, 23c9d6f)
+
 ## [v0.6.0] - 2026-05-28
 
 ### Added
