@@ -48,6 +48,7 @@ var keybindingGroups = []bindingGroup{
 		bindings: [][2]string{
 			{"Enter (Issues view)", "Create worktree from selected issue"},
 			{"Ctrl+D", "Delete selected worktree"},
+			{"Ctrl+B", "Cleanup stale worktrees & merged branches"},
 			{"s", "Open shell in worktree"},
 			{"x", "Close session and terminal tab"},
 		},

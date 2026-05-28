@@ -231,6 +231,38 @@ func (g *GitCommand) GitBranch(path string) (string, error) {
 	return strings.TrimSpace(output), nil
 }
 
+// ListMergedBranches returns local branches that have been fully merged into
+// defaultBranch. The defaultBranch itself is excluded from the result.
+// The current branch marker ("* ") is stripped so every entry is a plain name.
+func (g *GitCommand) ListMergedBranches(defaultBranch string) ([]string, error) {
+	output, err := g.run("list merged branches", "branch", "--merged", defaultBranch)
+	if err != nil {
+		return nil, err
+	}
+
+	var branches []string
+	for _, line := range strings.Split(output, "\n") {
+		// Strip the "* " current-branch marker and surrounding whitespace.
+		line = strings.TrimPrefix(strings.TrimSpace(line), "* ")
+		line = strings.TrimSpace(line)
+		if line == "" || line == defaultBranch {
+			continue
+		}
+		branches = append(branches, line)
+	}
+	return branches, nil
+}
+
+// DeleteBranch deletes the named local branch. When force is true, -D is used
+// (deletes even if unmerged); otherwise -d is used (safe delete).
+func (g *GitCommand) DeleteBranch(branch string, force bool) error {
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	return g.runNoOutput("delete branch", "branch", flag, branch)
+}
+
 func (g *GitCommand) run(op string, args ...string) (string, error) {
 	output, err := g.runner(g.repoPath, args...)
 	if err != nil {

@@ -1318,3 +1318,126 @@ func TestGitCommand_ListModifiedFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestGitCommand_ListMergedBranches(t *testing.T) {
+tests := []struct {
+name          string
+defaultBranch string
+output        string
+runErr        error
+wantArgs      []string
+wantBranches  []string
+expectErr     string
+}{
+{
+name:          "returns merged branches excluding default",
+defaultBranch: "main",
+output:        "  feat/issue-1-something\n  fix/old-bug\n  main\n",
+wantArgs:      []string{"branch", "--merged", "main"},
+wantBranches:  []string{"feat/issue-1-something", "fix/old-bug"},
+},
+{
+name:          "strips current-branch marker",
+defaultBranch: "main",
+output:        "* feat/current\n  feat/old\n",
+wantArgs:      []string{"branch", "--merged", "main"},
+wantBranches:  []string{"feat/current", "feat/old"},
+},
+{
+name:          "returns nil when only default branch present",
+defaultBranch: "main",
+output:        "* main\n",
+wantArgs:      []string{"branch", "--merged", "main"},
+wantBranches:  nil,
+},
+{
+name:          "returns nil on empty output",
+defaultBranch: "main",
+output:        "",
+wantArgs:      []string{"branch", "--merged", "main"},
+wantBranches:  nil,
+},
+{
+name:          "propagates runner error",
+defaultBranch: "main",
+runErr:        errors.New("git exploded"),
+wantArgs:      []string{"branch", "--merged", "main"},
+expectErr:     "git exploded",
+},
+}
+
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+var calledArgs []string
+runner := func(_ string, args ...string) (string, error) {
+calledArgs = append([]string{}, args...)
+return tt.output, tt.runErr
+}
+cmd := NewGitCommandWithRunner("/repo", runner)
+branches, err := cmd.ListMergedBranches(tt.defaultBranch)
+
+assert.Equal(t, tt.wantArgs, calledArgs)
+
+if tt.expectErr != "" {
+require.Error(t, err)
+assert.Contains(t, err.Error(), tt.expectErr)
+return
+}
+require.NoError(t, err)
+assert.Equal(t, tt.wantBranches, branches)
+})
+}
+}
+
+func TestGitCommand_DeleteBranch(t *testing.T) {
+tests := []struct {
+name      string
+branch    string
+force     bool
+runErr    error
+wantArgs  []string
+expectErr string
+}{
+{
+name:     "safe delete uses -d",
+branch:   "feat/old",
+force:    false,
+wantArgs: []string{"branch", "-d", "feat/old"},
+},
+{
+name:     "force delete uses -D",
+branch:   "feat/old",
+force:    true,
+wantArgs: []string{"branch", "-D", "feat/old"},
+},
+{
+name:      "propagates runner error",
+branch:    "feat/old",
+force:     false,
+runErr:    errors.New("branch not found"),
+wantArgs:  []string{"branch", "-d", "feat/old"},
+expectErr: "branch not found",
+},
+}
+
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+var calledArgs []string
+runner := func(_ string, args ...string) (string, error) {
+calledArgs = append([]string{}, args...)
+return "", tt.runErr
+}
+cmd := NewGitCommandWithRunner("/repo", runner)
+err := cmd.DeleteBranch(tt.branch, tt.force)
+
+assert.Equal(t, tt.wantArgs, calledArgs)
+
+if tt.expectErr != "" {
+require.Error(t, err)
+assert.Contains(t, err.Error(), tt.expectErr)
+return
+}
+require.NoError(t, err)
+})
+}
+}
