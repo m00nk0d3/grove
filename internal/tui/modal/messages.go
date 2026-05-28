@@ -66,3 +66,25 @@ type SpawnAgentMsg struct {
 
 // UpdateConfirmedMsg is sent when the user confirms the self-update from the update modal.
 type UpdateConfirmedMsg struct{}
+
+// CandidateKind distinguishes the type of a cleanup candidate.
+type CandidateKind int
+
+const (
+	CandidateWorktree CandidateKind = iota // a worktree whose branch is merged
+	CandidateBranch                        // a merged branch with no active worktree
+)
+
+// CleanupCandidate represents a single item that can be removed in the cleanup flow.
+type CleanupCandidate struct {
+	Kind   CandidateKind
+	Path   string // worktree path (only for CandidateWorktree)
+	Branch string // branch name
+}
+
+// CleanupConfirmedMsg is sent when the user confirms deletion in the cleanup modal.
+// Worktrees contains paths to remove; Branches contains branch names to delete.
+type CleanupConfirmedMsg struct {
+	Worktrees []string
+	Branches  []string
+}

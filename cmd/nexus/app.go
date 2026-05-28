@@ -107,6 +107,18 @@ type updateCheckedMsg struct {
 // selfUpdateDoneMsg carries the result of a self-update attempt.
 type selfUpdateDoneMsg struct{ err error }
 
+// cleanupLoadedMsg carries cleanup candidates loaded from git.
+type cleanupLoadedMsg struct {
+	candidates []modal.CleanupCandidate
+	err        error
+}
+
+// cleanupDoneMsg carries the result of a batch worktree/branch cleanup.
+type cleanupDoneMsg struct {
+	deleted int
+	err     error
+}
+
 // fuzzyOpenMsg is dispatched when the user opens the fuzzy finder.
 type fuzzyOpenMsg struct{}
 
@@ -395,6 +407,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modal.WorktreeDeleteConfirmedMsg:
 			m.activeModal = nil
 			return m, m.removeWorktreeCmd(msg.Path)
+		case modal.CleanupConfirmedMsg:
+			m.activeModal = nil
+			return m, m.performCleanupCmd(msg.Worktrees, msg.Branches)
 		case modal.AiderLaunchMsg:
 			m.activeModal = nil
 			if selected, ok := m.selectedWorktree(); ok {
@@ -615,6 +630,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.selectedWorktree(); ok {
 				m.activeModal = modal.NewDeleteModal(selected)
 			}
+		case tea.KeyCtrlB:
+			if m.view != viewWorktrees {
+				m.statusErr = "Cleanup (Ctrl+B) is only available in the Worktrees view — press w to switch"
+				return m, clearErrorCmd()
+			}
+			return m, m.loadCleanupDataCmd()
 		case tea.KeyCtrlF:
 			return m, m.openFuzzyCmd()
 		case tea.KeyCtrlR:
@@ -1054,6 +1075,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusMsg = "✓ Updated successfully! Please restart nexus to use the new version."
 		return m, clearMsgCmd()
+
+	case cleanupLoadedMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("Failed to load cleanup data: %v", msg.err)
+			return m, clearErrorCmd()
+		}
+		m.activeModal = modal.NewCleanupModal(msg.candidates)
+		return m, nil
+
+	case cleanupDoneMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("Cleanup failed: %v", msg.err)
+			return m, tea.Batch(m.refreshWorktreesCmd(), clearErrorCmd())
+		}
+		m.statusMsg = fmt.Sprintf("✓ Cleaned up %d item(s)", msg.deleted)
+		return m, tea.Batch(m.refreshWorktreesCmd(), clearMsgCmd())
 
 	case fuzzyOpenMsg:
 		return m, m.buildSearchIndexCmd()
@@ -2505,4 +2542,88 @@ func openCommitInBrowserCmd(hash, repoPath string) tea.Cmd {
 	cmd := exec.Command("gh", "browse", hash)
 	cmd.Dir = repoPath
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
+}
+
+// loadCleanupDataCmd detects stale worktrees (branch merged into default) and
+// merged branches without an active worktree, then returns a cleanupLoadedMsg
+// carrying the candidates for the CleanupModal.
+func (m *Model) loadCleanupDataCmd() tea.Cmd {
+	repoPath := m.RepoPath
+	worktrees := m.Worktrees // snapshot to avoid data race
+	return func() tea.Msg {
+		git := internalexec.NewGitCommand(repoPath)
+		defaultBranch := git.DefaultBranch()
+
+		mergedBranches, err := git.ListMergedBranches(defaultBranch)
+		if err != nil {
+			return cleanupLoadedMsg{err: err}
+		}
+
+		// Index merged branches for O(1) lookup.
+		mergedSet := make(map[string]bool, len(mergedBranches))
+		for _, b := range mergedBranches {
+			mergedSet[b] = true
+		}
+
+		// Index branches that already have a worktree.
+		worktreeByBranch := make(map[string]bool, len(worktrees))
+		for _, wt := range worktrees {
+			worktreeByBranch[wt.Branch] = true
+		}
+
+		var candidates []modal.CleanupCandidate
+
+		// Stale worktrees: non-main worktrees whose branch is fully merged.
+		// worktrees[0] is always the main (primary) worktree — skip it.
+		for _, wt := range worktrees[1:] {
+			if mergedSet[wt.Branch] {
+				candidates = append(candidates, modal.CleanupCandidate{
+					Kind:   modal.CandidateWorktree,
+					Path:   wt.Path,
+					Branch: wt.Branch,
+				})
+			}
+		}
+
+		// Merged branches without a worktree.
+		for _, b := range mergedBranches {
+			if !worktreeByBranch[b] {
+				candidates = append(candidates, modal.CleanupCandidate{
+					Kind:   modal.CandidateBranch,
+					Branch: b,
+				})
+			}
+		}
+
+		return cleanupLoadedMsg{candidates: candidates}
+	}
+}
+
+// performCleanupCmd removes the given worktree paths and deletes the given branch
+// names, accumulating errors and returning a cleanupDoneMsg with total deleted count.
+func (m *Model) performCleanupCmd(worktreePaths []string, branches []string) tea.Cmd {
+	repoPath := m.RepoPath
+	return func() tea.Msg {
+		git := internalexec.NewGitCommand(repoPath)
+		var errs []error
+		deleted := 0
+
+		for _, path := range worktreePaths {
+			if err := git.RemoveWorktree(path, true); err != nil {
+				errs = append(errs, fmt.Errorf("remove worktree %s: %w", path, err))
+			} else {
+				deleted++
+			}
+		}
+
+		for _, branch := range branches {
+			if err := git.DeleteBranch(branch, false); err != nil {
+				errs = append(errs, fmt.Errorf("delete branch %s: %w", branch, err))
+			} else {
+				deleted++
+			}
+		}
+
+		return cleanupDoneMsg{deleted: deleted, err: errors.Join(errs...)}
+	}
 }
