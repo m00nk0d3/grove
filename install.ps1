@@ -47,7 +47,7 @@ try {
     }
 
     Write-Host ""
-    Write-Host "✓ nexus v$version installed to $InstallDir\$Binary.exe"
+    Write-Host "[OK] nexus v$version installed to $InstallDir\$Binary.exe"
     Write-Host ""
     Write-Host "Run: nexus"
     Write-Host "Docs: https://github.com/$Repo"
