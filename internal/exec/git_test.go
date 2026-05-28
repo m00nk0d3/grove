@@ -2,6 +2,7 @@ package exec
 
 import (
 	"errors"
+	osexec "os/exec"
 	"os"
 	"testing"
 
@@ -159,6 +160,8 @@ func TestGitCommand_ListWorktrees(t *testing.T) {
 		listErr       error
 		statusOutputs map[string]string // worktree path -> git status --porcelain output
 		statusErr     error
+		// statusErrByPath overrides statusErr for a specific worktree path.
+		statusErrByPath map[string]error
 		// missingPaths overrides stat for specific paths to simulate non-existent dirs.
 		// nil means all paths are treated as existing (default for most test cases).
 		missingPaths  map[string]bool
@@ -285,6 +288,11 @@ func TestGitCommand_ListWorktrees(t *testing.T) {
 					return tt.listOutput, tt.listErr
 				}
 				// status --porcelain call
+				if tt.statusErrByPath != nil {
+					if err, ok := tt.statusErrByPath[repoPath]; ok {
+						return "", err
+					}
+				}
 				if tt.statusErr != nil {
 					return "", tt.statusErr
 				}
@@ -1440,4 +1448,51 @@ return
 require.NoError(t, err)
 })
 }
+}
+
+// TestGitCommand_ListWorktrees_BrokenGitLink verifies that a worktree whose
+// path exists on disk but is not a valid git repository (e.g. the .git link
+// is broken) causes git to exit with code 128. ListWorktrees must treat this
+// the same as a missing path: return IsClean=false without propagating an error.
+func TestGitCommand_ListWorktrees_BrokenGitLink(t *testing.T) {
+	// Obtain a real *exec.ExitError with code 128 by running git status in a
+	// temp directory that is not a git repository.
+	nonRepo := t.TempDir()
+	exit128Err := func() error {
+		_, err := runGitCommand(nonRepo, "status", "--porcelain")
+		require.Error(t, err)
+		var exitErr *osexec.ExitError
+		require.True(t, errors.As(err, &exitErr), "expected *exec.ExitError from git in non-repo dir")
+		require.Equal(t, 128, exitErr.ExitCode())
+		return err
+	}()
+
+	listOutput := "worktree /repo/main\n" +
+		"HEAD ffffffffffffffffffffffffffffffffffffffff\n" +
+		"branch refs/heads/main\n" +
+		"\n" +
+		"worktree /repo/broken\n" +
+		"HEAD 1111111111111111111111111111111111111111\n" +
+		"branch refs/heads/broken-branch\n"
+
+	runner := func(repoPath string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "worktree" {
+			return listOutput, nil
+		}
+		if repoPath == "/repo/broken" {
+			return "", exit128Err
+		}
+		return "", nil // /repo/main is clean
+	}
+
+	cmd := NewGitCommandWithRunner("/repo/main", runner)
+	cmd.stat = func(string) (os.FileInfo, error) { return nil, nil } // all paths "exist"
+
+	actual, err := cmd.ListWorktrees()
+
+	require.NoError(t, err)
+	assert.Equal(t, []domain.Worktree{
+		{Path: "/repo/main", CommitSHA: "ffffffffffffffffffffffffffffffffffffffff", Branch: "main", IsClean: true},
+		{Path: "/repo/broken", CommitSHA: "1111111111111111111111111111111111111111", Branch: "broken-branch", IsClean: false},
+	}, actual)
 }

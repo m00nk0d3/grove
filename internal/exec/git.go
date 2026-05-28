@@ -1,6 +1,7 @@
 package exec
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	osexec "os/exec"
@@ -80,6 +81,13 @@ func (g *GitCommand) isWorktreeClean(path string) (bool, error) {
 	}
 	output, err := g.runner(path, "status", "--porcelain")
 	if err != nil {
+		// A path that exists on disk but has a broken/missing .git link (e.g. a
+		// stale worktree registration) causes git to exit 128 with "fatal: not a
+		// git repository". Treat this the same as a missing path: not clean, no error.
+		var exitErr *osexec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 128 {
+			return false, nil
+		}
 		return false, fmt.Errorf("check worktree status: %w", err)
 	}
 	return strings.TrimSpace(output) == "", nil
