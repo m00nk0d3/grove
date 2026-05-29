@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -98,6 +99,9 @@ func (g *GitCommand) isWorktreeClean(path string) (bool, error) {
 // the most recent remote commit. If the fetch fails (e.g. offline or no remote),
 // it falls back to the local branch ref so the command still works offline.
 func (g *GitCommand) AddWorktreeNewBranch(path, branchName, baseBranch string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("add worktree new branch: create parent dir: %w", err)
+	}
 	if err := g.FetchRemoteBranch(baseBranch); err == nil {
 		return g.runNoOutput("add worktree new branch", "worktree", "add", "-b", branchName, path, "origin/"+baseBranch)
 	}
@@ -106,6 +110,9 @@ func (g *GitCommand) AddWorktreeNewBranch(path, branchName, baseBranch string) e
 
 // AddWorktree adds a new worktree at path for branch.
 func (g *GitCommand) AddWorktree(path, branch string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("add worktree: create parent dir: %w", err)
+	}
 	return g.runNoOutput("add worktree", "worktree", "add", path, branch)
 }
 
