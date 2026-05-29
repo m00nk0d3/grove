@@ -197,6 +197,9 @@ func (m *CleanupModal) confirmCmd() tea.Cmd {
 		switch e.candidate.Kind {
 		case CandidateWorktree:
 			worktrees = append(worktrees, e.candidate.Path)
+			if e.candidate.Branch != "" {
+				branches = append(branches, e.candidate.Branch)
+			}
 		case CandidateBranch:
 			branches = append(branches, e.candidate.Branch)
 		}
