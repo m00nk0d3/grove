@@ -24,9 +24,9 @@ func TestRenderFull_ContainsHeader(t *testing.T) {
 		wantIn   []string
 	}{
 		{
-			name:     "header includes NEXUS branding and GIT WORKTREE ORCHESTRATOR",
+			name:     "header includes GROVE branding and GIT WORKTREE ORCHESTRATOR",
 			repoPath: "/home/user/nexus",
-			wantIn:   []string{"NEXUS", "GIT WORKTREE ORCHESTRATOR"},
+			wantIn:   []string{"GROVE", "GIT WORKTREE ORCHESTRATOR"},
 		},
 		{
 			name:     "header includes repo path",
@@ -283,7 +283,7 @@ func TestRenderFooterBar_SyncStatus(t *testing.T) {
 		},
 		{
 			name:   "shows nothing when never synced and not syncing",
-			wantIn: "NEXUS",
+			wantIn: "GROVE",
 		},
 	}
 

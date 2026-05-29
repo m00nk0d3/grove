@@ -20,7 +20,7 @@ func TestNewHelpModal_StartsOnKeybindingsTab(t *testing.T) {
 func TestHelpModal_Title_ReturnsNexusHelp(t *testing.T) {
 	m := NewHelpModal()
 
-	assert.Equal(t, "NEXUS HELP", m.Title())
+	assert.Equal(t, "GROVE HELP", m.Title())
 }
 
 func TestHelpModal_Init_ReturnsNil(t *testing.T) {

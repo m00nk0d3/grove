@@ -195,7 +195,7 @@ func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSes
 		repoPath = "./"
 	}
 	text := fmt.Sprintf(
-		"NEXUS %s: GIT WORKTREE ORCHESTRATOR | Repo: %s | Local Path: %s",
+		"GROVE %s: GIT WORKTREE ORCHESTRATOR | Repo: %s | Local Path: %s",
 		version.Version, filepath.Base(repoPath), repoPath,
 	)
 	if activeSessions > 0 {

@@ -107,7 +107,7 @@ func (m *HelpModal) SetTheme(t styles.Theme) {
 func (m *HelpModal) Init() tea.Cmd { return nil }
 
 // Title returns the modal title for themed overlay rendering.
-func (m *HelpModal) Title() string { return "NEXUS HELP" }
+func (m *HelpModal) Title() string { return "GROVE HELP" }
 
 // Update handles Bubbletea messages.
 func (m *HelpModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -408,7 +408,7 @@ Config not loading
   Delete or reset the file to restore defaults.`
 
 func aboutContent() string {
-	return fmt.Sprintf(`NEXUS — Git Worktree Orchestrator & AI Agent Hub
+	return fmt.Sprintf(`GROVE — Git Worktree Orchestrator & AI Agent Hub
 
 Version:   %s
 Repo:      github.com/m00nk0d3/grove
