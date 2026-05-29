@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.6.3] - 2026-05-29
+
+### Fixed
+
+- **First worktree creation no longer fails with "Git operation failed"** — `git worktree add` creates the leaf directory but requires its parent to exist. When `worktrees/<repo>/` hadn't been created yet, git exited fatally. `os.MkdirAll` is now called on the parent path before every `git worktree add`. `fix(exec)` (03770e7)
+
 ## [v0.6.2] - 2026-05-29
 
 ### Fixed
