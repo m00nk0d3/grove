@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.6.2] - 2026-05-29
+
+### Fixed
+
+- **Bulk delete now also removes the branch of a stale worktree** — selecting a worktree in the Ctrl+B cleanup modal only queued the worktree path for deletion; the associated branch was left dangling. The branch is now also deleted after the worktree is removed. `fix(tui)` (2a69733)
+- **Header and help modal rebranded from NEXUS to GROVE** — four lingering references to the old project name have been updated. `fix(tui)` (3754330)
+
+### Added
+
+- **Dynamic changelog on the website** — the Changelog section now fetches live data from the GitHub Releases API instead of a hardcoded list with wrong dates. Highlights are parsed from release notes automatically; a skeleton loader and graceful fallback are included. `feat(website)` (4cd6a27)
+
 ## [v0.6.1] - 2026-05-28
 
 ### Fixed
