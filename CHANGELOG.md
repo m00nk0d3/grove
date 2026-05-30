@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.6.5] - 2026-05-30
+
+### Fixed
+
+- **CI build restored** — the `MkdirAll` call added in v0.6.3 was placed inside the git command wrappers, which caused unit tests to fail on CI (fake paths like `/repo/feature` triggered real filesystem operations). Moved to the app layer where runtime paths are used. `fix(exec)` (76df59f)
+
 ## [v0.6.4] - 2026-05-30
 
 ### Fixed
