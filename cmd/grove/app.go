@@ -1286,6 +1286,9 @@ func (m *Model) syncGitHubCmd(force bool) tea.Cmd {
 func (m *Model) addWorktreeCmd(branch, path, baseBranch string) tea.Cmd {
 	repoPath := m.RepoPath
 	return func() tea.Msg {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return worktreeOpDoneMsg{err: fmt.Errorf("create worktree parent dir: %w", err)}
+		}
 		cmd := internalexec.NewGitCommand(repoPath)
 		if baseBranch == "" {
 			baseBranch = cmd.DefaultBranch()
@@ -1299,6 +1302,9 @@ func (m *Model) addWorktreeCmd(branch, path, baseBranch string) tea.Cmd {
 func (m *Model) checkoutPRWorktreeCmd(branch, path string) tea.Cmd {
 	repoPath := m.RepoPath
 	return func() tea.Msg {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return worktreeOpDoneMsg{err: fmt.Errorf("create worktree parent dir: %w", err)}
+		}
 		cmd := internalexec.NewGitCommand(repoPath)
 		err := cmd.CheckoutPRWorktree(path, branch)
 		return worktreeOpDoneMsg{err: err}
