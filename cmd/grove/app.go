@@ -2617,7 +2617,7 @@ func (m *Model) performCleanupCmd(worktreePaths []string, branches []string) tea
 		}
 
 		for _, branch := range branches {
-			if err := git.DeleteBranch(branch, false); err != nil {
+			if err := git.DeleteBranch(branch, true); err != nil {
 				errs = append(errs, fmt.Errorf("delete branch %s: %w", branch, err))
 			} else {
 				deleted++
