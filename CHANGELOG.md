@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.6.4] - 2026-05-30
+
+### Fixed
+
+- **Ctrl+B cleanup no longer fails on unmerged branches** — the cleanup modal used `git branch -d` (safe delete) which refuses branches that haven't been merged into HEAD. Since the user explicitly selects branches for deletion, `git branch -D` (force delete) is now used so cleanup always succeeds. `fix(tui)` (bd42a8d)
+
 ## [v0.6.3] - 2026-05-29
 
 ### Fixed
