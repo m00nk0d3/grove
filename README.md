@@ -1,4 +1,4 @@
-﻿# NEXUS — Git Worktree Orchestrator & AI Agent Hub
+﻿# GROVE— Git Worktree Orchestrator & AI Agent Hub
 
 > Manage Git worktrees, track GitHub PRs and Issues, launch AI coding agents, and keep tabs on every active session — all from a single terminal interface. No browser. No tab soup. Just vibes.
 
