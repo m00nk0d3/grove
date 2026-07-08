@@ -20,6 +20,14 @@ func setWindowsCmdLine(_ *exec.Cmd, _ string) {}
 // whether the tab is still open. Returns the shell PID, or 0 if the PID could
 // not be determined within 3 seconds.
 func spawnTerminalWindow(path string) (int, error) {
+	if IsHerdrInstalled() {
+		cmd := BuildHerdrCommand(path, "")
+		if err := cmd.Start(); err == nil {
+			return cmd.Process.Pid, nil
+		}
+		return 0, err
+	}
+
 	pidFile := filepath.Join(os.TempDir(), fmt.Sprintf("grove-session-%d.pid", time.Now().UnixNano()))
 
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, "", pidFile, runtime.GOOS); ok {
@@ -52,6 +60,14 @@ func spawnTerminalWindow(path string) (int, error) {
 // The TUI is not suspended — grove keeps running in the original terminal.
 // Agent processes are tracked via AgentPID, not ShellPID, so no PID file is used.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
+	if IsHerdrInstalled() {
+		cmd := BuildHerdrCommand(path, agentCmd)
+		if err := cmd.Start(); err == nil {
+			return cmd.Process.Pid, nil
+		}
+		return 0, err
+	}
+
 	if tabCmd, ok := buildNewTabWithCmdCmd(path, agentCmd, "", runtime.GOOS); ok {
 		if err := tabCmd.Start(); err == nil {
 			return tabCmd.Process.Pid, nil

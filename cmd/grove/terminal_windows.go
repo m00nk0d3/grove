@@ -56,6 +56,14 @@ func setWindowsCmdLine(c *exec.Cmd, path string) {
 // cmd.exe window. Returns the PID of the spawned shell process, or 0 when no
 // trackable long-lived PID is available.
 func spawnTerminalWindow(path string) (int, error) {
+	if IsHerdrInstalled() {
+		cmd := BuildHerdrCommand(path, "")
+		if err := cmd.Start(); err == nil {
+			return cmd.Process.Pid, nil
+		}
+		return 0, err
+	}
+
 	// Windows Terminal: use a PID-file trick so we get the real PowerShell PID
 	// (which stays alive as long as the tab is open) instead of the wt.exe
 	// launcher PID (which exits immediately after creating the tab).
@@ -95,7 +103,7 @@ func spawnTerminalWindow(path string) (int, error) {
 	// the actual cmd.exe /K shell — the one that stays alive while the user has
 	// the window open.
 	fallbackPsCmd := fmt.Sprintf(
-		`(Start-Process -FilePath 'cmd' -ArgumentList '/K','cd /d "%s"' -PassThru).Id`,
+		`(Start-Process -FilePath 'cmd' -ArgumentList '-K','cd /d "%s"' -PassThru).Id`,
 		path,
 	)
 	out, err := exec.Command(
@@ -115,6 +123,14 @@ func spawnTerminalWindow(path string) (int, error) {
 // current terminal emulator when possible, falling back to a new cmd.exe window.
 // The TUI is not suspended — grove keeps running in the original terminal.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
+	if IsHerdrInstalled() {
+		cmd := BuildHerdrCommand(path, agentCmd)
+		if err := cmd.Start(); err == nil {
+			return cmd.Process.Pid, nil
+		}
+		return 0, err
+	}
+
 	// Windows Terminal: use the PID-file trick to capture the real PowerShell PID
 	// (wt.exe exits immediately after launching the tab, so tabCmd.Process.Pid
 	// would be dead by the time the health-check poller runs).
