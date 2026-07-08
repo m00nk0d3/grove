@@ -1755,15 +1755,35 @@ func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
 // Ghostty does not yet expose a stable tab-open CLI; it is handled as a new
 // window in buildNewTerminalWithCmdCmd.
 func buildNewTabWithCmdCmd(path, agentCmd, pidFile, goos string) (*exec.Cmd, bool) {
-	// 1. Multiplexers — take precedence over GUI terminal tabs.
-	if os.Getenv("TMUX") != "" {
-		args := []string{"new-window", "-c", path}
-		if agentCmd != "" {
-			args = append(args, agentCmd)
-		} else if pidFile != "" {
-			args = append(args, pidInitUnixCmd(pidFile))
+	// 0. Herdr — take precedence over all other multiplexers.
+	if _, err := exec.LookPath("herdr"); err == nil {
+		workspaceID := os.Getenv("HERDR_WORKSPACE_ID")
+		var args []string
+		if workspaceID != "" {
+			// In a herdr session
+			args = []string{"agent", "start", "grove-agent", "--workspace", workspaceID}
+		} else {
+			// Not in a herdr session
+			args = []string{"agent", "start", "grove-agent"}
 		}
-		return exec.Command("tmux", args...), true
+		args = append(args, "--cwd", path)
+
+		if agentCmd != "" {
+			var shellCmd string
+			if goos == "windows" {
+				shellCmd = "cmd /K " + shellQuote(agentCmd)
+			} else {
+				shellCmd = "sh -c " + shellQuote(agentCmd)
+			}
+			args = append(args, "--", shellCmd)
+		} else if pidFile != "" {
+			shell := os.Getenv("SHELL")
+			if shell == "" {
+				shell = "/bin/sh"
+			}
+			args = append(args, "--", shell, "-c", pidInitUnixCmd(pidFile))
+		}
+		return exec.Command("herdr", args...), true
 	}
 	if os.Getenv("ZELLIJ") != "" || os.Getenv("ZELLIJ_SESSION_NAME") != "" {
 		shell := os.Getenv("SHELL")
