@@ -21,7 +21,8 @@ func setWindowsCmdLine(_ *exec.Cmd, _ string) {}
 // not be determined within 3 seconds.
 func spawnTerminalWindow(path string) (int, error) {
 	if IsHerdrInstalled() {
-		cmd := BuildHerdrCommand(path, "")
+		workspaceID := os.Getenv("HERDR_WORKSPACE_ID")
+		cmd := BuildHerdrCommand(path, workspaceID, "")
 		if err := cmd.Start(); err == nil {
 			return cmd.Process.Pid, nil
 		}
@@ -61,7 +62,7 @@ func spawnTerminalWindow(path string) (int, error) {
 // Agent processes are tracked via AgentPID, not ShellPID, so no PID file is used.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
 	if IsHerdrInstalled() {
-		cmd := BuildHerdrCommand(path, agentCmd)
+		cmd := BuildHerdrPaneCmd("current", agentCmd)
 		if err := cmd.Start(); err == nil {
 			return cmd.Process.Pid, nil
 		}

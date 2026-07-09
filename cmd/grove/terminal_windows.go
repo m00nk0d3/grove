@@ -57,7 +57,8 @@ func setWindowsCmdLine(c *exec.Cmd, path string) {
 // trackable long-lived PID is available.
 func spawnTerminalWindow(path string) (int, error) {
 	if IsHerdrInstalled() {
-		cmd := BuildHerdrWorkspaceCmd(path, "")
+		workspaceID := os.Getenv("HERDR_WORKSPACE_ID")
+		cmd := BuildHerdrCommand(path, workspaceID, "")
 		if err := cmd.Start(); err == nil {
 			return cmd.Process.Pid, nil
 		}

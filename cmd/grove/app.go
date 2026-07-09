@@ -1757,20 +1757,16 @@ func buildNewTerminalWithCmdCmd(path, agentCmd, goos string) *exec.Cmd {
 func buildNewTabWithCmdCmd(path, agentCmd, pidFile, goos string) (*exec.Cmd, bool) {
 	// 0. Herdr — take precedence over all other multiplexers.
 	if _, err := exec.LookPath("herdr"); err == nil {
-		workspaceID := os.Getenv("HERDR_WORKSPACE_ID")
-		var args []string
-		if workspaceID != "" {
-			args = BuildHerdrTabCmd(path, workspaceID, "")
-		} else {
-			args = BuildHerdrWorkspaceCmd(path, "")
-		}
-
 		if agentCmd != "" {
 			// Use "current" as a placeholder for paneID as we don't have a way to 
 			// get the actual ID from the creation command in a single step.
-			args = BuildHerdrPaneCmd("current", agentCmd)
+			return BuildHerdrPaneCmd("current", agentCmd), true
 		}
-		return exec.Command("herdr", args...), true
+		workspaceID := os.Getenv("HERDR_WORKSPACE_ID")
+		if workspaceID != "" {
+			return BuildHerdrTabCmd(path, workspaceID, ""), true
+		}
+		return BuildHerdrWorkspaceCmd(path, ""), true
 	}
 	if os.Getenv("ZELLIJ") != "" || os.Getenv("ZELLIJ_SESSION_NAME") != "" {
 		shell := os.Getenv("SHELL")
