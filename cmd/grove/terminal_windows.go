@@ -57,7 +57,7 @@ func setWindowsCmdLine(c *exec.Cmd, path string) {
 // trackable long-lived PID is available.
 func spawnTerminalWindow(path string) (int, error) {
 	if IsHerdrInstalled() {
-		cmd := BuildHerdrCommand(path, "")
+		cmd := BuildHerdrWorkspaceCmd(path, "")
 		if err := cmd.Start(); err == nil {
 			return cmd.Process.Pid, nil
 		}
@@ -124,7 +124,7 @@ func spawnTerminalWindow(path string) (int, error) {
 // The TUI is not suspended — grove keeps running in the original terminal.
 func spawnAgentInTerminalWindow(path, agentCmd string) (int, error) {
 	if IsHerdrInstalled() {
-		cmd := BuildHerdrCommand(path, agentCmd)
+		cmd := BuildHerdrPaneCmd("current", agentCmd)
 		if err := cmd.Start(); err == nil {
 			return cmd.Process.Pid, nil
 		}

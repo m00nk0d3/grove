@@ -1760,28 +1760,15 @@ func buildNewTabWithCmdCmd(path, agentCmd, pidFile, goos string) (*exec.Cmd, boo
 		workspaceID := os.Getenv("HERDR_WORKSPACE_ID")
 		var args []string
 		if workspaceID != "" {
-			// In a herdr session
-			args = []string{"agent", "start", "grove-agent", "--workspace", workspaceID}
+			args = BuildHerdrTabCmd(path, workspaceID, "")
 		} else {
-			// Not in a herdr session
-			args = []string{"agent", "start", "grove-agent"}
+			args = BuildHerdrWorkspaceCmd(path, "")
 		}
-		args = append(args, "--cwd", path)
 
 		if agentCmd != "" {
-			var shellCmd string
-			if goos == "windows" {
-				shellCmd = "cmd /K " + shellQuote(agentCmd)
-			} else {
-				shellCmd = "sh -c " + shellQuote(agentCmd)
-			}
-			args = append(args, "--", shellCmd)
-		} else if pidFile != "" {
-			shell := os.Getenv("SHELL")
-			if shell == "" {
-				shell = "/bin/sh"
-			}
-			args = append(args, "--", shell, "-c", pidInitUnixCmd(pidFile))
+			// Use "current" as a placeholder for paneID as we don't have a way to 
+			// get the actual ID from the creation command in a single step.
+			args = BuildHerdrPaneCmd("current", agentCmd)
 		}
 		return exec.Command("herdr", args...), true
 	}
