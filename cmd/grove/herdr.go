@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -32,6 +33,14 @@ func BuildHerdrTabCmd(path, workspaceID, label string) *exec.Cmd {
 	return exec.Command("herdr", args...)
 }
 
+// BuildHerdrCommand constructs the command to create a new herdr workspace or tab.
+func BuildHerdrCommand(path, workspaceID, label string) *exec.Cmd {
+	if workspaceID != "" {
+		return BuildHerdrTabCmd(path, workspaceID, label)
+	}
+	return BuildHerdrWorkspaceCmd(path, label)
+}
+
 // BuildHerdrPaneCmd constructs the command to run a command in a herdr pane.
 // Matches PRD: herdr pane run <pane_id> <command>
 // The command is wrapped in a shell-safe manner.
@@ -39,9 +48,19 @@ func BuildHerdrPaneCmd(paneID, agentCmd string) *exec.Cmd {
 	if agentCmd == "" {
 		return nil
 	}
-	// Wrap agentCmd in single quotes to ensure sh -c treats it as a single command string.
-	// We escape existing single quotes by replacing them with '\'' (close quote, escaped quote, open quote).
-	safeAgentCmd := fmt.Sprintf("'%s'", strings.ReplaceAll(agentCmd, "'", `'\''`))
-	args := []string{"pane", "run", paneID, "sh", "-c", safeAgentCmd}
-	return exec.Command("herdr", args...)
+	var shell, args []string
+	if runtime.GOOS == "windows" {
+		shell = "cmd"
+		// Use /K to keep the shell open if needed, or just run it. 
+		// Wrapping in quotes for shell safety.
+		escapedCmd := strings.ReplaceAll(agentCmd, "\"", `\"`)
+		args = []string{"/K", fmt.Sprintf("\"%s\"", escapedCmd)}
+	} else {
+		shell = "sh"
+		// Wrap agentCmd in single quotes to ensure sh -c treats it as a single command string.
+		// We escape existing single quotes by replacing them with '\'' (close quote, escaped quote, open quote).
+		safeAgentCmd := fmt.Sprintf("'%s'", strings.ReplaceAll(agentCmd, "'", `'\''`))
+		args = []string{"-c", safeAgentCmd}
+	}
+	return exec.Command("herdr", append([]string{"pane", "run", paneID}, shell, args...)...)
 }
