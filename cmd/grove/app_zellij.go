@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 )
 
 // spawnZellijTabCmd spawns a new Zellij tab for worktree switching if zellij is available.
-// If zellij binary is not found or layout file is missing, falls back to plain shell session.
+// If zellij binary is not found or layout file is missing/unreadable, falls back to plain shell session.
 func (m *Model) spawnZellijTabCmd(worktreePath string) tea.Cmd {
 	return func() tea.Msg {
 		// 1. Check if zellij binary exists
@@ -26,6 +27,9 @@ func (m *Model) spawnZellijTabCmd(worktreePath string) tea.Cmd {
 		layoutPath, err := m.getLayoutPath()
 		if err != nil || !fileExists(layoutPath) {
 			// Use inline default layout if file missing
+			layoutPath = m.getDefaultLayout()
+		} else if !m.validateLayoutPath(layoutPath) {
+			// Fallback to inline default on permission failure
 			layoutPath = m.getDefaultLayout()
 		}
 
@@ -76,6 +80,24 @@ func (m *Model) getDefaultLayout() string {
     }
 }
 `
+}
+
+// validateLayoutPath checks that the layout file is readable by owner only (security hardening).
+func (m *Model) validateLayoutPath(layoutPath string) bool {
+	info, err := os.Stat(layoutPath)
+	if err != nil {
+		return false // Can't stat file, fallback to inline default
+	}
+	// Regular file AND no world-readable bits to prevent unauthorized access
+	if info.Mode().IsRegular() == false {
+		m.statusErr = fmt.Sprintf("Layout file is not a regular file: %s", layoutPath)
+		return false
+	}
+	if info.Mode().Perm()&0444 != 0 {
+		log.Printf("Warning: Layout file is world-readable: %s", layoutPath)
+		return false
+	}
+	return true
 }
 
 // fileExists checks if a file exists (non-blocking).
