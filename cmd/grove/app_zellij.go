@@ -111,3 +111,125 @@ func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }
+
+// spawnZellijTabCleanupPolicy implements the tab cleanup policy.
+// It spawns a Zellij tab but enforces max_tabs limit by cleaning up oldest tabs first.
+// Returns sessionSpawnedMsg with the new session.
+func (m *Model) spawnZellijTabCleanupPolicy(worktreePath string) sessionSpawnedMsg {
+	// Check if zellij is available
+	if _, err := exec.LookPath("zellij"); err != nil {
+		// Fallback: return shell session directly (no async tracking needed for fallback)
+		return sessionSpawnedMsg{
+			session: domain.Session{
+				WorktreePath: worktreePath,
+				Status:       domain.StatusActive,
+				StartedAt:    time.Now().UTC().Truncate(time.Second),
+			},
+		}
+	}
+
+	// Check layout file and get path (inline default if missing/unreadable)
+	layoutPath, err := m.getLayoutPath()
+	if err != nil || !fileExists(layoutPath) {
+		layoutPath = m.getDefaultLayout()
+	} else if !m.validateLayoutPath(layoutPath) {
+		layoutPath = m.getDefaultLayout()
+	}
+
+	// Build spawn command
+	worktreeName := filepath.Base(worktreePath)
+	spawnCmd := exec.Command("zellij", "action", "new-tab", "--layout", layoutPath, "--name", fmt.Sprintf("Grove-%s", worktreeName))
+
+	// Spawn asynchronously (don't block TUI)
+	go func() {
+		_, err = spawnCmd.CombinedOutput()
+		if err != nil {
+			// Log failure silently — worktree switch still succeeds
+			m.statusErr = fmt.Sprintf("Zellij tab spawn failed: %v (fallback to shell)", err)
+		}
+	}()
+
+	// Add new session to track it
+	session := domain.Session{
+		WorktreePath: worktreePath,
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	m.sessions = append(m.sessions, session)
+
+	// Apply cleanup policy if Zellij integration is enabled - enforce max_tabs AFTER adding new session
+	if m.Config.Zellij.Enabled && m.Config.Zellij.MaxTabs > 0 {
+		m.applyCleanupPolicy()
+	}
+
+	return sessionSpawnedMsg{
+		session: session,
+	}
+}
+
+// applyCleanupPolicy enforces the max_tabs limit by removing oldest sessions if needed.
+func (m *Model) applyCleanupPolicy() {
+	// Get current session count
+	currentCount := len(m.sessions)
+	maxTabs := m.Config.Zellij.MaxTabs
+
+	// If within limit, nothing to do
+	if currentCount < maxTabs {
+		return
+	}
+
+	// Need to clean up (sessions) oldest sessions first
+	toRemove := currentCount - maxTabs
+
+	// Sort by StartedAt (oldest first)
+	sortedSessions := make([]domain.Session, len(m.sessions))
+	copy(sortedSessions, m.sessions)
+
+	// Simple bubble sort for oldest-first (can be optimized with slices.Sort later)
+	for i := 0; i < len(sortedSessions)-1; i++ {
+		for j := i + 1; j < len(sortedSessions); j++ {
+			if sortedSessions[j].StartedAt.Before(sortedSessions[i].StartedAt) {
+				sortedSessions[i], sortedSessions[j] = sortedSessions[j], sortedSessions[i]
+			}
+		}
+	}
+
+	// Remove oldest sessions (from start of sorted array)
+	for i := 0; i < toRemove; i++ {
+		sessionToRemove := sortedSessions[i]
+		m.logCleanupEvent(sessionToRemove, maxTabs)
+	}
+
+	// Rebuild sessions list with remaining sessions
+	if len(sortedSessions) > maxTabs {
+		m.sessions = sortedSessions[toRemove:]
+	} else if len(sortedSessions) == maxTabs {
+		m.sessions = sortedSessions
+	}
+}
+
+// logCleanupEvent logs a cleanup event to the configured log file.
+func (m *Model) logCleanupEvent(session domain.Session, maxTabs int) {
+	if m.Config.LogFilePath == "" {
+		return // No log path configured
+	}
+
+	logDir := filepath.Dir(m.Config.LogFilePath)
+	os.MkdirAll(logDir, 0755)
+
+	// Create log file if it doesn't exist
+	file, err := os.OpenFile(m.Config.LogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("Failed to open log file for cleanup event: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// Log the cleanup event
+	msg := fmt.Sprintf("%s: Cleanup enforced max_tabs=%d. Removed session for worktree: %s (started at: %s)",
+		time.Now().Format(time.RFC3339), maxTabs, session.WorktreePath, session.StartedAt.Format(time.RFC3339))
+
+	if _, err := file.WriteString(msg + "\n"); err != nil {
+		log.Printf("Failed to write cleanup event to log: %v", err)
+	}
+}
