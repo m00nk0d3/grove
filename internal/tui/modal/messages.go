@@ -88,3 +88,9 @@ type CleanupConfirmedMsg struct {
 	Worktrees []string
 	Branches  []string
 }
+
+// ZellijSpawnMsg is dispatched when a worktree switch should spawn a new
+// Zellij tab with predefined layout (if zellij integration enabled).
+type ZellijSpawnMsg struct {
+	WorktreePath string // Path to worktree where Zellij tab should spawn
+}

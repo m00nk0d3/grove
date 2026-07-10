@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -431,6 +431,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.fetchAiderFilesCmd(msg.WorktreePath)
 			}
 			return m, nil
+		case modal.ZellijSpawnMsg:
+			// Spawn a new Zellij tab for worktree switching if enabled
+			if !m.Config.Zellij.Enabled {
+				// Opt-out: just spawn plain shell session
+				return m, m.spawnSessionCmd(msg.WorktreePath)
+			}
+			return m, m.spawnZellijTabCmd(msg.WorktreePath)
 		case modal.ModalCancelledMsg:
 			m.activeModal = nil
 			return m, nil

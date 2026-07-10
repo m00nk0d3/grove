@@ -1,0 +1,48 @@
+# Grove Zellij Layout Configuration
+# Use this file to customize the worktree pane layout
+# Edit this file directly — no rebuild needed!
+
+layout {
+    default_tab_template {
+        // Default pane configuration for all tabs
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
+    
+    # Fresh tab layout (used when spawning new worktree tabs)
+    tab name="Grove (%s)" focus=true {
+        # Vertical split: Left = Workspace, Right = Grove Context
+        pane split_direction="vertical" {
+            
+            // LEFT COLUMN: Workspace Shell or Neovim
+            pane command="bash" focus=false name="[Workspace]" size="70%" {
+                # Optional: Change to neovim instead of bash
+                # Uncomment below if you prefer nvim over bash:
+                # pane command="nvim" focus=false name="[Workspace]"
+            }
+            
+            // RIGHT COLUMN: Grove CLI (context, shell)
+            pane command="grove -c" focus=true name="[Grove Context]" size="30%" {
+                # This pane shows grove compact mode for quick commands
+                # Example: grove -c "list worktrees", "create worktree", etc.
+            }
+        }
+    }
+    
+    # Alternative: Full-screen neovim workspace layout
+    tab name="Grove-Nvim (%s)" focus=true {
+        pane split_direction="vertical" {
+            
+            // LEFT: Large neovim buffer for coding
+            pane command="nvim" focus=false name="[Neovim Workspace]" size="90%"
+            
+            // RIGHT: Small grove CLI for repo navigation
+            pane command="grove -c" focus=true name="[Grove Context]" size="10%"
+        }
+    }
+}
