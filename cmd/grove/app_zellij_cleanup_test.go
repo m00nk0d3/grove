@@ -191,8 +191,153 @@ func TestCleanupPolicyRespectsIdleThreshold(t *testing.T) {
 		t.Fatalf("cleanup should succeed: %v", result.err)
 	}
 
-	// Should have 3 sessions now (only oldest was removed if it exceeded threshold and max_tabs would be hit)
-	if len(m.sessions) > cfg.Zellij.MaxTabs+1 {
-		t.Errorf("expected <= %d sessions, got %d", cfg.Zellij.MaxTabs+1, len(m.sessions))
+	// Should have exactly maxTabs sessions after cleanup (oldest removed if exceeded threshold)
+	if len(m.sessions) > cfg.Zellij.MaxTabs {
+		t.Errorf("expected <= %d sessions, got %d", cfg.Zellij.MaxTabs, len(m.sessions))
+	}
+}
+
+// TestCleanupPolicyDisabled verifies cleanup is skipped when Zellij integration is disabled.
+func TestCleanupPolicyDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	layoutDir := filepath.Join(tmpDir, ".config", "grove", "layouts")
+	if err := os.MkdirAll(layoutDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	layoutFile := filepath.Join(layoutDir, "default.kdl")
+	if err := os.WriteFile(layoutFile, []byte("layout {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := domain.DefaultConfig()
+	cfg.Zellij.MaxTabs = 2
+	cfg.Zellij.Enabled = false // Disabled
+
+	m := &Model{
+		Config:      cfg,
+		sessions:    []domain.Session{},
+		Worktrees:   []domain.Worktree{{Path: tmpDir, Branch: "main"}},
+		selectedIdx: 0,
+		statusErr:   "",
+		statusMsg:   "",
+	}
+
+	// Spawn 5 sessions - cleanup should NOT be enforced
+	for i := 0; i < 5; i++ {
+		m.spawnZellijTabCleanupPolicy(tmpDir)
+	}
+
+	if len(m.sessions) != 5 {
+		t.Errorf("disabled cleanup: expected 5 sessions, got %d", len(m.sessions))
+	}
+}
+
+// TestCleanupPolicyWithNilDB tests cleanup when DB is not available.
+func TestCleanupPolicyWithNilDB(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	layoutDir := filepath.Join(tmpDir, ".config", "grove", "layouts")
+	if err := os.MkdirAll(layoutDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	layoutFile := filepath.Join(layoutDir, "default.kdl")
+	if err := os.WriteFile(layoutFile, []byte("layout {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := domain.DefaultConfig()
+	cfg.Zellij.MaxTabs = 2
+	cfg.Zellij.Enabled = true
+
+	m := &Model{
+		Config:      cfg,
+		sessions:    []domain.Session{},
+		Worktrees:   []domain.Worktree{{Path: tmpDir, Branch: "main"}},
+		selectedIdx: 0,
+		statusErr:   "",
+		statusMsg:   "",
+	} // No db field set (nil)
+
+	// Spawn sessions - cleanup should work on in-memory state only
+	for i := 0; i < 5; i++ {
+		m.spawnZellijTabCleanupPolicy(tmpDir)
+	}
+
+	if len(m.sessions) != 2 {
+		t.Errorf("in-memory cleanup: expected 2 sessions, got %d", len(m.sessions))
+	}
+}
+
+// TestCleanupPolicyWithZeroMaxTabs tests disabled cleanup when MaxTabs=0.
+func TestCleanupPolicyWithZeroMaxTabs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	layoutDir := filepath.Join(tmpDir, ".config", "grove", "layouts")
+	if err := os.MkdirAll(layoutDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	layoutFile := filepath.Join(layoutDir, "default.kdl")
+	if err := os.WriteFile(layoutFile, []byte("layout {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := domain.DefaultConfig()
+	cfg.Zellij.MaxTabs = 0 // Disabled
+	cfg.Zellij.Enabled = true
+
+	m := &Model{
+		Config:      cfg,
+		sessions:    []domain.Session{},
+		Worktrees:   []domain.Worktree{{Path: tmpDir, Branch: "main"}},
+		selectedIdx: 0,
+		statusErr:   "",
+		statusMsg:   "",
+	}
+
+	// Spawn 5 sessions - cleanup should NOT be enforced (MaxTabs=0 is disabled)
+	for i := 0; i < 5; i++ {
+		m.spawnZellijTabCleanupPolicy(tmpDir)
+	}
+
+	if len(m.sessions) != 5 {
+		t.Errorf("zero maxtabs: expected 5 sessions, got %d", len(m.sessions))
+	}
+}
+
+// TestCleanupPolicyEmptySessions tests cleanup when sessions list is empty.
+func TestCleanupPolicyEmptySessions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	layoutDir := filepath.Join(tmpDir, ".config", "grove", "layouts")
+	if err := os.MkdirAll(layoutDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	layoutFile := filepath.Join(layoutDir, "default.kdl")
+	if err := os.WriteFile(layoutFile, []byte("layout {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := domain.DefaultConfig()
+	cfg.Zellij.MaxTabs = 2
+	cfg.Zellij.Enabled = true
+
+	m := &Model{
+		Config:      cfg,
+		sessions:    []domain.Session{},
+		Worktrees:   []domain.Worktree{{Path: tmpDir, Branch: "main"}},
+		selectedIdx: 0,
+		statusErr:   "",
+		statusMsg:   "",
+	}
+
+	// Spawn once - should succeed without cleanup (within limit)
+	result := m.spawnZellijTabCleanupPolicy(tmpDir)
+	if result.err != nil {
+		t.Fatalf("single spawn should succeed: %v", result.err)
+	}
+
+	if len(m.sessions) != 1 {
+		t.Errorf("expected 1 session, got %d", len(m.sessions))
 	}
 }

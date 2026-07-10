@@ -1,4 +1,5 @@
 // Package main implements the Groove Git Worktree Orchestrator with Zellij integration.
+
 package main
 
 import (
@@ -7,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbletea"
+	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
 )
 
@@ -42,7 +45,9 @@ func (m *Model) spawnZellijTabCmd(worktreePath string) tea.Cmd {
 			_, err = spawnCmd.CombinedOutput()
 			if err != nil {
 				// Log failure silently — worktree switch still succeeds
-				m.statusErr = fmt.Sprintf("Zellij tab spawn failed: %v (fallback to shell)", err)
+				m.statusErr = fmt.Sprintf(`Zellij tab spawn failed: %v
+
+Tip: Ensure zellij is installed and ~/.config/grove/layouts/default.kdl exists`, err)
 			}
 		}()
 
@@ -78,8 +83,7 @@ func (m *Model) getDefaultLayout() string {
             pane command="grove -c" name="[Grove Context]" size="30%"
         }
     }
-}
-`
+}`
 }
 
 // validateLayoutPath checks that the layout file is readable by owner only (security hardening).
@@ -145,7 +149,9 @@ func (m *Model) spawnZellijTabCleanupPolicy(worktreePath string) sessionSpawnedM
 		_, err = spawnCmd.CombinedOutput()
 		if err != nil {
 			// Log failure silently — worktree switch still succeeds
-			m.statusErr = fmt.Sprintf("Zellij tab spawn failed: %v (fallback to shell)", err)
+			m.statusErr = fmt.Sprintf(`Zellij tab spawn failed: %v
+
+Tip: Ensure zellij is installed and ~/.config/grove/layouts/default.kdl exists`, err)
 		}
 	}()
 
@@ -181,20 +187,26 @@ func (m *Model) applyCleanupPolicy() {
 	// Need to clean up (sessions) oldest sessions first
 	toRemove := currentCount - maxTabs
 
-	// Sort by StartedAt (oldest first)
+	// Sort by StartedAt (oldest first) using slices.SortFunc for O(n log n)
 	sortedSessions := make([]domain.Session, len(m.sessions))
 	copy(sortedSessions, m.sessions)
+	slices.SortFunc(sortedSessions, func(a, b domain.Session) int {
+		switch {
+		case a.StartedAt.Before(b.StartedAt):
+			return -1
+		default:
+			return 1
+		}
+	})
 
-	// Simple bubble sort for oldest-first (can be optimized with slices.Sort later)
-	for i := 0; i < len(sortedSessions)-1; i++ {
-		for j := i + 1; j < len(sortedSessions); j++ {
-			if sortedSessions[j].StartedAt.Before(sortedSessions[i].StartedAt) {
-				sortedSessions[i], sortedSessions[j] = sortedSessions[j], sortedSessions[i]
-			}
+	// Sync removed sessions to DB before rebuilding list
+	for _, s := range sortedSessions[:toRemove] {
+		if m.db != nil && s.ID > 0 {
+			data.DeleteSession(m.db, s.ID)
 		}
 	}
 
-	// Remove oldest sessions (from start of sorted array)
+	// Log removals
 	for i := 0; i < toRemove; i++ {
 		sessionToRemove := sortedSessions[i]
 		m.logCleanupEvent(sessionToRemove, maxTabs)
@@ -204,6 +216,10 @@ func (m *Model) applyCleanupPolicy() {
 	if len(sortedSessions) > maxTabs {
 		m.sessions = sortedSessions[toRemove:]
 	} else if len(sortedSessions) == maxTabs {
+		m.sessions = sortedSessions
+	}
+	// If less than maxTabs, keep all sessions (e.g., MaxTabs=0 disabled case)
+	if len(sortedSessions) < maxTabs {
 		m.sessions = sortedSessions
 	}
 }
