@@ -22,12 +22,11 @@ jobs:
 
       - name: Run tests
         run: make test
-
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-          args: --timeout=5m
+        continue-on-error: false
 
       - name: Run lint
         run: make lint
+        continue-on-error: false
+
+      - name: Verify build succeeds
+        run: go build ./...
