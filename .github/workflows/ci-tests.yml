@@ -23,7 +23,7 @@ jobs:
       - name: Install golangci-lint (auto-selects Go 1.23 compatible)
         uses: golangci/golangci-lint-action@v3
         with:
-          version: v1.63.3
+          version: v2.12.2
           args: --timeout=5m
 
       - name: Run tests
