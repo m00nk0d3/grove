@@ -201,6 +201,37 @@ base_branch = "main"
 worktree_root = "../worktrees"
 ```
 
+## Zellij Tab Integration (Opt-In)
+
+Grove can automatically spawn new **Zellij tabs** when switching between worktrees. Each tab provides a structured development environment with:
+- Left pane: Workspace shell (`bash` or `nvim`)
+- Right pane: Grove CLI context (`grove -c`) for quick commands
+
+### Enabling Zellij Integration
+
+Add to your config file:
+
+```toml
+[zellij]
+enabled = true              # Default: false (opt-in)
+max_tabs = 10               # Close oldest tabs beyond this count
+cleanup_idle_minutes = 30   # Auto-close inactive tabs
+layout_file = "~/.config/grove/layouts/default.kdl"
+```
+
+### Customizing Your Layout
+
+Edit `~/.config/grove/layouts/default.kdl` to match your workflow. See example layouts in [`layouts/`](layouts/) directory:
+- **default.kdl** - Bash + Grove CLI (70/30 split)
+- **nvim.kdl** - Neovim fullscreen workspace
+- **horizontal.kdl** - Horizontal pane splits
+
+### Fallback Behavior
+
+If Zellij is unavailable or tab spawn fails, Grove gracefully falls back to plain `cd` worktree switch without erroring.
+
+---
+
 ---
 
 ## Active Sessions

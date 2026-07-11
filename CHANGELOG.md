@@ -1,19 +1,29 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [v0.6.5] - 2026-05-30
+
+## [Unreleased] - 2026-07-11
+
+### Added
+- feat(zellij): external layout config file support for worktree tabs (#143)
+- feat(zellij): tab cleanup policy with max_tabs limit and idle threshold
+- feat(zellij): graceful fallback to shell when Zellij is unavailable
+- feat(zellij): O(n log n) sorting optimization using slices.SortFunc
+
+
+### Breaking Changes
+- Removed Copilot/Claude AI agent support in favor of streamlined Aider-only focus (migration required)
+
+
+---
 
 ### Fixed
 
 - **CI build restored** — the `MkdirAll` call added in v0.6.3 was placed inside the git command wrappers, which caused unit tests to fail on CI (fake paths like `/repo/feature` triggered real filesystem operations). Moved to the app layer where runtime paths are used. `fix(exec)` (76df59f)
-
-## [v0.6.4] - 2026-05-30
-
-### Fixed
 
 - **Ctrl+B cleanup no longer fails on unmerged branches** — the cleanup modal used `git branch -d` (safe delete) which refuses branches that haven't been merged into HEAD. Since the user explicitly selects branches for deletion, `git branch -D` (force delete) is now used so cleanup always succeeds. `fix(tui)` (bd42a8d)
 
