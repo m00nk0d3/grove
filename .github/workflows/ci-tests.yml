@@ -10,18 +10,22 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
+      
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-
+      
+      - name: Clear Go caches
+        run: |
+          rm -rf ~/.cache/go-build ~/dev/.cache/go-build $HOME/.cache/go-build 2>/dev/null || true
+          go clean -testcache -modcache
+      
       - name: Run tests (sequential to avoid race conditions)
         run: go test ./... -race -count=1 -timeout 10m -parallel=1
-
+      
       - name: Verify build succeeds
         run: go build -trimpath -ldflags "-s -w" ./...
