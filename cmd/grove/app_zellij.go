@@ -166,7 +166,9 @@ Tip: Ensure zellij is installed and ~/.config/grove/layouts/default.kdl exists`,
 
 	// Apply cleanup policy if Zellij integration is enabled - enforce max_tabs AFTER adding new session
 	if m.Config.Zellij.Enabled && m.Config.Zellij.MaxTabs > 0 {
-		m.applyCleanupPolicy()
+		for len(m.sessions) > m.Config.Zellij.MaxTabs {
+			m.applyCleanupPolicy()
+			}
 	}
 
 	return sessionSpawnedMsg{
@@ -174,55 +176,32 @@ Tip: Ensure zellij is installed and ~/.config/grove/layouts/default.kdl exists`,
 	}
 }
 
-// applyCleanupPolicy enforces the max_tabs limit by removing oldest sessions if needed.
+// applyCleanupPolicy removes the oldest single session when exceeding max tabs.
 func (m *Model) applyCleanupPolicy() {
-	// Get current session count
-	currentCount := len(m.sessions)
-	maxTabs := m.Config.Zellij.MaxTabs
-
-	// If within limit, nothing to do
-	if currentCount < maxTabs {
+	maxTabs := int(m.Config.Zellij.MaxTabs)
+	if len(m.sessions) <= maxTabs {
 		return
 	}
-
-	// Need to clean up (sessions) oldest sessions first
-	toRemove := currentCount - maxTabs
-
-	// Sort by StartedAt (oldest first) using slices.SortFunc for O(n log n)
-	sortedSessions := make([]domain.Session, len(m.sessions))
-	copy(sortedSessions, m.sessions)
-	slices.SortFunc(sortedSessions, func(a, b domain.Session) int {
-		switch {
-		case a.StartedAt.Before(b.StartedAt):
-			return -1
-		default:
-			return 1
-		}
-	})
-
-	// Sync removed sessions to DB before rebuilding list
-	for _, s := range sortedSessions[:toRemove] {
-		if m.db != nil && s.ID > 0 {
-			data.DeleteSession(m.db, s.ID)
+	
+	// Find the oldest session by StartedAt
+	oldestIdx := 0
+	for i := 1; i < len(m.sessions); i++ {
+		if m.sessions[i].StartedAt.Before(m.sessions[oldestIdx].StartedAt) {
+			oldestIdx = i
 		}
 	}
-
-	// Log removals
-	for i := 0; i < toRemove; i++ {
-		sessionToRemove := sortedSessions[i]
-		m.logCleanupEvent(sessionToRemove, maxTabs)
+	oldest := m.sessions[oldestIdx]
+	
+	// Remove from DB if needed
+	if m.db != nil && oldest.ID > 0 {
+		data.DeleteSession(m.db, oldest.ID)
 	}
-
-	// Rebuild sessions list with remaining sessions
-	if len(sortedSessions) > maxTabs {
-		m.sessions = sortedSessions[toRemove:]
-	} else if len(sortedSessions) == maxTabs {
-		m.sessions = sortedSessions
-	}
-	// If less than maxTabs, keep all sessions (e.g., MaxTabs=0 disabled case)
-	if len(sortedSessions) < maxTabs {
-		m.sessions = sortedSessions
-	}
+	
+	// Log cleanup event
+	m.logCleanupEvent(oldest, maxTabs)
+	
+	// Remove oldest session
+	m.sessions = slices.Delete(m.sessions, oldestIdx, oldestIdx+1)
 }
 
 // logCleanupEvent logs a cleanup event to the configured log file.
