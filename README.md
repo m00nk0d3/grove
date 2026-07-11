@@ -1,9 +1,9 @@
-﻿# NEXUS — Git Worktree Orchestrator & AI Agent Hub
+# NEXUS — Git Worktree Orchestrator & AI Agent Hub
 
 > Manage Git worktrees, track GitHub PRs and Issues, launch AI coding agents, and keep tabs on every active session — all from a single terminal interface. No browser. No tab soup. Just vibes.
 
 ![Latest Release](https://img.shields.io/github/v/release/m00nk0d3/grove?logo=github&label=latest)
-![Go version](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)
+![Go version](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 
@@ -42,6 +42,7 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 - **Global fuzzy finder** — press `/` or `Ctrl+F` to search across worktrees, issues, PRs, files, branches, and agent history simultaneously; results update in real-time as you type
 - **AI-assisted PR review** — press `Ctrl+R` on any PR to auto-provision a review worktree and pre-seed your AI agent with a structured code-review prompt
 - **9 built-in themes** — Digital Noir, Matrix, Light, Everforest, Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, and One Dark; cycle them live with `t`
+- **Zellij Tab Cleanup Policy** — automatically manages and cleans up idle Zellij tabs to prevent state explosion and "tab soup" 🛡️
 - **In-app help** — press `f1` or `?` at any time for a searchable keybindings and troubleshooting reference
 - **Local persistence** — config lives in `~/.grove/config.toml`; metadata is cached in SQLite so Grove starts fast
 
@@ -53,7 +54,7 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 |---|---|
 | [Git](https://git-scm.com/) | Must be in `PATH` |
 | [GitHub CLI (`gh`)](https://cli.github.com/) | Run `gh auth login` before first use |
-| Go 1.25+ | Only needed if building from source |
+| Go 1.24+ | Only needed if building from source |
 | Claude Code | Optional — enable with `claude_enabled = true` |
 | GitHub Copilot CLI | Optional — `gh extension install github/gh-copilot` |
 | Aider | Optional — `pip install aider-chat` |
