@@ -20,6 +20,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.62.2
+          args: --timeout=5m
+
       - name: Run tests
         run: make test
         continue-on-error: false
