@@ -1,11 +1,14 @@
 version: "2"
-run:
-  timeout: 10m
-  allow-parallel-runners: true
 linters:
-  disable-all: false
   enable:
     - govet
     - revive
-    - gofmt
     - staticcheck
+    - ineffassign
+    - unused
+    - gci
+    - godot
+    - goimports
+    - gocritic
+    - gofmt
+    - misspell
