@@ -1,6 +1,6 @@
 module github.com/m00nk0d3/grove
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
@@ -11,7 +11,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sys v0.42.0
-	modernc.org/sqlite v1.50.1
+	modernc.org/sqlite v1.36.0
 )
 
 require (
