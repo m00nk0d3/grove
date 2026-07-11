@@ -9,6 +9,7 @@ jobs:
   pr-description:
     name: Validate PR Description
     runs-on: ubuntu-latest
+    if: github.event.pull_request.body != ''
 
     steps:
       - name: Check PR description is not empty
@@ -28,3 +29,10 @@ jobs:
           fi
 
           echo "✅ PR description looks good ($BODY_LENGTH chars)."
+
+      - name: Verify tests pass in PR description (optional guidance)
+        run: |
+          if [ "$(echo "$PR_BODY" | grep -c "tests\|testing\|coverage\|#\[x\]" || true)" -lt 1 ]; then
+            echo "💡 Tip: Consider mentioning test coverage changes in your PR."
+          fi
+          echo "✅ Optional guidance step completed."

@@ -8,6 +8,7 @@ type Config struct {
 	AIAgents    AIAgentsConfig   `toml:"ai_agents"`
 	Worktrees   WorktreesConfig  `toml:"worktrees"`
 	Zellij      ZellijConfig     `toml:"zellij"`
+	LogFilePath string           `toml:"log_file_path"`
 }
 
 type GitHubConfig struct {
@@ -44,17 +45,18 @@ type WorktreesConfig struct {
 // ZellijConfig holds configuration for Zellij tab integration.
 // This is opt-in by default to avoid state explosion issues.
 type ZellijConfig struct {
-	Enabled           bool   `toml:"enabled"`
-	MaxTabs           int    `toml:"max_tabs"`
-	CleanupIdleMinutes int    `toml:"cleanup_idle_minutes"`
+	Enabled            bool `toml:"enabled"`
+	MaxTabs            int  `toml:"max_tabs"`
+	CleanupIdleMinutes int  `toml:"cleanup_idle_minutes"`
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		Appearance: AppearanceConfig{Theme: "digital-noir"},
-		Worktrees:  WorktreesConfig{BaseBranch: "main", WorktreeRoot: "../worktrees"},
-		GitHub:     GitHubConfig{AutoSync: true, SyncIntervalMinutes: 5},
-		AIAgents:   AIAgentsConfig{CopilotEnabled: true, ClaudeEnabled: true},
+		Appearance:  AppearanceConfig{Theme: "digital-noir"},
+		Worktrees:   WorktreesConfig{BaseBranch: "main", WorktreeRoot: "../worktrees"},
+		GitHub:      GitHubConfig{AutoSync: true, SyncIntervalMinutes: 5},
+		AIAgents:    AIAgentsConfig{CopilotEnabled: true, ClaudeEnabled: true},
 		Zellij:      ZellijConfig{Enabled: false, MaxTabs: 10, CleanupIdleMinutes: 30}, // Opt-in by default
+		LogFilePath: "",
 	}
 }
