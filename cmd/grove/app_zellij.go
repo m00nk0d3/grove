@@ -51,13 +51,13 @@ Tip: Ensure zellij is installed and ~/.config/grove/layouts/default.kdl exists`,
 			}
 		}()
 
-		return sessionSpawnedMsg{
-			session: domain.Session{
+			newSession := domain.Session{
 				WorktreePath: worktreePath,
 				Status:       domain.StatusActive,
 				StartedAt:    time.Now().UTC().Truncate(time.Second),
-			},
-		}
+			}
+			m.sessions = append(m.sessions, newSession)
+			return sessionSpawnedMsg{session: newSession}
 	}
 }
 
@@ -123,13 +123,14 @@ func (m *Model) spawnZellijTabCleanupPolicy(worktreePath string) sessionSpawnedM
 	// Check if zellij is available
 	if _, err := exec.LookPath("zellij"); err != nil {
 		// Fallback: return shell session directly (no async tracking needed for fallback)
-		return sessionSpawnedMsg{
-			session: domain.Session{
-				WorktreePath: worktreePath,
-				Status:       domain.StatusActive,
-				StartedAt:    time.Now().UTC().Truncate(time.Second),
-			},
+		// Fallback: create shell session and add to tracking list
+		newSession := domain.Session{
+			WorktreePath: worktreePath,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC().Truncate(time.Second),
 		}
+		m.sessions = append(m.sessions, newSession)
+		return sessionSpawnedMsg{session: newSession}
 	}
 
 	// Check layout file and get path (inline default if missing/unreadable)
