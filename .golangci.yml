@@ -11,6 +11,3 @@ linters:
 formatters:
   enable:
     - goimports
-settings:
-  imports:
-    comment-case-sensitive: true
