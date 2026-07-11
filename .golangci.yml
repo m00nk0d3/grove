@@ -6,9 +6,16 @@ linters:
     - staticcheck
     - ineffassign
     - unused
+    - misspell
+    - gofmt
     - gci
     - godot
+formatters:
+  enable:
     - goimports
-    - gocritic
-    - gofmt
-    - misspell
+    - gofumpt
+    - prettier
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/m00nk0d3/grove
