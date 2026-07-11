@@ -17,12 +17,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache-dependency-path: go.sum
           cache: true
       
-      - name: Clear Go caches
+      - name: Clear ALL Go caches
         run: |
-          rm -rf ~/.cache/go-build ~/dev/.cache/go-build $HOME/.cache/go-build 2>/dev/null || true
-          go clean -testcache -modcache
+          rm -rf ~/.cache/go-build /home/runner/.cache/go-build $HOME/.cache/go-build 2>/dev/null || true
+          go clean -testcache -modcache -cache
       
       - name: Run tests (sequential to avoid race conditions)
         run: go test ./... -race -count=1 -timeout 10m -parallel=1
