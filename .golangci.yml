@@ -7,15 +7,10 @@ linters:
     - ineffassign
     - unused
     - misspell
-    - gofmt
-    - gci
-    - godot
+    - goimports
 formatters:
   enable:
     - goimports
-    - gofumpt
-    - prettier
-  settings:
-    goimports:
-      local-prefixes:
-        - github.com/m00nk0d3/grove
+settings:
+  imports:
+    comment-case-sensitive: true
