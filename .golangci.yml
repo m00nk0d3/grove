@@ -10,6 +10,3 @@ linters:
 formatters:
   enable:
     - goimports
-issues:
-  exclude-dirs-use-default: false
-  exclude-files-use-default: false
