@@ -2335,4 +2335,3 @@ func TestRenderFuzzyOverlay_KindBadges(t *testing.T) {
 		})
 	}
 }
-
