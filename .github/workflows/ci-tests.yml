@@ -20,8 +20,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run tests (with race detector)
-        run: go test ./... -v -race -count=1
+      - name: Run tests
+        run: |
+          go test ./... -race -count=1 -timeout 10m
+        continue-on-error: false
 
       - name: Verify build succeeds
-        run: go build ./...
+        run: go build -trimpath -ldflags "-s -w" ./...
