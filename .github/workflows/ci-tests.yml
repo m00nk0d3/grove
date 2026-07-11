@@ -24,10 +24,15 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
-          args: --timeout=5m
+          args: --timeout=5m --build-tags=""
 
       - name: Initialize Go module
-        run: go mod tidy
+        run: |
+          go mod tidy
+          echo "Module initialized successfully"
+
+      - name: Verify Go files exist
+        run: ls cmd/grove/*.go | head -5
 
       - name: Run tests
         run: make test
