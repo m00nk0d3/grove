@@ -122,7 +122,6 @@ func dirExists(path string) bool {
 func (m *Model) spawnZellijTabCleanupPolicy(worktreePath string) sessionSpawnedMsg {
 	// Check if zellij is available
 	if _, err := exec.LookPath("zellij"); err != nil {
-		// Fallback: return shell session directly (no async tracking needed for fallback)
 		// Fallback: create shell session and add to tracking list
 		newSession := domain.Session{
 			WorktreePath: worktreePath,
@@ -130,6 +129,13 @@ func (m *Model) spawnZellijTabCleanupPolicy(worktreePath string) sessionSpawnedM
 			StartedAt:    time.Now().UTC().Truncate(time.Second),
 		}
 		m.sessions = append(m.sessions, newSession)
+
+		// Enforce max tabs in fallback too
+		if m.Config.Zellij.Enabled && m.Config.Zellij.MaxTabs > 0 {
+			for len(m.sessions) > m.Config.Zellij.MaxTabs {
+				m.applyCleanupPolicy()
+			}
+		}
 		return sessionSpawnedMsg{session: newSession}
 	}
 
