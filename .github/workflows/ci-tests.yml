@@ -23,7 +23,7 @@ jobs:
       - name: Install golangci-lint v2.12.2 (Go 1.24+ compatible)
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: latest
           args: --timeout=5m
 
       - name: Run tests
