@@ -26,6 +26,9 @@ jobs:
           version: latest
           args: --timeout=5m
 
+      - name: Initialize Go module
+        run: go mod tidy
+
       - name: Run tests
         run: make test
         continue-on-error: false
