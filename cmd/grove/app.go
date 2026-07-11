@@ -57,9 +57,9 @@ type syncTickMsg struct{}
 // sessionTickMsg triggers the next periodic session health check.
 type sessionTickMsg struct{}
 
-// updateSelectedSessionIdleMsg carries the result of tracking idle activity.
-// Now tracks ALL sessions, not just selected worktree.
-type updateSelectedSessionIdleMsg struct{}
+// updateAllSessionIdleMsg carries the result of tracking idle activity.
+// Tracks ALL sessions, not just selected worktree.
+type updateAllSessionIdleMsg struct{}
 
 // sessionStatusUpdatedMsg carries the updated sessions list after a health check.
 type sessionStatusUpdatedMsg struct{ sessions []domain.Session }
@@ -167,7 +167,7 @@ func sessionTickCmd() tea.Cmd {
 // sessionIdleTickCmd schedules periodic idle time updates for tracked sessions.
 func sessionIdleTickCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
-		return updateSelectedSessionIdleMsg{}
+		return updateAllSessionIdleMsg{}
 	})
 }
 
@@ -1056,8 +1056,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-case updateSelectedSessionIdleMsg:
-	m.updateSelectedSessionIdle()
+case updateAllSessionIdleMsg:
+	m.updateAllSessionIdle()
 
 	case updateCheckedMsg:
 		if msg.err != nil {
@@ -1941,25 +1941,19 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 	}
 }
 
-// updateSelectedSessionIdle tracks user activity on the selected worktree session.
-// updateSelectedSessionIdle tracks user activity on ALL tracked sessions.
+// updateAllSessionIdle tracks user activity on ALL tracked sessions.
 // Every 3 seconds, it updates IdleAt for all sessions to enable idle-based cleanup.
-func (m *Model) updateSelectedSessionIdle() tea.Cmd {
+func (m *Model) updateAllSessionIdle() tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now().UTC()
 		
 		// Update ALL tracked sessions with current activity time
 		for i := range m.sessions {
-			if m.sessions[i].IdleAt == nil {
-				m.sessions[i].IdleAt = &now
-			} else {
-				// Only update if session is still active (not cleaned up)
-				m.sessions[i].IdleAt = &now
-			}
+			m.sessions[i].IdleAt = &now
 		}
 		
 		return sessionStatusUpdatedMsg{sessions: m.sessions}
-		}
+	}
 }
 // killSessionCmd gracefully kills the shell and agent processes for the given
 // session and removes the session record from the DB.

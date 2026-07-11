@@ -2,6 +2,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -181,4 +183,109 @@ func TestApplyCleanupPolicy_EmptySessions(t *testing.T) {
 	m.applyCleanupPolicy()
 
 	assert.Equal(t, 0, len(m.sessions))
+}
+
+// TestApplyCleanupPolicy_ZombieProcess - verifies cleanup handles zombie sessions (no shell PID)
+func TestApplyCleanupPolicy_ZombieProcess(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now().UTC()
+	m := &Model{
+		sessions: []domain.Session{
+			{WorktreePath: "/worktree1", Status: domain.StatusActive, StartedAt: start.Add(-5 * time.Minute), ShellPID: nil, IdleAt: &start}, // Zombie
+			{WorktreePath: "/worktree2", Status: domain.StatusActive, StartedAt: start, ShellPID: func() *int { i := 1234; return &i }(), IdleAt: &start}, // Live
+		},
+		Config: &domain.Config{
+			Zellij: domain.ZellijConfig{
+				Enabled: true,
+				MaxTabs: 2,
+			},
+		},
+		statusErr: "",
+	}
+
+	// Cleanup should still work even with zombie sessions
+	m.applyCleanupPolicy()
+
+	assert.Equal(t, 2, len(m.sessions), "Both sessions should remain (within max_tabs limit)")
+	
+	// Verify zombie session is still tracked
+	var zombieFound bool
+	for _, s := range m.sessions {
+		if s.ShellPID == nil {
+			zombieFound = true
+			break
+		}
+	}
+	assert.True(t, zombieFound, "Zombie session (no PID) should still be tracked")
+}
+
+// TestValidateLayoutPath_AcceptablePermissions - verifies layout file with 0644 permissions is accepted
+func TestValidateLayoutPath_AcceptablePermissions(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	layoutPath := filepath.Join(tempDir, "test.kdl")
+	
+	// Create a layout file with 0644 permissions (owner read/write, group/others read)
+	file, err := os.Create(layoutPath)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	defer file.Close()
+	
+	_, err = file.WriteString(`layout { tab name="test" }`)
+	if err != nil {
+		t.Fatalf("Failed to write test content: %v", err)
+	}
+	
+	err = os.Chmod(layoutPath, 0644)
+	if err != nil {
+		t.Fatalf("Failed to set file permissions: %v", err)
+	}
+
+	m := &Model{statusErr: ""}
+
+	// Should return true (accept the file)
+	result := m.validateLayoutPath(layoutPath)
+	assert.True(t, result, "Layout file with 0644 permissions should be accepted")
+	assert.Equal(t, "", m.statusErr, "No error should be set for valid layout file")
+
+	// Cleanup
+	os.Remove(layoutPath)
+}
+
+// TestValidateLayoutPath_RejectsWorldWritable - verifies world-writable layout files are rejected
+func TestValidateLayoutPath_RejectsWorldWritable(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	layoutPath := filepath.Join(tempDir, "test.kdl")
+	
+	// Create a layout file
+	file, err := os.Create(layoutPath)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	defer file.Close()
+	
+	_, err = file.WriteString(`layout { tab name="test" }`)
+	if err != nil {
+		t.Fatalf("Failed to write test content: %v", err)
+	}
+	
+	err = os.Chmod(layoutPath, 0666) // World-writable!
+	if err != nil {
+		t.Fatalf("Failed to set file permissions: %v", err)
+	}
+
+	m := &Model{statusErr: ""}
+
+	// Should return false (reject the file)
+	result := m.validateLayoutPath(layoutPath)
+	assert.False(t, result, "World-writable layout file should be rejected")
+	assert.Contains(t, m.statusErr, "world-writable", "Error message should indicate world-writable issue")
+
+	// Cleanup
+	os.Remove(layoutPath)
 }

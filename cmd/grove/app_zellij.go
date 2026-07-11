@@ -86,15 +86,18 @@ func (m *Model) getDefaultLayout() string {
 }
 
 // validateLayoutPath checks that the layout file is secure (security hardening).
+
 // Rejects world-writable files and non-regular files. Owner-readable is required.
 func (m *Model) validateLayoutPath(layoutPath string) bool {
 	info, err := os.Stat(layoutPath)
 	if err == nil {
-		// Regular file AND prevent world-writable (security hardening)
-		if info.Mode().IsRegular() == false || info.Mode().Perm()&0o22 != 0 {
-			m.statusErr = fmt.Sprintf("Layout file is not a regular file or world-writable: %s", layoutPath)
+		// Regular file AND prevent world-writable ONLY (security hardening)
+		// 0o2 = world-writable bit (002 octal). DO NOT check 0o4 (world-readable)!
+		if info.Mode().IsRegular() == false || info.Mode().Perm()&0o2 != 0 {
+			m.statusErr = fmt.Sprintf("Layout file must not be world-writable: %s", layoutPath)
 			return false
 		}
+
 	} else {
 		// Can't stat file, fallback to inline default
 		m.statusErr = fmt.Sprintf("Cannot validate layout file permissions: %s", layoutPath)
