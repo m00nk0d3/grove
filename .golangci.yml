@@ -1,16 +1,11 @@
+version: "2"
 run:
-  build-tags: ""
   timeout: 10m
   allow-parallel-runners: true
-  issues-exit-code: 1
-  tests: false
-
 linters:
   disable-all: false
   enable:
     - govet
     - revive
     - gofmt
-    - misspell
     - staticcheck
-    - ineffassign
