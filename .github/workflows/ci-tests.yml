@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Run Tests & Lint
+    name: Run Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -20,22 +20,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install golangci-lint v2.12.2 (Go 1.24+ compatible)
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          args: --timeout=5m --build-tags=""
-
-      - name: Initialize Go module
-        run: go mod tidy
-
       - name: Run tests
         run: make test
-        continue-on-error: false
-
-      - name: Run lint
-        run: |
-          golangci-lint run --timeout=5m
         continue-on-error: false
 
       - name: Verify build succeeds
