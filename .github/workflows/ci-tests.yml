@@ -27,19 +27,15 @@ jobs:
           args: --timeout=5m --build-tags=""
 
       - name: Initialize Go module
-        run: |
-          go mod tidy
-          echo "Module initialized successfully"
-
-      - name: Verify Go files exist
-        run: ls cmd/grove/*.go | head -5
+        run: go mod tidy
 
       - name: Run tests
         run: make test
         continue-on-error: false
 
       - name: Run lint
-        run: make lint
+        run: |
+          golangci-lint run --timeout=5m
         continue-on-error: false
 
       - name: Verify build succeeds
