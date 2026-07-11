@@ -22,4 +22,5 @@ type Session struct {
 	Status       SessionStatus
 	StartedAt    time.Time
 	UpdatedAt    time.Time
+	IdleAt       *time.Time // Time of last user activity (nil = no activity)
 }

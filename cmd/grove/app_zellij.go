@@ -1,5 +1,4 @@
 // Package main implements the Groove Git Worktree Orchestrator with Zellij integration.
-
 package main
 
 import (
@@ -51,13 +50,13 @@ Tip: Ensure zellij is installed and ~/.config/grove/layouts/default.kdl exists`,
 			}
 		}()
 
-			newSession := domain.Session{
-				WorktreePath: worktreePath,
-				Status:       domain.StatusActive,
-				StartedAt:    time.Now().UTC().Truncate(time.Second),
-			}
-			m.sessions = append(m.sessions, newSession)
-			return sessionSpawnedMsg{session: newSession}
+		newSession := domain.Session{
+			WorktreePath: worktreePath,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC().Truncate(time.Second),
+		}
+		m.sessions = append(m.sessions, newSession)
+		return sessionSpawnedMsg{session: newSession}
 	}
 }
 
@@ -86,23 +85,23 @@ func (m *Model) getDefaultLayout() string {
 }`
 }
 
-// validateLayoutPath checks that the layout file is readable by owner only (security hardening).
+// validateLayoutPath checks that the layout file is secure (security hardening).
+// Rejects world-writable files and non-regular files. Owner-readable is required.
 func (m *Model) validateLayoutPath(layoutPath string) bool {
 	info, err := os.Stat(layoutPath)
-	if err != nil {
-		return false // Can't stat file, fallback to inline default
-	}
-	// Regular file AND no world-readable bits to prevent unauthorized access
-	if info.Mode().IsRegular() == false {
-		m.statusErr = fmt.Sprintf("Layout file is not a regular file: %s", layoutPath)
-		return false
-	}
-	if info.Mode().Perm()&0444 != 0 {
-		log.Printf("Warning: Layout file is world-readable: %s", layoutPath)
-		return false
+	if err == nil {
+		// Regular file AND prevent world-writable (security hardening)
+		if info.Mode().IsRegular() == false || info.Mode().Perm()&0o22 != 0 {
+			m.statusErr = fmt.Sprintf("Layout file is not a regular file or world-writable: %s", layoutPath)
+			return false
+		}
+	} else {
+		// Can't stat file, fallback to inline default
+		m.statusErr = fmt.Sprintf("Cannot validate layout file permissions: %s", layoutPath)
 	}
 	return true
 }
+
 
 // fileExists checks if a file exists (non-blocking).
 func fileExists(path string) bool {
@@ -131,9 +130,18 @@ func (m *Model) spawnZellijTabCleanupPolicy(worktreePath string) sessionSpawnedM
 		m.sessions = append(m.sessions, newSession)
 
 		// Enforce max tabs in fallback too
-		if m.Config.Zellij.Enabled && m.Config.Zellij.MaxTabs > 0 {
-			for len(m.sessions) > m.Config.Zellij.MaxTabs {
-				m.applyCleanupPolicy()
+		if m.Config.Zellij.Enabled {
+			// Apply max_tabs limit if configured
+			if m.Config.Zellij.MaxTabs > 0 {
+				for len(m.sessions) > m.Config.Zellij.MaxTabs {
+					m.applyCleanupPolicy()
+				}
+			}
+
+			// Always run idle-based cleanup if idle timeout is configured (regardless of max_tabs)
+			idleThreshold := time.Duration(m.Config.Zellij.CleanupIdleMinutes) * time.Minute
+			if idleThreshold > 0 && idleThreshold <= time.Hour*24*7 {
+				m.applyIdleCleanupPolicy()
 			}
 		}
 		return sessionSpawnedMsg{session: newSession}
@@ -170,11 +178,20 @@ Tip: Ensure zellij is installed and ~/.config/grove/layouts/default.kdl exists`,
 	}
 	m.sessions = append(m.sessions, session)
 
-	// Apply cleanup policy if Zellij integration is enabled - enforce max_tabs AFTER adding new session
-	if m.Config.Zellij.Enabled && m.Config.Zellij.MaxTabs > 0 {
-		for len(m.sessions) > m.Config.Zellij.MaxTabs {
-			m.applyCleanupPolicy()
+	// Apply cleanup policy if Zellij integration is enabled - enforce max_tabs AND idle timeout AFTER adding new session
+	if m.Config.Zellij.Enabled {
+		// Enforce max_tabs limit if configured
+		if m.Config.Zellij.MaxTabs > 0 {
+			for len(m.sessions) > m.Config.Zellij.MaxTabs {
+				m.applyCleanupPolicy()
 			}
+		}
+
+		// Always run idle-based cleanup if idle timeout is configured (regardless of max_tabs)
+		idleThreshold := time.Duration(m.Config.Zellij.CleanupIdleMinutes) * time.Minute
+		if idleThreshold > 0 && idleThreshold <= time.Hour*24*7 {
+			m.applyIdleCleanupPolicy()
+		}
 	}
 
 	return sessionSpawnedMsg{
@@ -182,13 +199,14 @@ Tip: Ensure zellij is installed and ~/.config/grove/layouts/default.kdl exists`,
 	}
 }
 
+
 // applyCleanupPolicy removes the oldest single session when exceeding max tabs.
 func (m *Model) applyCleanupPolicy() {
 	maxTabs := int(m.Config.Zellij.MaxTabs)
 	if len(m.sessions) <= maxTabs {
 		return
 	}
-	
+
 	// Find the oldest session by StartedAt
 	oldestIdx := 0
 	for i := 1; i < len(m.sessions); i++ {
@@ -197,21 +215,21 @@ func (m *Model) applyCleanupPolicy() {
 		}
 	}
 	oldest := m.sessions[oldestIdx]
-	
+
 	// Remove from DB if needed
 	if m.db != nil && oldest.ID > 0 {
 		data.DeleteSession(m.db, oldest.ID)
 	}
-	
+
 	// Log cleanup event
-	m.logCleanupEvent(oldest, maxTabs)
-	
+	m.logCleanupEvent(oldest, maxTabs, "max_tabs")
+
 	// Remove oldest session
 	m.sessions = slices.Delete(m.sessions, oldestIdx, oldestIdx+1)
 }
 
 // logCleanupEvent logs a cleanup event to the configured log file.
-func (m *Model) logCleanupEvent(session domain.Session, maxTabs int) {
+func (m *Model) logCleanupEvent(session domain.Session, maxTabs int, reason string) {
 	if m.Config.LogFilePath == "" {
 		return // No log path configured
 	}
@@ -227,11 +245,94 @@ func (m *Model) logCleanupEvent(session domain.Session, maxTabs int) {
 	}
 	defer file.Close()
 
-	// Log the cleanup event
-	msg := fmt.Sprintf("%s: Cleanup enforced max_tabs=%d. Removed session for worktree: %s (started at: %s)",
-		time.Now().Format(time.RFC3339), maxTabs, session.WorktreePath, session.StartedAt.Format(time.RFC3339))
+	// Build the cleanup message with reason and idle time if applicable
+	idleDuration := ""
+	if session.IdleAt != nil {
+		idleDuration = fmt.Sprintf(" (idle: %s)", durationSince(session.IdleAt).String())
+	}
+
+	msg := fmt.Sprintf(
+		"%s: %s=%d [%s]. Removed session for worktree: %s (started at: %s)",
+		time.Now().Format(time.RFC3339), reason, maxTabs, session.WorktreePath,
+		session.StartedAt.Format(time.RFC3339), idleDuration,
+	)
 
 	if _, err := file.WriteString(msg + "\n"); err != nil {
-		log.Printf("Failed to write cleanup event to log: %v", err)
+}
+
+// durationSince calculates the time elapsed since a given time.
+}
+func durationSince(t *time.Time) time.Duration {
+	return time.Since(*t)
+}
+
+
+// applyIdleCleanupPolicy removes sessions that have exceeded the idle timeout.
+// This runs independently of max_tabs limit and handles stale tabs based on user activity.
+func (m *Model) applyIdleCleanupPolicy() {
+	if len(m.sessions) <= 1 {
+		return // Need at least 2 sessions to compare
+	}
+
+	idleThreshold := time.Duration(m.Config.Zellij.CleanupIdleMinutes) * time.Minute
+	if idleThreshold == 0 || idleThreshold > time.Hour*24*7 {
+		log.Printf("Warning: CleanupIdleMinutes (%d) exceeds safe limit (168h), capping to max", m.Config.Zellij.CleanupIdleMinutes)
+		return // Idle cleanup disabled when config value is invalid or unsafe
+	}
+
+	// Find all idle sessions and count them
+	var idleSessions []domain.Session
+	for _, s := range m.sessions {
+		if s.IdleAt == nil || time.Since(*s.IdleAt) > idleThreshold {
+			idleSessions = append(idleSessions, s)
+		}
+	}
+
+	// If no idle sessions exceed threshold, nothing to clean up
+	if len(idleSessions) == 0 {
+		return
+	}
+
+	// Sort by most idle first (remove most idle oldest session first)
+	slices.SortFunc(idleSessions, func(a, b domain.Session) int {
+		if a.IdleAt == nil && b.IdleAt == nil {
+			return 0 // Both have no activity
+		}
+		if a.IdleAt == nil {
+			return -1 // Prioritize removing session with no idle tracking
+		}
+		if b.IdleAt == nil {
+			return 1 // Keep session without idle tracking
+		}
+		// Sort by most idle first (oldest IdleAt)
+		if a.IdleAt.Before(*b.IdleAt) {
+			return -1
+		}
+		return 1
+	})
+
+	// Remove the most idle session (limit to one per cleanup cycle for safety)
+	if len(idleSessions) > 0 && idleSessions[0].IdleAt != nil {
+		oldestIdx := slices.IndexFunc(m.sessions, func(s domain.Session) bool {
+			for _, idls := range idleSessions {
+				if s.WorktreePath == idls.WorktreePath && s.ID == idls.ID {
+					return true
+				}
+			}
+			return false
+		})
+
+		// Remove from DB if needed
+		if m.db != nil && oldestIdx >= 0 && m.sessions[oldestIdx].ID > 0 {
+			data.DeleteSession(m.db, m.sessions[oldestIdx].ID)
+		}
+
+		// Log cleanup event
+		m.logCleanupEvent(m.sessions[oldestIdx], -1, "idle_timeout")
+
+		// Remove oldest session from in-memory list
+		if oldestIdx >= 0 && oldestIdx < len(m.sessions) {
+			m.sessions = slices.Delete(m.sessions, oldestIdx, oldestIdx+1)
+		}
 	}
 }

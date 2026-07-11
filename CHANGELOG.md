@@ -10,13 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - feat(zellij): external layout config file support for worktree tabs (#143)
-- feat(zellij): tab cleanup policy with max_tabs limit and idle threshold
+- feat(zellij): tab cleanup policy with max_tabs limit AND idle timeout
 - feat(zellij): graceful fallback to shell when Zellij is unavailable
 - feat(zellij): O(n log n) sorting optimization using slices.SortFunc
 
 
 ### Breaking Changes
 - Removed Copilot/Claude AI agent support in favor of streamlined Aider-only focus (migration required)
+  - **Zellij Tab Integration**: Replaces multi-agent spawning with optional Zellij tab support for structured development environments
+    - Users must enable via `[zellij] enabled = true` in config file (opt-in by default)
+    - Migration: Existing Copilot/Claude history sessions are preserved but no new spawns supported
+    - Fallback behavior: Plain shell spawn when Zellij unavailable (no session loss)
+    - See [Zellij Tab Integration Guide](README.md#zellij-tab-integration) for setup instructions
 
 
 ---
@@ -152,3 +157,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 - docs(readme): split installation instructions by platform (3d656ce)
+
+- **Session Idle Tracking**: Added `IdleAt` field to Session struct with periodic updates via 3-second tick command
+- **ZELJ-004 Implementation**: Implemented automatic tab cleanup for stale tabs beyond idle threshold
+- **BREAKING FIX**: Copilot/Claude AI agent support removed in favor of streamlined Aider-only focus
+
+EOF && echo "✅ CHANGELOG updated!"
+
+### Fixed
+- **Security Fix**: Corrected layout file permission validation in `validateLayoutPath()` to only reject world-readable files (0444) instead of incorrectly rejecting owner-read-only files. The previous logic inverted the permission check, which would have rejected valid secure layout files.
+

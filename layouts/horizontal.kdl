@@ -1,0 +1,34 @@
+# Grove Zellij Layout Configuration - Horizontal Pane Splits
+# Use this file for users who prefer horizontal instead of vertical pane splits
+
+layout {
+    default_tab_template {
+        // Default pane configuration for all tabs
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
+    
+    # Fresh tab layout (used when spawning new worktree tabs)
+    tab name="Grove-Horizontal (%s)" focus=true {
+        # Horizontal split: Top = Shell, Bottom = Grove Context
+        pane split_direction="horizontal" {
+            
+            // TOP: Bash or neovim shell for workspace
+            pane command="bash" focus=false name="[Shell Workspace]" size="50%" {
+                # Optional: Change to nvim instead of bash:
+                # pane command="nvim" focus=false name="[Neovim Workspace]"
+            }
+            
+            // BOTTOM: Grove CLI (context, shell)
+            pane command="grove -c" focus=true name="[Grove Context]" size="50%" {
+                # This pane shows grove compact mode for quick commands
+                # Example: grove -c "list worktrees", "create worktree", etc.
+            }
+        }
+    }
+}

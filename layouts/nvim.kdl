@@ -1,0 +1,35 @@
+# Grove Zellij Layout Configuration - Neovim Fullscreen Workspace
+# Use this file to customize the worktree pane layout with neovim focus
+
+layout {
+    default_tab_template {
+        // Default pane configuration for all tabs
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
+    
+    # Fresh tab layout (used when spawning new worktree tabs)
+    tab name="Grove-Nvim (%s)" focus=true {
+        # Vertical split: Left = Neovim workspace, Right = Grove Context
+        pane split_direction="vertical" {
+            
+            // LEFT: Full-screen neovim buffer for coding
+            pane command="nvim" focus=false name="[Neovim Workspace]" size="90%" {
+                # Optional: Add keybindings or configuration here if needed
+                # Uncomment below to enable shell access in split:
+                # pane command="/bin/bash -l" focus=true name="[Shell Access]" size="10%"
+            }
+            
+            // RIGHT: Small grove CLI for repo navigation and commands
+            pane command="grove -c" focus=true name="[Grove Context]" size="10%" {
+                # This pane shows grove compact mode for quick commands
+                # Example: grove -c "list worktrees", "create worktree", etc.
+            }
+        }
+    }
+}

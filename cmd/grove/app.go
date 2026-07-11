@@ -57,6 +57,10 @@ type syncTickMsg struct{}
 // sessionTickMsg triggers the next periodic session health check.
 type sessionTickMsg struct{}
 
+// updateSelectedSessionIdleMsg carries the result of tracking idle activity.
+// Now tracks ALL sessions, not just selected worktree.
+type updateSelectedSessionIdleMsg struct{}
+
 // sessionStatusUpdatedMsg carries the updated sessions list after a health check.
 type sessionStatusUpdatedMsg struct{ sessions []domain.Session }
 
@@ -158,6 +162,12 @@ func selfUpdateCmd(tagName string) tea.Cmd {
 func sessionTickCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		return sessionTickMsg{}
+	})
+}
+// sessionIdleTickCmd schedules periodic idle time updates for tracked sessions.
+func sessionIdleTickCmd() tea.Cmd {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+		return updateSelectedSessionIdleMsg{}
 	})
 }
 
@@ -378,7 +388,7 @@ func (m *Model) Init() tea.Cmd {
 	m.syncing = true
 	// Always start the session tick — it handles both grove-spawned shell sessions
 	// (requires m.db) and externally-started Copilot CLI sessions (no DB needed).
-	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(false), sessionTickCmd(), checkForUpdateCmd())
+	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(false), sessionTickCmd(), sessionIdleTickCmd(), checkForUpdateCmd())
 }
 
 // Update handles incoming messages and returns an updated model and command.
@@ -1045,6 +1055,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+case updateSelectedSessionIdleMsg:
+	m.updateSelectedSessionIdle()
 
 	case updateCheckedMsg:
 		if msg.err != nil {
@@ -1906,9 +1919,6 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 		if err != nil {
 			return sessionSpawnedMsg{err: fmt.Errorf("spawn session: %w", err)}
 		}
-		// pid == 0 means the launcher exited immediately (e.g. Windows Terminal
-		// new-tab) and there is no trackable long-lived PID. Store nil so the
-		// health-check loop keeps the session alive rather than pruning it.
 		var shellPID *int
 		if pid != 0 {
 			shellPID = &pid
@@ -1918,11 +1928,11 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 			ShellPID:     shellPID,
 			Status:       domain.StatusActive,
 			StartedAt:    time.Now().UTC().Truncate(time.Second),
+			IdleAt:       nil, // No activity yet
 		}
 		if db != nil {
 			id, err := data.UpsertSession(db, session)
 			if err != nil {
-				// Non-fatal: terminal is running but we could not persist the PID.
 				return sessionSpawnedMsg{session: session, err: fmt.Errorf("track session: %w", err)}
 			}
 			session.ID = id
@@ -1931,6 +1941,26 @@ func (m *Model) spawnSessionCmd(worktreePath string) tea.Cmd {
 	}
 }
 
+// updateSelectedSessionIdle tracks user activity on the selected worktree session.
+// updateSelectedSessionIdle tracks user activity on ALL tracked sessions.
+// Every 3 seconds, it updates IdleAt for all sessions to enable idle-based cleanup.
+func (m *Model) updateSelectedSessionIdle() tea.Cmd {
+	return func() tea.Msg {
+		now := time.Now().UTC()
+		
+		// Update ALL tracked sessions with current activity time
+		for i := range m.sessions {
+			if m.sessions[i].IdleAt == nil {
+				m.sessions[i].IdleAt = &now
+			} else {
+				// Only update if session is still active (not cleaned up)
+				m.sessions[i].IdleAt = &now
+			}
+		}
+		
+		return sessionStatusUpdatedMsg{sessions: m.sessions}
+		}
+}
 // killSessionCmd gracefully kills the shell and agent processes for the given
 // session and removes the session record from the DB.
 // On Unix, SIGTERM is sent first; SIGKILL follows after a 3-second timeout.
