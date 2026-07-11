@@ -1,6 +1,6 @@
 module github.com/m00nk0d3/grove
 
-go 1.25.0
+go 1.24.0
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
