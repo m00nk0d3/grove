@@ -86,14 +86,13 @@ func TestLoadConfig(t *testing.T) {
 				path := filepath.Join(dir, "config.toml")
 				// Include herdr and sandcastle sections with some values.
 				partial := `[appearance]
-theme = "matrix"
-[herdr]
-enabled = true
-poll_interval = 30
-[sandcastle]
-enabled = true
-default_agent = "custom_pi"`
-			wantCheck: func(t *testing.T, cfg *domain.Config) {
+											theme = "matrix"
+										[herdr]
+											enabled = true
+											poll_interval = 30
+										[sandcastle]
+											enabled = true
+											default_agent = "custom_pi"`
 				t.Helper()
 				assert.Equal(t, "matrix", cfg.Appearance.Theme)
 				assert.Equal(t, true, cfg.Herdr.Enabled)
