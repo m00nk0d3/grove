@@ -6,6 +6,8 @@ type Config struct {
 	GitHub     GitHubConfig     `toml:"github"`
 	Appearance AppearanceConfig `toml:"appearance"`
 	AIAgents   AIAgentsConfig   `toml:"ai_agents"`
+	Herdr       HerdrConfig       `toml:"herdr"`
+	Sandcastle   SandcastleConfig   `toml:"sandcastle"`
 	Worktrees  WorktreesConfig  `toml:"worktrees"`
 }
 
@@ -35,6 +37,22 @@ type AIAgentsConfig struct {
 	AiderBinary    string `toml:"aider_binary"`
 }
 
+type HerdrConfig struct {
+	Enabled           bool   `toml:"enabled"`
+	Binary            string `toml:"binary"`
+	PollInterval      int    `toml:"poll_interval"`
+	PreferWorktreeApi bool   `toml:"prefer_worktree_api"`
+	DefaultAgent      string `toml:"default_agent"`
+}
+
+type SandcastleConfig struct {
+	Enabled           bool   `toml:"enabled"`
+	Binary            string `toml:"binary"`
+	PollInterval      int    `toml:"poll_interval"`
+	PreferWorktreeApi bool   `toml:"prefer_worktree_api"`
+	DefaultAgent      string `toml:"default_agent"`
+}
+
 type WorktreesConfig struct {
 	BaseBranch   string `toml:"base_branch"`
 	WorktreeRoot string `toml:"worktree_root"`
@@ -46,5 +64,7 @@ func DefaultConfig() *Config {
 		Worktrees:  WorktreesConfig{BaseBranch: "main", WorktreeRoot: "../worktrees"},
 		GitHub:     GitHubConfig{AutoSync: true, SyncIntervalMinutes: 5},
 		AIAgents:   AIAgentsConfig{CopilotEnabled: true, ClaudeEnabled: true},
+		Herdr:       HerdrConfig{Enabled: false},
+		Sandcastle:  SandcastleConfig{Enabled: false, DefaultAgent: "pi"},
 	}
 }

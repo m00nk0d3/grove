@@ -79,6 +79,47 @@ func TestLoadConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "partial TOML with herdr and sandcastle sections",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				path := filepath.Join(dir, "config.toml")
+				// Include herdr and sandcastle sections with some values.
+				partial := `[appearance]
+theme = "matrix"
+[herdr]
+enabled = true
+poll_interval = 30
+[sandcastle]
+enabled = true
+default_agent = "custom_pi"`
+			wantCheck: func(t *testing.T, cfg *domain.Config) {
+				t.Helper()
+				assert.Equal(t, "matrix", cfg.Appearance.Theme)
+				assert.Equal(t, true, cfg.Herdr.Enabled)
+				assert.Equal(t, 30, cfg.Herdr.PollInterval)
+				assert.Equal(t, true, cfg.Sandcastle.Enabled)
+				assert.Equal(t, "custom_pi", cfg.Sandcastle.DefaultAgent)
+			},
+		},
+			name: "partial TOML with missing herdr and sandcastle sections inherits defaults",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				path := filepath.Join(dir, "config.toml")
+				// No [herdr] or [sandcastle] sections
+				partial := "[appearance]\ntheme = \"matrix\"\n"
+				require.NoError(t, os.WriteFile(path, []byte(partial), 0o644))
+				return path
+			},
+			wantErr: false,
+			wantCheck: func(t *testing.T, cfg *domain.Config) {
+				t.Helper()
+				assert.Equal(t, "matrix", cfg.Appearance.Theme)
+				assert.Equal(t, false, cfg.Herdr.Enabled, "Herdr.Enabled must default to false")
+				assert.Equal(t, "pi", cfg.Sandcastle.DefaultAgent, "Sandcastle.DefaultAgent must default to pi")
+			},
+		},
 			name: "partial TOML without ai_agents section inherits defaults",
 			setup: func(t *testing.T) string {
 				t.Helper()
