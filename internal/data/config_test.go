@@ -1,4 +1,4 @@
-﻿package data
+package data
 
 import (
 	"os"
@@ -76,6 +76,68 @@ func TestLoadConfig(t *testing.T) {
 				assert.Equal(t, defaults.Worktrees.WorktreeRoot, cfg.Worktrees.WorktreeRoot)
 				assert.Equal(t, defaults.GitHub.AutoSync, cfg.GitHub.AutoSync)
 				assert.Equal(t, defaults.GitHub.SyncIntervalMinutes, cfg.GitHub.SyncIntervalMinutes)
+			},
+		},
+		{
+			name: "partial TOML with herdr and sandcastle sections",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				path := filepath.Join(dir, "config.toml")
+				partial := `[appearance]
+theme = "matrix"
+
+[herdr]
+enabled = false
+poll_interval_seconds = 30
+
+[sandcastle]
+enabled = false
+default_agent = "custom_pi"
+`
+				require.NoError(t, os.WriteFile(path, []byte(partial), 0o644))
+				return path
+			},
+			wantErr: false,
+			wantCheck: func(t *testing.T, cfg *domain.Config) {
+				t.Helper()
+				assert.Equal(t, "matrix", cfg.Appearance.Theme)
+				assert.False(t, cfg.Herdr.Enabled)
+				assert.Equal(t, "herdr", cfg.Herdr.Binary)
+				assert.Equal(t, 30, cfg.Herdr.PollIntervalSeconds)
+				assert.True(t, cfg.Herdr.PreferWorktreeAPI)
+				assert.False(t, cfg.Sandcastle.Enabled)
+				assert.Equal(t, "sandcastle", cfg.Sandcastle.Binary)
+				assert.Equal(t, 5, cfg.Sandcastle.PollIntervalSeconds)
+				assert.Equal(t, "custom_pi", cfg.Sandcastle.DefaultAgent)
+			},
+		},
+		{
+			name: "partial TOML with missing herdr and sandcastle sections inherits defaults",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				path := filepath.Join(dir, "config.toml")
+				partial := "[appearance]\ntheme = \"matrix\"\n"
+				require.NoError(t, os.WriteFile(path, []byte(partial), 0o644))
+				return path
+			},
+			wantErr: false,
+			wantCheck: func(t *testing.T, cfg *domain.Config) {
+				t.Helper()
+				assert.Equal(t, "matrix", cfg.Appearance.Theme)
+				assert.Equal(t, domain.HerdrConfig{
+					Enabled:             true,
+					Binary:              "herdr",
+					PollIntervalSeconds: 5,
+					PreferWorktreeAPI:   true,
+				}, cfg.Herdr)
+				assert.Equal(t, domain.SandcastleConfig{
+					Enabled:             true,
+					Binary:              "sandcastle",
+					PollIntervalSeconds: 5,
+					DefaultAgent:        "pi",
+				}, cfg.Sandcastle)
 			},
 		},
 		{
@@ -196,6 +258,8 @@ func TestSaveConfig(t *testing.T) {
 			assert.Equal(t, cfg.GitHub.SyncIntervalMinutes, loaded.GitHub.SyncIntervalMinutes)
 			assert.Equal(t, cfg.AIAgents.CopilotEnabled, loaded.AIAgents.CopilotEnabled)
 			assert.Equal(t, cfg.AIAgents.ClaudeBinary, loaded.AIAgents.ClaudeBinary)
+			assert.Equal(t, cfg.Herdr, loaded.Herdr)
+			assert.Equal(t, cfg.Sandcastle, loaded.Sandcastle)
 		})
 	}
 }
