@@ -73,10 +73,47 @@ func TestBuildStatePreservesProvidedIntegrationStatus(t *testing.T) {
 }
 
 func TestBuildStateCopiesSourceSlices(t *testing.T) {
-	worktrees := []domain.Worktree{{Path: "/repo/grove"}}
+	parentNumber := 41
+	agentName := "pi"
+	worktrees := []domain.Worktree{{
+		Path:     "/repo/grove",
+		LinkedPR: &domain.PullRequest{Labels: []string{"linked"}},
+	}}
+	issues := []domain.Issue{{
+		Labels:          []string{"bug"},
+		Assignees:       []string{"octocat"},
+		ParentNumber:    &parentNumber,
+		SubIssueNumbers: []int{43},
+	}}
+	pullRequests := []domain.PullRequest{{
+		Labels:    []string{"ready"},
+		Assignees: []string{"hubot"},
+	}}
+	sessions := []domain.Session{{AgentName: &agentName}}
 
-	state := BuildState(BuildInput{Worktrees: worktrees})
+	state := BuildState(BuildInput{
+		Worktrees:    worktrees,
+		Issues:       issues,
+		PullRequests: pullRequests,
+		Sessions:     sessions,
+	})
 	worktrees[0].Path = "/changed"
+	worktrees[0].LinkedPR.Labels[0] = "changed"
+	issues[0].Labels[0] = "changed"
+	issues[0].Assignees[0] = "changed"
+	*issues[0].ParentNumber = 99
+	issues[0].SubIssueNumbers[0] = 99
+	pullRequests[0].Labels[0] = "changed"
+	pullRequests[0].Assignees[0] = "changed"
+	*sessions[0].AgentName = "changed"
 
 	assert.Equal(t, "/repo/grove", state.Worktrees[0].Path)
+	assert.Equal(t, "linked", state.Worktrees[0].LinkedPR.Labels[0])
+	assert.Equal(t, "bug", state.Issues[0].Labels[0])
+	assert.Equal(t, "octocat", state.Issues[0].Assignees[0])
+	assert.Equal(t, 41, *state.Issues[0].ParentNumber)
+	assert.Equal(t, 43, state.Issues[0].SubIssueNumbers[0])
+	assert.Equal(t, "ready", state.PullRequests[0].Labels[0])
+	assert.Equal(t, "hubot", state.PullRequests[0].Assignees[0])
+	assert.Equal(t, "pi", *state.Sessions[0].AgentName)
 }

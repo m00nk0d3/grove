@@ -31,10 +31,10 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		Details:      make(map[string]interface{}),
 		RepoPath:     input.RepoPath,
 		WorkItems:    []domain.WorkItem{},
-		Worktrees:    cloneSlice(input.Worktrees),
-		Issues:       cloneSlice(input.Issues),
-		PullRequests: cloneSlice(input.PullRequests),
-		Sessions:     cloneSlice(input.Sessions),
+		Worktrees:    cloneWorktrees(input.Worktrees),
+		Issues:       cloneIssues(input.Issues),
+		PullRequests: clonePullRequests(input.PullRequests),
+		Sessions:     cloneSessions(input.Sessions),
 		WorkflowRuns: []domain.WorkflowRunRef{},
 		Agents:       []domain.AgentRef{},
 		Panes:        []domain.PaneRef{},
@@ -79,4 +79,58 @@ func cloneSlice[T any](items []T) []T {
 		return []T{}
 	}
 	return append([]T(nil), items...)
+}
+
+func cloneWorktrees(items []domain.Worktree) []domain.Worktree {
+	cloned := cloneSlice(items)
+	for i := range cloned {
+		if items[i].LinkedPR != nil {
+			linkedPR := clonePullRequest(*items[i].LinkedPR)
+			cloned[i].LinkedPR = &linkedPR
+		}
+	}
+	return cloned
+}
+
+func cloneIssues(items []domain.Issue) []domain.Issue {
+	cloned := cloneSlice(items)
+	for i := range cloned {
+		cloned[i].Labels = append([]string(nil), items[i].Labels...)
+		cloned[i].Assignees = append([]string(nil), items[i].Assignees...)
+		cloned[i].ParentNumber = clonePointer(items[i].ParentNumber)
+		cloned[i].SubIssueNumbers = append([]int(nil), items[i].SubIssueNumbers...)
+	}
+	return cloned
+}
+
+func clonePullRequests(items []domain.PullRequest) []domain.PullRequest {
+	cloned := cloneSlice(items)
+	for i := range cloned {
+		cloned[i] = clonePullRequest(items[i])
+	}
+	return cloned
+}
+
+func clonePullRequest(item domain.PullRequest) domain.PullRequest {
+	item.Labels = append([]string(nil), item.Labels...)
+	item.Assignees = append([]string(nil), item.Assignees...)
+	return item
+}
+
+func cloneSessions(items []domain.Session) []domain.Session {
+	cloned := cloneSlice(items)
+	for i := range cloned {
+		cloned[i].ShellPID = clonePointer(items[i].ShellPID)
+		cloned[i].AgentName = clonePointer(items[i].AgentName)
+		cloned[i].Prompt = clonePointer(items[i].Prompt)
+	}
+	return cloned
+}
+
+func clonePointer[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
