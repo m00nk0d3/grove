@@ -1,8 +1,22 @@
 package domain
 
+import "time"
+
 type MissionControlState struct {
-	Status  string
-	Details map[string]interface{}
+	Status       string
+	Details      map[string]interface{}
+	RepoPath     string
+	WorkItems    []WorkItem
+	Worktrees    []Worktree
+	Issues       []Issue
+	PullRequests []PullRequest
+	Sessions     []Session
+	WorkflowRuns []WorkflowRunRef
+	Agents       []AgentRef
+	Panes        []PaneRef
+	Integrations IntegrationStatus
+	Warnings     []Warning
+	UpdatedAt    time.Time
 }
 
 type WorkItem struct {
@@ -13,7 +27,7 @@ type WorkItem struct {
 
 type WorkflowRunRef struct {
 	WorkflowID string
-	RunID    string
+	RunID      string
 }
 
 type AgentRef struct {
@@ -25,14 +39,21 @@ type PaneRef struct {
 }
 
 type IntegrationStatus struct {
-	Status  string
-	Message string
+	Herdr      ExternalIntegration
+	Sandcastle ExternalIntegration
+	GitHub     ExternalIntegration
 }
 
 type ExternalIntegration struct {
 	Name        string
 	Description string
 	URL         string
+	Available   bool
+	Enabled     bool
+	Mode        string
+	Version     string
+	Error       string
+	LastSync    time.Time
 }
 
 type Warning struct {
@@ -42,6 +63,6 @@ type Warning struct {
 
 // Normalized enums
 const (
-	UnknownState = "unknown"
+	UnknownState  = "unknown"
 	DegradedState = "degraded"
 )
