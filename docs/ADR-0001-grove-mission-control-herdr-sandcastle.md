@@ -23,9 +23,10 @@ The desired direction is larger than simply making Grove aware of Herdr. Grove s
 
 Herdr and Sandcastle should fit into this direction as infrastructure layers:
 
-- Herdr owns terminal reality: workspaces, tabs, panes, focus, persistent terminal sessions, agent terminal lifecycle, and jump targets.
+- Herdr owns terminal reality: workspaces, tabs, panes, focus, persistent terminal sessions, pane-local process visibility, and jump targets. It may report that an agent is present in a pane, but it does not own the agent's workflow or process lifecycle.
 - Sandcastle owns agent workflow execution: agent launching, multi-agent orchestration, workflow runs, steps, progress, and workflow lifecycle. Pi Agent is the primary/default coding agent for Sandcastle-driven Grove workflows.
 - Grove owns the human-facing control-center experience: the dashboard, navigation, correlation, summaries, and high-level orchestration UX.
+- GitHub owns issue and pull-request records. Grove reads and correlates that metadata in phase 1; GitHub mutations are deferred.
 
 The user explicitly prefers Sandcastle status to be rendered visually inside Grove using the existing Go TUI framework. Grove should not display Sandcastle status as raw CLI output or as an external dashboard. Sandcastle should provide structured data, and Grove should convert that into native visual components.
 
@@ -45,8 +46,8 @@ The ownership model is:
 | GitHub PR and issue mutation actions | Out of scope for phase 1 |
 | Terminal panes, workspace/tab/pane IDs, focus, and jumps | Herdr |
 | Persistent terminal runtime | Herdr |
-| Terminal-level agent lifecycle detection | Herdr |
-| Agent launching | Sandcastle |
+| Pane-local agent presence and terminal state | Herdr |
+| Agent process lifecycle (launch, supervision, completion) | Sandcastle |
 | Sandcastle workflow execution | Sandcastle, defaulting to Pi Agent for coding work |
 | Multi-agent orchestration | Sandcastle |
 | Workflow lifecycle controls beyond start | Out of scope for phase 1 |
@@ -64,6 +65,8 @@ Grove's phase-1 goal is not to expose every possible control. The phase-1 goal i
 Grove should not directly mirror Herdr's data model or Sandcastle's data model. Instead, Grove should define its own mission-control domain model and use adapters to project external state into that model.
 
 Grove should not launch coding agents directly in the target architecture. Grove starts and monitors Sandcastle workflow runs; Sandcastle decides how to launch, supervise, and coordinate agents. For Grove-started coding workflows, Sandcastle should use Pi Agent by default unless the workflow explicitly declares another agent kind.
+
+Ownership and observation are distinct: Grove may display an agent, and Herdr may observe its pane or process, without either system owning that agent's lifecycle. Sandcastle remains the lifecycle owner for every agent in the target flow.
 
 ## Problem Statement
 
@@ -173,8 +176,9 @@ In standalone mode:
 
 - Grove remains standalone-first. Herdr compatibility is an enhanced runtime mode, not a hard dependency.
 - Grove becomes the control-center UI and owns the unified mission-control state model.
-- Herdr owns terminal runtime state: panes, tabs, workspaces, terminal focus, persistent sessions, pane jumps, and terminal-level agent detection.
+- Herdr owns terminal runtime state: panes, tabs, workspaces, terminal focus, persistent sessions, pane jumps, and pane-local agent presence detection.
 - Sandcastle owns workflow execution, agent launching, and multi-agent orchestration.
+- GitHub owns issue and pull-request records; Grove's phase-1 integration is read-only display and correlation.
 - Grove consumes Sandcastle state through CLI JSON in phase 1.
 - Sandcastle workflow starts from Grove should default to Pi Agent as the primary coding agent.
 - Sandcastle workflow status from Grove should identify Pi Agent as the default coding actor unless a workflow reports a different agent.
@@ -205,7 +209,7 @@ In standalone mode:
 - Grove should introduce a terminal runtime abstraction rather than continuing to add terminal-specific branches directly into launch functions.
 - The terminal runtime abstraction should support opening shells, running Sandcastle-managed commands in panes, focusing sessions, and listing known sessions. It should not make Grove the owner of agent process launch.
 - A local terminal runtime should preserve current terminal-launch behavior.
-- A Herdr runtime should use Herdr commands for pane creation, pane execution, pane focus, and agent-aware operations.
+- A Herdr runtime should use Herdr commands for pane creation, pane execution, pane focus, and reporting pane-local agent presence. Those observations do not transfer agent lifecycle ownership from Sandcastle to Herdr.
 - Active sessions should evolve from PID-first tracking to runtime-reference tracking.
 - PID-based session health remains valid for local runtime sessions.
 - Herdr-backed session health should use Herdr pane or agent state rather than launcher process IDs.
@@ -215,7 +219,7 @@ In standalone mode:
 - Agent-related configuration should move toward Sandcastle workflow defaults rather than per-agent Grove launcher toggles.
 - Herdr-backed agent visibility should come from Herdr and Sandcastle state, not from Grove launching the agent itself.
 - Grove should show externally launched Herdr or Sandcastle agents read-only when it can discover them.
-- Externally launched agents should not be treated as Grove-owned unless the user explicitly links or imports them later.
+- Externally launched agents should be labeled by their reported source and must not be treated as Grove-owned.
 - Grove should expose only reliable phase-1 write actions: start Sandcastle workflow, open or jump Herdr pane, and create or open Herdr-managed worktree.
 - Stop, pause, and retry workflow controls are deferred.
 - GitHub mutation actions such as labeling, assignment, and comments are deferred.

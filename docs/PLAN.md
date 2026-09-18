@@ -1,11 +1,13 @@
 ﻿# Grove: Git Worktree Orchestrator & AI Agent Hub - Development Plan v1.0
 
+> **Historical baseline:** This plan documents Grove's original direct-launcher architecture and current legacy behavior. For the target Mission Control architecture and ownership boundaries, use [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md) and the [Mission Control implementation plan](./MISSION_CONTROL_IMPLEMENTATION_PLAN.md). New agent work must start a Sandcastle workflow; Grove must not launch Pi Agent or other coding agents directly.
+
 ## Problem Statement
 Developers managing multiple context-heavy development streams need a unified terminal interface to:
 1. Manage Git worktrees efficiently (create, delete, switch, list, prune, lock, unlock)
 2. Sync with GitHub metadata in real-time (PRs, issues, branch data)
 3. Launch AI agents (Copilot, Claude, Aider) with the correct filesystem context
-4. Persist configuration and work context across sessions
+4. Persist configuration and worktree state across sessions
 
 ## Proposed Approach
 Build a Go TUI application using Charm.sh ecosystem (bubbletea, lipgloss, bubbles) that serves as a "command center" for orchestrating git worktrees and AI agents. The app will:
