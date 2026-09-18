@@ -1,6 +1,6 @@
 # Grove Mission Control Implementation Plan
 
-This plan turns [ADR-0001: Grove Mission Control with Herdr and Sandcastle](./ADR-0001-grove-mission-control-herdr-sandcastle.md) into an implementation roadmap.
+This plan turns [ADR-0001: Grove Mission Control with Herdr and Sandcastle](./ADR-0001-grove-mission-control-herdr-sandcastle.md) into an implementation roadmap. The ADR is the source of truth for ownership boundaries.
 
 ## Goal
 
@@ -10,13 +10,15 @@ The target ownership model is:
 
 | Layer | Responsibility |
 | --- | --- |
-| Grove | Dashboard, navigation, visual status, state correlation, high-level orchestration UX |
-| Sandcastle | Workflow execution, agent launch, multi-agent orchestration, workflow lifecycle |
+| Grove | Dashboard, navigation, visual status, state correlation, and Sandcastle workflow-start requests |
+| Sandcastle | Workflow execution and lifecycle; agent launch, supervision, completion, and multi-agent orchestration |
 | Pi Agent | Primary/default coding agent for Grove-started Sandcastle workflows |
-| Herdr | Terminal workspaces, tabs, panes, focus, persistence, pane jumps, terminal-level agent state |
-| GitHub | Issues, pull requests, labels, review/check metadata |
+| Herdr | Terminal workspaces, tabs, panes, focus, persistence, pane jumps, and pane-local process visibility |
+| GitHub | System of record for issues, pull requests, labels, reviews, and checks |
 
-Grove should not launch coding agents directly in the target architecture. Grove starts Sandcastle workflows, Sandcastle launches Pi Agent and any supporting agents, Herdr owns the terminal runtime, and Grove renders the resulting state.
+Grove should not launch coding agents directly in the target architecture. Grove starts Sandcastle workflows, Sandcastle launches Pi Agent and any supporting agents, Herdr owns the terminal runtime, and Grove renders the resulting state. Direct agent launchers from Grove are legacy and explicitly out of scope.
+
+Displaying or discovering an agent does not imply lifecycle ownership. Herdr may observe an agent in a pane, and Grove may correlate and display that observation, but Sandcastle owns the agent process and workflow lifecycle. GitHub integration is read-only in Phase 1: Grove displays and correlates metadata but does not mutate GitHub records.
 
 ## Non-goals for Phase 1
 
@@ -164,16 +166,17 @@ type WorkflowRunRef struct {
 
 ```go
 type AgentRef struct {
-    ID            string
-    Name          string
-    Kind          string
-    Owner         AgentOwner
-    Status        AgentStatus
-    WorktreePath  string
-    WorkflowRunID string
-    PaneID        string
-    Summary       string
-    UpdatedAt     time.Time
+    ID             string
+    Name           string
+    Kind           string
+    LifecycleOwner AgentLifecycleOwner
+    ObservedBy     []AgentObserver
+    Status         AgentStatus
+    WorktreePath   string
+    WorkflowRunID  string
+    PaneID         string
+    Summary        string
+    UpdatedAt      time.Time
 }
 ```
 
@@ -216,7 +219,10 @@ Add normalized enums for:
 - `WorkItemStatus`: `idle`, `queued`, `running`, `blocked`, `failed`, `succeeded`, `unknown`
 - `WorkflowStatus`: `queued`, `running`, `blocked`, `failed`, `succeeded`, `cancelled`, `unknown`
 - `AgentStatus`: `idle`, `working`, `blocked`, `done`, `failed`, `unknown`
-- `AgentOwner`: `sandcastle`, `herdr`, `grove_legacy`, `external`
+- `AgentLifecycleOwner`: `sandcastle`, `grove_legacy`, `external`
+- `AgentObserver`: `sandcastle`, `herdr`, `grove`
+
+`grove_legacy` identifies only agents started by the pre-Mission-Control launchers. Herdr can observe agent presence but is not an `AgentLifecycleOwner`.
 
 ### Acceptance Criteria
 
@@ -1318,7 +1324,7 @@ Cover:
 - Blocked status is visually distinct.
 - Failed status is visually distinct.
 - Worktree detail shows linked issue, PR, workflow, and pane.
-- Agent detail shows owner `Sandcastle` and kind `Pi`.
+- Agent detail shows lifecycle owner `Sandcastle`, observer `Herdr` when applicable, and kind `Pi`.
 - Raw Sandcastle JSON is not displayed.
 
 ### Persistence Tests
@@ -1518,7 +1524,7 @@ Deliverable: Grove's documented flow is Sandcastle-first.
 
 | Risk | Mitigation |
 | --- | --- |
-| Grove, Herdr, and Sandcastle disagree about ownership | Keep ADR ownership strict: Grove coordinates, Herdr owns panes, Sandcastle owns agents |
+| Grove, Herdr, and Sandcastle disagree about ownership | Keep ADR ownership strict: Grove correlates and requests workflow starts, Herdr owns terminal runtime, Sandcastle owns workflow and agent lifecycle |
 | Dashboard becomes a raw JSON/log viewer | Normalize into mission-control state and render native components |
 | First implementation gets too large | Ship dashboard/status/start/jump first; delay stop/pause/retry and GitHub mutations |
 | Herdr IDs go stale | Store Herdr IDs plus Git identity and reconcile by path/branch |
