@@ -6,8 +6,8 @@ type Config struct {
 	GitHub     GitHubConfig     `toml:"github"`
 	Appearance AppearanceConfig `toml:"appearance"`
 	AIAgents   AIAgentsConfig   `toml:"ai_agents"`
-	Herdr       HerdrConfig       `toml:"herdr"`
-	Sandcastle   SandcastleConfig   `toml:"sandcastle"`
+	Herdr      HerdrConfig      `toml:"herdr"`
+	Sandcastle SandcastleConfig `toml:"sandcastle"`
 	Worktrees  WorktreesConfig  `toml:"worktrees"`
 }
 
@@ -38,19 +38,17 @@ type AIAgentsConfig struct {
 }
 
 type HerdrConfig struct {
-	Enabled           bool   `toml:"enabled"`
-	Binary            string `toml:"binary"`
-	PollInterval      int    `toml:"poll_interval"`
-	PreferWorktreeApi bool   `toml:"prefer_worktree_api"`
-	DefaultAgent      string `toml:"default_agent"`
+	Enabled             bool   `toml:"enabled"`
+	Binary              string `toml:"binary"`
+	PollIntervalSeconds int    `toml:"poll_interval_seconds"`
+	PreferWorktreeAPI   bool   `toml:"prefer_worktree_api"`
 }
 
 type SandcastleConfig struct {
-	Enabled           bool   `toml:"enabled"`
-	Binary            string `toml:"binary"`
-	PollInterval      int    `toml:"poll_interval"`
-	PreferWorktreeApi bool   `toml:"prefer_worktree_api"`
-	DefaultAgent      string `toml:"default_agent"`
+	Enabled             bool   `toml:"enabled"`
+	Binary              string `toml:"binary"`
+	PollIntervalSeconds int    `toml:"poll_interval_seconds"`
+	DefaultAgent        string `toml:"default_agent"`
 }
 
 type WorktreesConfig struct {
@@ -64,7 +62,17 @@ func DefaultConfig() *Config {
 		Worktrees:  WorktreesConfig{BaseBranch: "main", WorktreeRoot: "../worktrees"},
 		GitHub:     GitHubConfig{AutoSync: true, SyncIntervalMinutes: 5},
 		AIAgents:   AIAgentsConfig{CopilotEnabled: true, ClaudeEnabled: true},
-		Herdr:       HerdrConfig{Enabled: false},
-		Sandcastle:  SandcastleConfig{Enabled: false, DefaultAgent: "pi"},
+		Herdr: HerdrConfig{
+			Enabled:             true,
+			Binary:              "herdr",
+			PollIntervalSeconds: 5,
+			PreferWorktreeAPI:   true,
+		},
+		Sandcastle: SandcastleConfig{
+			Enabled:             true,
+			Binary:              "sandcastle",
+			PollIntervalSeconds: 5,
+			DefaultAgent:        "pi",
+		},
 	}
 }
