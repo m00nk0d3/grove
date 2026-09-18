@@ -75,10 +75,9 @@ func presentIntegration(integration domain.ExternalIntegration) domain.ExternalI
 }
 
 func cloneSlice[T any](items []T) []T {
-	if items == nil {
-		return []T{}
-	}
-	return append([]T(nil), items...)
+	cloned := make([]T, len(items))
+	copy(cloned, items)
+	return cloned
 }
 
 func cloneWorktrees(items []domain.Worktree) []domain.Worktree {

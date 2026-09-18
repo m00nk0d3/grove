@@ -35,6 +35,20 @@ func TestBuildStateEmptyInput(t *testing.T) {
 	assert.False(t, state.Integrations.Sandcastle.Available)
 }
 
+func TestBuildStateExplicitlyEmptyCollections(t *testing.T) {
+	state := BuildState(BuildInput{
+		Worktrees:    []domain.Worktree{},
+		Issues:       []domain.Issue{},
+		PullRequests: []domain.PullRequest{},
+		Sessions:     []domain.Session{},
+	})
+
+	require.NotNil(t, state.Worktrees)
+	require.NotNil(t, state.Issues)
+	require.NotNil(t, state.PullRequests)
+	require.NotNil(t, state.Sessions)
+}
+
 func TestBuildStateWithoutHerdrSnapshot(t *testing.T) {
 	state := BuildState(BuildInput{
 		SandcastleSnapshot: &sandcastle.Snapshot{},
