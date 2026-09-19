@@ -1,7 +1,6 @@
 package mission
 
 import (
-	"strings"
 	"time"
 
 	"github.com/m00nk0d3/grove/internal/domain"
@@ -24,6 +23,10 @@ type BuildInput struct {
 
 // BuildState creates a complete mission-control state from the available sources.
 func BuildState(input BuildInput) domain.MissionControlState {
+	wfs := snapshotWorkflows(input.SandcastleSnapshot)
+	ags := snapshotAgents(input.SandcastleSnapshot)
+	pns := snapshotPanes(input.HerdrSnapshot)
+
 	state := domain.MissionControlState{
 		Status:       domain.UnknownState,
 		Details:      make(map[string]interface{}),
@@ -33,24 +36,37 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		Issues:       cloneIssues(input.Issues),
 		PullRequests: clonePullRequests(input.PullRequests),
 		Sessions:     cloneSessions(input.Sessions),
-		WorkflowRuns: []domain.WorkflowRunRef{},
-		Agents:       []domain.AgentRef{},
-		Panes:        []domain.PaneRef{},
+		WorkflowRuns: wfs,
+		Agents:       ags,
+		Panes:        pns,
 		Integrations: domain.IntegrationStatus{
 			Herdr:      herdrIntegration(input.HerdrSnapshot, input.PreviousState),
 			Sandcastle: sandcastleIntegration(input.SandcastleSnapshot),
-			GitHub:     missingIntegration(false), // GitHub not connected to this implementation
+			GitHub:     missingIntegration(false),
 		},
 		Warnings:  []domain.Warning{},
 		UpdatedAt: input.Now,
 	}
 
-	// Perform correlation to create work items from branch name matching
-	state.WorkItems = correlateWorktreesWithIssuesAndPRs(
+	state.WorkItems = correlateAll(
 		input.Worktrees,
 		input.Issues,
 		input.PullRequests,
+		wfs,
+		ags,
+		pns,
 	)
+
+	// Set timestamps on work items that don't have them.
+	now := input.Now.Unix()
+	for i := range state.WorkItems {
+		if state.WorkItems[i].CreatedAt == 0 {
+			state.WorkItems[i].CreatedAt = now
+		}
+		if state.WorkItems[i].UpdatedAt == 0 {
+			state.WorkItems[i].UpdatedAt = now
+		}
+	}
 
 	// Preserve previous state WorkItems when Sandcastle is unavailable
 	if input.SandcastleSnapshot == nil && input.PreviousState != nil && len(input.PreviousState.WorkItems) > 0 {
@@ -77,83 +93,29 @@ func BuildState(input BuildInput) domain.MissionControlState {
 	return state
 }
 
-// correlateWorktreesWithIssuesAndPRs links worktrees to issues/PRs based on branch names.
-func correlateWorktreesWithIssuesAndPRs(
-	worktrees []domain.Worktree,
-	issues []domain.Issue,
-	prs []domain.PullRequest,
-) []domain.WorkItem {
-	workItems := make([]domain.WorkItem, 0) // Always non-nil
-
-	for _, worktree := range worktrees {
-		// Rule 1: Exact branch match with PR
-		if pr, ok := exactBranchMatch(worktree.Branch, prs); ok {
-			item := domain.WorkItem{
-				ID:              worktree.Branch,
-				CreatedAt:       time.Now().Unix(),
-				UpdatedAt:       time.Now().Unix(),
-				LinkedPR:        &pr,
-			}
-			workItems = append(workItems, item)
-			continue
-		}
-
-		// Rule 2: Branch containment (worktree branch contains PR branch as substring)
-		if pr, ok := containmentMatch(worktree.Branch, prs); ok {
-			item := domain.WorkItem{
-				ID:              worktree.Branch,
-				CreatedAt:       time.Now().Unix(),
-				UpdatedAt:       time.Now().Unix(),
-				LinkedPR:        &pr,
-			}
-			workItems = append(workItems, item)
-			continue
-		}
-
-		// Rule 3: Orphan worktrees appear as standalone workitems ONLY IF there's at least one PR or Issue
-		// If there are no PRs/issues, orphan worktrees should not create work items
-		if len(prs) > 0 || len(issues) > 0 {
-			existing := false
-			for _, wi := range workItems {
-				if wi.ID == worktree.Branch {
-					existing = true
-					break
-				}
-			}
-			if !existing {
-				item := domain.WorkItem{
-					ID:              worktree.Branch,
-					CreatedAt:       time.Now().Unix(),
-					UpdatedAt:       time.Now().Unix(),
-					LinkedPR:        nil,
-					LinkedIssue:     nil,
-				}
-				workItems = append(workItems, item)
-			}
-		}
+// snapshotWorkflows extracts workflow data from a Sandcastle snapshot, returning
+// an empty slice for nil snapshots.
+func snapshotWorkflows(snap *sandcastle.Snapshot) []domain.WorkflowRunRef {
+	if snap == nil {
+		return []domain.WorkflowRunRef{}
 	}
-
-	return workItems
+	return snap.Workflows
 }
 
-// exactBranchMatch returns a PR that has an exact branch name match with the worktree.
-func exactBranchMatch(worktreeBranch string, prs []domain.PullRequest) (domain.PullRequest, bool) {
-	for _, pr := range prs {
-		if pr.Branch == worktreeBranch {
-			return pr, true
-		}
+// snapshotAgents extracts agent data from a Sandcastle snapshot.
+func snapshotAgents(snap *sandcastle.Snapshot) []domain.AgentRef {
+	if snap == nil {
+		return []domain.AgentRef{}
 	}
-	return domain.PullRequest{}, false
+	return snap.Agents
 }
 
-// containmentMatch returns a PR where the worktree branch contains the PR branch as substring.
-func containmentMatch(worktreeBranch string, prs []domain.PullRequest) (domain.PullRequest, bool) {
-	for _, pr := range prs {
-		if strings.Contains(worktreeBranch, pr.Branch) {
-			return pr, true
-		}
+// snapshotPanes extracts pane data from a Herdr snapshot.
+func snapshotPanes(snap *herdr.Snapshot) []domain.PaneRef {
+	if snap == nil {
+		return []domain.PaneRef{}
 	}
-	return domain.PullRequest{}, false
+	return snap.Panes
 }
 
 func herdrIntegration(snapshot *herdr.Snapshot, previousState *domain.MissionControlState) domain.ExternalIntegration {
@@ -209,7 +171,17 @@ func missingIntegration(available bool) domain.ExternalIntegration {
 // Clone functions to avoid mutations
 func cloneWorktrees(items []domain.Worktree) []domain.Worktree {
 	cloned := make([]domain.Worktree, len(items))
-	copy(cloned, items)
+	for i, item := range items {
+		cloned[i] = item
+		if item.LinkedPR != nil {
+			pr := clonePullRequest(*item.LinkedPR)
+			cloned[i].LinkedPR = &pr
+		}
+		if item.LinkedIssue != nil {
+			issue := cloneIssue(*item.LinkedIssue)
+			cloned[i].LinkedIssue = &issue
+		}
+	}
 	return cloned
 }
 
@@ -219,6 +191,11 @@ func cloneIssues(items []domain.Issue) []domain.Issue {
 		cloned[i] = item
 		cloned[i].Labels = append([]string(nil), item.Labels...)
 		cloned[i].Assignees = append([]string(nil), item.Assignees...)
+		if item.ParentNumber != nil {
+			pn := *item.ParentNumber
+			cloned[i].ParentNumber = &pn
+		}
+		cloned[i].SubIssueNumbers = append([]int(nil), item.SubIssueNumbers...)
 	}
 	return cloned
 }
@@ -226,15 +203,44 @@ func cloneIssues(items []domain.Issue) []domain.Issue {
 func clonePullRequests(items []domain.PullRequest) []domain.PullRequest {
 	cloned := make([]domain.PullRequest, len(items))
 	for i, item := range items {
-		cloned[i] = item
-		cloned[i].Labels = append([]string(nil), item.Labels...)
-		cloned[i].Assignees = append([]string(nil), item.Assignees...)
+		cloned[i] = clonePullRequest(item)
 	}
 	return cloned
 }
 
+func clonePullRequest(item domain.PullRequest) domain.PullRequest {
+	item.Labels = append([]string(nil), item.Labels...)
+	item.Assignees = append([]string(nil), item.Assignees...)
+	return item
+}
+
+func cloneIssue(item domain.Issue) domain.Issue {
+	item.Labels = append([]string(nil), item.Labels...)
+	item.Assignees = append([]string(nil), item.Assignees...)
+	if item.ParentNumber != nil {
+		pn := *item.ParentNumber
+		item.ParentNumber = &pn
+	}
+	item.SubIssueNumbers = append([]int(nil), item.SubIssueNumbers...)
+	return item
+}
+
 func cloneSessions(items []domain.Session) []domain.Session {
 	cloned := make([]domain.Session, len(items))
-	copy(cloned, items)
+	for i, item := range items {
+		cloned[i] = item
+		if item.ShellPID != nil {
+			v := *item.ShellPID
+			cloned[i].ShellPID = &v
+		}
+		if item.AgentName != nil {
+			v := *item.AgentName
+			cloned[i].AgentName = &v
+		}
+		if item.Prompt != nil {
+			v := *item.Prompt
+			cloned[i].Prompt = &v
+		}
+	}
 	return cloned
 }

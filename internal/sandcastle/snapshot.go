@@ -6,4 +6,6 @@ import "github.com/m00nk0d3/grove/internal/domain"
 // Adapter-specific data will be added when the Sandcastle adapter is implemented.
 type Snapshot struct {
 	Integration domain.ExternalIntegration
+	Workflows   []domain.WorkflowRunRef
+	Agents      []domain.AgentRef
 }
