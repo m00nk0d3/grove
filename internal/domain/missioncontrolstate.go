@@ -89,6 +89,31 @@ const (
 	DegradedState = "degraded"
 )
 
+// Sandcastle workflow statuses (from SANDCASTLE_JSON_CONTRACT.md Status Vocabulary).
+const (
+	WorkflowQueued    = "queued"
+	WorkflowRunning   = "running"
+	WorkflowBlocked   = "blocked"
+	WorkflowFailed    = "failed"
+	WorkflowSucceeded = "succeeded"
+)
+
+// Sandcastle agent statuses (from SANDCASTLE_JSON_CONTRACT.md Status Vocabulary).
+const (
+	AgentWorking = "working"
+	AgentIdle    = "idle"
+	AgentBlocked = "blocked"
+	AgentFailed  = "failed"
+	AgentDone    = "done"
+)
+
+// Sandcastle step statuses (from SANDCASTLE_JSON_CONTRACT.md Status Vocabulary).
+const (
+	StepRunning   = "running"
+	StepSucceeded = "succeeded"
+	StepFailed    = "failed"
+)
+
 // Phase 2: Correlations metadata for tracking linkage relationships
 type Correlations struct {
 	WorktreeToPR      map[string]string // worktree path -> linked PR number or ""
