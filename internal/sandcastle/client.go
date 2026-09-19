@@ -1,0 +1,277 @@
+package sandcastle
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	osexec "os/exec"
+	"time"
+
+	"github.com/m00nk0d3/grove/internal/domain"
+)
+
+// Client provides access to the Sandcastle CLI for reading workflow state
+// and starting new workflows. All methods respect context cancellation.
+type Client interface {
+	Available(ctx context.Context) domain.ExternalIntegration
+	Snapshot(ctx context.Context, repoPath string) (Snapshot, error)
+	StartWorkflow(ctx context.Context, req StartWorkflowRequest) (domain.WorkflowRunRef, error)
+}
+
+// ClientConfig holds the configuration for creating a Sandcastle client.
+type ClientConfig struct {
+	Binary       string
+	DefaultAgent string
+	Timeout      time.Duration
+}
+
+// StartWorkflowRequest describes a workflow start request to Sandcastle.
+type StartWorkflowRequest struct {
+	RepoPath     string
+	WorktreePath string
+	Branch       string
+	IssueNumber  *int
+	PRNumber     *int
+	AgentKind    string
+	Source       string
+}
+
+type sandcastleClient struct {
+	config ClientConfig
+	runner CommandRunner
+}
+
+// NewClient creates a Sandcastle Client with the given config and command runner.
+// A zero Timeout defaults to 10s. A zero DefaultAgent defaults to "pi".
+func NewClient(config ClientConfig, runner CommandRunner) Client {
+	if config.Timeout == 0 {
+		config.Timeout = 10 * time.Second
+	}
+	if config.DefaultAgent == "" {
+		config.DefaultAgent = "pi"
+	}
+	if config.Binary == "" {
+		config.Binary = "sandcastle"
+	}
+	return &sandcastleClient{config: config, runner: runner}
+}
+
+// Available checks whether the Sandcastle binary is reachable on PATH.
+func (c *sandcastleClient) Available(_ context.Context) domain.ExternalIntegration {
+	_, err := osexec.LookPath(c.config.Binary)
+	if err != nil {
+		return domain.ExternalIntegration{
+			Name:      "sandcastle",
+			Available: false,
+			Enabled:   true,
+			Error:     "sandcastle binary not found",
+		}
+	}
+	return domain.ExternalIntegration{
+		Name:      "sandcastle",
+		Available: true,
+		Enabled:   true,
+	}
+}
+
+// Snapshot fetches the current Sandcastle status and returns a normalized snapshot
+// suitable for mission-control consumption. When the binary is unavailable the
+// snapshot carries an unavailable integration and no workflows; it never returns
+// an error for that condition.
+func (c *sandcastleClient) Snapshot(ctx context.Context, _ string) (Snapshot, error) {
+	info := c.Available(ctx)
+	if !info.Available {
+		return Snapshot{Integration: info}, nil
+	}
+
+	stdout, stderr, err := c.runCommand(ctx, "status")
+	if err != nil {
+		return Snapshot{
+			Integration: domain.ExternalIntegration{
+				Name:      "sandcastle",
+				Available: true,
+				Enabled:   true,
+				Error:     preserveStderr(stderr, err),
+			},
+		}, fmt.Errorf("sandcastle status: %w", err)
+	}
+
+	var resp statusResponse
+	if err := json.Unmarshal(stdout, &resp); err != nil {
+		return Snapshot{
+			Integration: domain.ExternalIntegration{
+				Name:      "sandcastle",
+				Available: true,
+				Enabled:   true,
+				Error:     "malformed JSON from sandcastle status",
+			},
+		}, fmt.Errorf("parse sandcastle status: %w", err)
+	}
+
+	integration := domain.ExternalIntegration{
+		Name:      "sandcastle",
+		Available: true,
+		Enabled:   true,
+		Version:   resp.Version,
+	}
+
+	workflows := make([]domain.WorkflowRunRef, 0, len(resp.Workflows))
+	var agents []domain.AgentRef
+	for _, w := range resp.Workflows {
+		wf, ags := normalizeWorkflow(w)
+		workflows = append(workflows, wf)
+		agents = append(agents, ags...)
+	}
+
+	return Snapshot{
+		Integration: integration,
+		Workflows:   workflows,
+		Agents:      agents,
+		CapturedAt:  time.Now(),
+	}, nil
+}
+
+// StartWorkflow requests Sandcastle to start a new workflow run.
+// When AgentKind is empty the configured default agent is used.
+func (c *sandcastleClient) StartWorkflow(ctx context.Context, req StartWorkflowRequest) (domain.WorkflowRunRef, error) {
+	info := c.Available(ctx)
+	if !info.Available {
+		return domain.WorkflowRunRef{}, fmt.Errorf("sandcastle not available: %s", info.Error)
+	}
+
+	agent := req.AgentKind
+	if agent == "" {
+		agent = c.config.DefaultAgent
+	}
+	source := req.Source
+	if source == "" {
+		source = "grove"
+	}
+
+	args := []string{
+		"workflow", "start", "--json",
+		"--repo", req.RepoPath,
+		"--worktree", req.WorktreePath,
+		"--agent", agent,
+		"--source", source,
+	}
+
+	stdout, stderr, err := c.runCommand(ctx, args...)
+	if err != nil {
+		return domain.WorkflowRunRef{}, fmt.Errorf("start workflow: %s: %w", preserveStderr(stderr, err), err)
+	}
+
+	var resp startWorkflowResponse
+	if err := json.Unmarshal(stdout, &resp); err != nil {
+		return domain.WorkflowRunRef{}, fmt.Errorf("parse start response: %w", err)
+	}
+
+	wf, _ := normalizeWorkflow(resp.Workflow)
+	return wf, nil
+}
+
+func (c *sandcastleClient) runCommand(ctx context.Context, args ...string) ([]byte, []byte, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancel()
+	return c.runner.Run(timeoutCtx, c.config.Binary, args...)
+}
+
+func preserveStderr(stderr []byte, err error) string {
+	s := string(stderr)
+	if s == "" {
+		return err.Error()
+	}
+	return s
+}
+
+// --- JSON shapes from the Sandcastle CLI contract ---
+
+type statusResponse struct {
+	Version         string           `json:"version"`
+	UpdatedAt       string           `json:"updated_at"`
+	ActiveWorkflows int              `json:"active_workflows"`
+	Workflows       []workflowRunRaw `json:"workflows"`
+}
+
+type workflowListResponse struct {
+	Workflows []workflowRunRaw `json:"workflows"`
+}
+
+type startWorkflowResponse struct {
+	Workflow workflowRunRaw `json:"workflow"`
+}
+
+type workflowRunRaw struct {
+	ID           string         `json:"id"`
+	Title        string         `json:"title"`
+	Status       string         `json:"status"`
+	Repo         string         `json:"repo"`
+	WorktreePath string         `json:"worktree_path"`
+	Branch       string         `json:"branch"`
+	DefaultAgent string         `json:"default_agent"`
+	CurrentStep  string         `json:"current_step"`
+	Progress     progressRaw   `json:"progress"`
+	Github       githubRaw     `json:"github"`
+	Agents       []agentRaw    `json:"agents"`
+	Steps        []stepRaw     `json:"steps"`
+	StartedAt    string         `json:"started_at"`
+	UpdatedAt    string         `json:"updated_at"`
+}
+
+type progressRaw struct {
+	Completed int `json:"completed"`
+	Total     int `json:"total"`
+	Percent   int `json:"percent"`
+}
+
+type githubRaw struct {
+	Issue      *int `json:"issue"`
+	PullRequest *int `json:"pull_request"`
+}
+
+type agentRaw struct {
+	ID     string `json:"id"`
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Summary string `json:"summary"`
+	PaneID string `json:"pane_id"`
+}
+
+type stepRaw struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
+// normalizeWorkflow converts a raw Sandcastle workflow JSON shape into
+// a domain WorkflowRunRef and associated AgentRefs. Unknown enum values
+// are preserved literally (rule 8 of the contract).
+func normalizeWorkflow(w workflowRunRaw) (domain.WorkflowRunRef, []domain.AgentRef) {
+	agent := w.DefaultAgent
+	if agent == "" {
+		agent = "pi"
+	}
+
+	wf := domain.WorkflowRunRef{
+		WorkflowID:   w.ID,
+		RunID:        w.ID,
+		WorktreePath: w.WorktreePath,
+		Branch:       w.Branch,
+		Status:       w.Status,
+		IssueNumber:  w.Github.Issue,
+		PRNumber:     w.Github.PullRequest,
+	}
+
+	agents := make([]domain.AgentRef, 0, len(w.Agents))
+	for _, a := range w.Agents {
+		agents = append(agents, domain.AgentRef{
+			AgentID:       a.ID,
+			Name:          a.Name,
+			WorkflowRunID: w.ID,
+			Status:        a.Status,
+		})
+	}
+
+	return wf, agents
+}
