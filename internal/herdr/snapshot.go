@@ -6,4 +6,12 @@ import "github.com/m00nk0d3/grove/internal/domain"
 // Adapter-specific data will be added when the Herdr adapter is implemented.
 type Snapshot struct {
 	Integration domain.ExternalIntegration
+	Panes       []domain.PaneRef
+	Agents      []domain.AgentRef
+	Workspaces  []Workspace
+}
+
+type Workspace struct {
+	Name string
+	Path string
 }
