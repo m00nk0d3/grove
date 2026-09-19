@@ -426,3 +426,35 @@ func TestEmptyInputsYieldsEmptyMissionControlState(t *testing.T) {
 	require.NotNil(t, state.Agents)
 	require.NotNil(t, state.Panes)
 }
+
+// Phase 2: Correlations metadata tests for verifying struct existence and initialization
+
+func TestCorrelationsStructExists(t *testing.T) {
+	input := BuildInput{RepoPath: "/repo/grove"}
+	state := BuildState(input)
+
+	// Verify Correlations struct exists in MissionControlState
+	require.NotNil(t, state.Correlations)
+
+	// Verify all maps are initialized (not nil)
+	assert.NotNil(t, state.Correlations.WorktreeToPR)
+	assert.NotNil(t, state.Correlations.WorktreeToIssue)
+	assert.NotNil(t, state.Correlations.WorkflowToWorktree)
+	assert.NotNil(t, state.Correlations.AgentToWorkflow)
+	assert.NotNil(t, state.Correlations.PaneToAgent)
+}
+
+func TestCorrelationsInitializedEmpty(t *testing.T) {
+	input := BuildInput{
+		RepoPath: "/repo/grove",
+		Worktrees: []domain.Worktree{{Path: "/repo/grove", Branch: "main"}},
+	}
+	state := BuildState(input)
+
+	// Verify Correlations maps are initialized (empty, not nil)
+	require.Empty(t, state.Correlations.WorktreeToPR)
+	require.Empty(t, state.Correlations.WorktreeToIssue)
+	require.Empty(t, state.Correlations.WorkflowToWorktree)
+	require.Empty(t, state.Correlations.AgentToWorkflow)
+	require.Empty(t, state.Correlations.PaneToAgent)
+}
