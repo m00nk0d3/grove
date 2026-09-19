@@ -17,6 +17,7 @@ type MissionControlState struct {
 	Integrations IntegrationStatus
 	Warnings     []Warning
 	UpdatedAt    time.Time
+	Correlations Correlations
 }
 
 type WorkItem struct {
@@ -25,6 +26,9 @@ type WorkItem struct {
 	UpdatedAt       int64
 	LinkedPR        *PullRequest     `json:"linked_pr,omitempty"`
 	LinkedIssue     *Issue           `json:"linked_issue,omitempty"`
+	PaneRef         *PaneRef         `json:"pane_ref,omitempty"`
+	Degraded        bool             `json:"degraded,omitempty"`
+	DegradedReason  string           `json:"degraded_reason,omitempty"`
 	LinkedWorkflows []WorkflowRunRef `json:"linked_workflows,omitempty"`
 	LinkedAgents    []AgentRef       `json:"linked_agents,omitempty"`
 	LinkedPanes     []PaneRef        `json:"linked_panes,omitempty"`
@@ -84,3 +88,12 @@ const (
 	UnknownState  = "unknown"
 	DegradedState = "degraded"
 )
+
+// Phase 2: Correlations metadata for tracking linkage relationships
+type Correlations struct {
+	WorktreeToPR      map[string]string // worktree path -> linked PR number or ""
+	WorktreeToIssue   map[string]string // worktree path -> linked issue number or ""
+	WorkflowToWorktree map[string]string // workflow ID -> linked worktree path
+	AgentToWorkflow   map[string]string // agent ID -> linked workflow ID
+	PaneToAgent       map[string]string // pane ID -> linked agent ID (empty if linked to workitem directly)
+}

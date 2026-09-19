@@ -555,7 +555,7 @@ func TestNilSnapshotsNoPanic(t *testing.T) {
 
 	state := BuildState(input)
 
-	assert.Equal(t, domain.UnknownState, state.Status)
+	assert.Equal(t, domain.DegradedState, state.Status)
 	require.NotNil(t, state.WorkItems)
 	require.NotNil(t, state.WorkflowRuns)
 	require.NotNil(t, state.Agents)

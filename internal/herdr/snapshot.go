@@ -7,4 +7,11 @@ import "github.com/m00nk0d3/grove/internal/domain"
 type Snapshot struct {
 	Integration domain.ExternalIntegration
 	Panes       []domain.PaneRef
+	Agents      []domain.AgentRef
+	Workspaces  []Workspace
+}
+
+type Workspace struct {
+	Name string
+	Path string
 }
