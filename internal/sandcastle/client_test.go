@@ -43,11 +43,16 @@ func newFakeRunner() *fakeRunner {
 	return &fakeRunner{responses: make(map[string]fakeResponse)}
 }
 
+func fakeLookPath(name string) (string, error) {
+	return name, nil
+}
+
 func newTestClient(runner *fakeRunner) Client {
 	return NewClient(ClientConfig{
 		Binary:       "sandcastle",
 		DefaultAgent: "pi",
 		Timeout:      5 * time.Second,
+		LookPath:     fakeLookPath,
 	}, runner)
 }
 

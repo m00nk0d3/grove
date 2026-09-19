@@ -23,6 +23,9 @@ type ClientConfig struct {
 	Binary       string
 	DefaultAgent string
 	Timeout      time.Duration
+	// LookPath returns the path to the named executable. When nil,
+	// os/exec.LookPath is used. Tests may supply a stub.
+	LookPath func(name string) (string, error)
 }
 
 // StartWorkflowRequest describes a workflow start request to Sandcastle.
@@ -53,12 +56,15 @@ func NewClient(config ClientConfig, runner CommandRunner) Client {
 	if config.Binary == "" {
 		config.Binary = "sandcastle"
 	}
+	if config.LookPath == nil {
+		config.LookPath = osexec.LookPath
+	}
 	return &sandcastleClient{config: config, runner: runner}
 }
 
 // Available checks whether the Sandcastle binary is reachable on PATH.
 func (c *sandcastleClient) Available(_ context.Context) domain.ExternalIntegration {
-	_, err := osexec.LookPath(c.config.Binary)
+	_, err := c.config.LookPath(c.config.Binary)
 	if err != nil {
 		return domain.ExternalIntegration{
 			Name:      "sandcastle",
