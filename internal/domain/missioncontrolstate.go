@@ -20,9 +20,11 @@ type MissionControlState struct {
 }
 
 type WorkItem struct {
-	ID        string
-	CreatedAt int64
-	UpdatedAt int64
+	ID              string
+	CreatedAt       int64
+	UpdatedAt       int64
+	LinkedPR        *PullRequest `json:"linked_pr,omitempty"`
+	LinkedIssue     *Issue       `json:"linked_issue,omitempty"`
 }
 
 type WorkflowRunRef struct {
