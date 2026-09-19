@@ -179,7 +179,7 @@ In standalone mode:
 - Herdr owns terminal runtime state: panes, tabs, workspaces, terminal focus, persistent sessions, pane jumps, and pane-local agent presence detection.
 - Sandcastle owns workflow execution, agent launching, and multi-agent orchestration.
 - GitHub owns issue and pull-request records; Grove's phase-1 integration is read-only display and correlation.
-- Grove consumes Sandcastle state through CLI JSON in phase 1.
+- Grove consumes Sandcastle state through CLI JSON in phase 1. The contract is documented in [SANDCASTLE_JSON_CONTRACT.md](./SANDCASTLE_JSON_CONTRACT.md) and is the implementation target for the Sandcastle adapter.
 - Sandcastle workflow starts from Grove should default to Pi Agent as the primary coding agent.
 - Sandcastle workflow status from Grove should identify Pi Agent as the default coding actor unless a workflow reports a different agent.
 - Grove should not directly spawn coding agents in the target architecture; it should ask Sandcastle to start workflow runs.
