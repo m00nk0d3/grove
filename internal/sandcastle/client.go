@@ -264,7 +264,7 @@ func normalizeWorkflow(w workflowRunRaw) (domain.WorkflowRunRef, []domain.AgentR
 		RunID:        w.ID,
 		WorktreePath: w.WorktreePath,
 		Branch:       w.Branch,
-		Status:       w.Status,
+		Status:       normalizeWorkflowStatus(w.Status),
 		IssueNumber:  w.Github.Issue,
 		PRNumber:     w.Github.PullRequest,
 	}
@@ -275,9 +275,47 @@ func normalizeWorkflow(w workflowRunRaw) (domain.WorkflowRunRef, []domain.AgentR
 			AgentID:       a.ID,
 			Name:          a.Name,
 			WorkflowRunID: w.ID,
-			Status:        a.Status,
+			Status:        normalizeAgentStatus(a.Status),
 		})
 	}
 
 	return wf, agents
+}
+
+// normalizeWorkflowStatus maps raw Sandcastle workflow status strings to
+// domain constants. Unknown values are preserved literally (rule 8).
+func normalizeWorkflowStatus(raw string) string {
+	switch raw {
+	case domain.WorkflowQueued:
+		return domain.WorkflowQueued
+	case domain.WorkflowRunning:
+		return domain.WorkflowRunning
+	case domain.WorkflowBlocked:
+		return domain.WorkflowBlocked
+	case domain.WorkflowFailed:
+		return domain.WorkflowFailed
+	case domain.WorkflowSucceeded:
+		return domain.WorkflowSucceeded
+	default:
+		return raw
+	}
+}
+
+// normalizeAgentStatus maps raw Sandcastle agent status strings to
+// domain constants. Unknown values are preserved literally (rule 8).
+func normalizeAgentStatus(raw string) string {
+	switch raw {
+	case domain.AgentWorking:
+		return domain.AgentWorking
+	case domain.AgentIdle:
+		return domain.AgentIdle
+	case domain.AgentBlocked:
+		return domain.AgentBlocked
+	case domain.AgentFailed:
+		return domain.AgentFailed
+	case domain.AgentDone:
+		return domain.AgentDone
+	default:
+		return raw
+	}
 }

@@ -401,3 +401,130 @@ func TestNewClient_Defaults(t *testing.T) {
 	info := client.Available(context.Background())
 	_ = info
 }
+
+func TestNormalizeWorkflowStatus_KnownValues(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"queued", "queued"},
+		{"running", "running"},
+		{"blocked", "blocked"},
+		{"failed", "failed"},
+		{"succeeded", "succeeded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, normalizeWorkflowStatus(tt.input))
+		})
+	}
+}
+
+func TestNormalizeWorkflowStatus_UnknownPassthrough(t *testing.T) {
+	assert.Equal(t, "custom-status", normalizeWorkflowStatus("custom-status"))
+}
+
+func TestNormalizeWorkflowStatus_EmptyString(t *testing.T) {
+	assert.Equal(t, "", normalizeWorkflowStatus(""))
+}
+
+func TestNormalizeAgentStatus_KnownValues(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"working", "working"},
+		{"idle", "idle"},
+		{"blocked", "blocked"},
+		{"failed", "failed"},
+		{"done", "done"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, normalizeAgentStatus(tt.input))
+		})
+	}
+}
+
+func TestNormalizeAgentStatus_UnknownPassthrough(t *testing.T) {
+	assert.Equal(t, "custom-agent-status", normalizeAgentStatus("custom-agent-status"))
+}
+
+func TestNormalizeAgentStatus_EmptyString(t *testing.T) {
+	assert.Equal(t, "", normalizeAgentStatus(""))
+}
+
+func TestSnapshot_StatusNormalization(t *testing.T) {
+	payload := `{
+		"version": "0.4.0",
+		"updated_at": "2026-09-17T21:19:00Z",
+		"active_workflows": 1,
+		"workflows": [
+			{
+				"id": "run_norm",
+				"title": "Test normalization",
+				"status": "running",
+				"repo": "/repo",
+				"worktree_path": "/wt",
+				"branch": "main",
+				"default_agent": "pi",
+				"progress": {"completed": 1, "total": 5, "percent": 20},
+				"github": {"issue": null, "pull_request": null},
+				"agents": [
+					{"id": "a1", "kind": "pi", "name": "pi-1", "status": "working", "summary": "working", "pane_id": null}
+				],
+				"steps": [],
+				"started_at": "2026-09-17T21:00:00Z",
+				"updated_at": "2026-09-17T21:19:00Z"
+			}
+		]
+	}`
+
+	runner := newFakeRunner()
+	runner.responses["status"] = fakeResponse{stdout: []byte(payload)}
+
+	client := newTestClient(runner)
+	snap, err := client.Snapshot(context.Background(), "/repo")
+	require.NoError(t, err)
+	require.Len(t, snap.Workflows, 1)
+	assert.Equal(t, "running", snap.Workflows[0].Status)
+	require.Len(t, snap.Agents, 1)
+	assert.Equal(t, "working", snap.Agents[0].Status)
+}
+
+func TestSnapshot_UnknownStatusPassthrough(t *testing.T) {
+	payload := `{
+		"version": "0.4.0",
+		"updated_at": "2026-09-17T21:19:00Z",
+		"active_workflows": 1,
+		"workflows": [
+			{
+				"id": "run_unknown",
+				"title": "Test unknown status",
+				"status": "custom_future_status",
+				"repo": "/repo",
+				"worktree_path": "/wt",
+				"branch": "main",
+				"progress": {"completed": 0, "total": 1, "percent": 0},
+				"github": {"issue": null, "pull_request": null},
+				"agents": [
+					{"id": "a1", "kind": "pi", "name": "pi-1", "status": "custom_agent_state", "summary": "custom", "pane_id": null}
+				],
+				"steps": [],
+				"started_at": "2026-09-17T21:00:00Z",
+				"updated_at": "2026-09-17T21:19:00Z"
+			}
+		]
+	}`
+
+	runner := newFakeRunner()
+	runner.responses["status"] = fakeResponse{stdout: []byte(payload)}
+
+	client := newTestClient(runner)
+	snap, err := client.Snapshot(context.Background(), "/repo")
+	require.NoError(t, err)
+	require.Len(t, snap.Workflows, 1)
+	assert.Equal(t, "custom_future_status", snap.Workflows[0].Status)
+	require.Len(t, snap.Agents, 1)
+	assert.Equal(t, "custom_agent_state", snap.Agents[0].Status)
+}
