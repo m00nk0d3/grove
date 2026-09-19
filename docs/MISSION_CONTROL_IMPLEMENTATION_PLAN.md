@@ -331,6 +331,11 @@ Match by:
 
 Give Grove a stable integration contract that does not require scraping logs.
 
+The normative contract is documented in
+[SANDCASTLE_JSON_CONTRACT.md](./SANDCASTLE_JSON_CONTRACT.md); the shapes and
+rules in this section are the roadmap summary of that document and are
+superseded by it where they differ.
+
 ### Required Commands
 
 ```bash
