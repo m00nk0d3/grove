@@ -1,0 +1,403 @@
+package sandcastle
+
+import (
+	"context"
+	"fmt"
+	"os/exec"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type fakeRunner struct {
+	responses map[string]fakeResponse
+	calls     [][]string
+}
+
+type fakeResponse struct {
+	stdout []byte
+	stderr []byte
+	err    error
+}
+
+func (f *fakeRunner) Run(_ context.Context, _ string, args ...string) ([]byte, []byte, error) {
+	f.calls = append(f.calls, args)
+	key := args[0]
+	resp, ok := f.responses[key]
+	if !ok {
+		return nil, nil, fmt.Errorf("unexpected command: %v", args)
+	}
+	return resp.stdout, resp.stderr, resp.err
+}
+
+func (f *fakeRunner) lastCall() []string {
+	if len(f.calls) == 0 {
+		return nil
+	}
+	return f.calls[len(f.calls)-1]
+}
+
+func newFakeRunner() *fakeRunner {
+	return &fakeRunner{responses: make(map[string]fakeResponse)}
+}
+
+func fakeLookPath(name string) (string, error) {
+	return name, nil
+}
+
+func newTestClient(runner *fakeRunner) Client {
+	return NewClient(ClientConfig{
+		Binary:       "sandcastle",
+		DefaultAgent: "pi",
+		Timeout:      5 * time.Second,
+		LookPath:     fakeLookPath,
+	}, runner)
+}
+
+func intPtr(n int) *int { return &n }
+
+func indexAfter(slice []string, target string) int {
+	for i, s := range slice {
+		if s == target {
+			return i
+		}
+	}
+	return -1
+}
+
+const statusPayload = `{
+	"version": "0.4.0",
+	"updated_at": "2026-09-17T21:19:00Z",
+	"active_workflows": 1,
+	"workflows": [
+		{
+			"id": "run_123",
+			"title": "Implement issue #42",
+			"status": "running",
+			"repo": "/home/user/dev/project",
+			"worktree_path": "/home/user/dev/project-worktrees/issue-42",
+			"branch": "issue-42",
+			"default_agent": "pi",
+			"current_step": "Editing files",
+			"progress": {"completed": 3, "total": 7, "percent": 42},
+			"github": {"issue": 42, "pull_request": null},
+			"agents": [
+				{
+					"id": "agent_pi_1",
+					"kind": "pi",
+					"name": "pi-main",
+					"status": "working",
+					"summary": "Refactoring renderer state model",
+					"pane_id": "w1:p3"
+				}
+			],
+			"steps": [
+				{"id": "step_1", "title": "Inspect repo", "status": "succeeded"},
+				{"id": "step_2", "title": "Implement mission-control model", "status": "running"}
+			],
+			"started_at": "2026-09-17T21:00:00Z",
+			"updated_at": "2026-09-17T21:19:00Z"
+		}
+	]
+}`
+
+func TestSnapshot_SuccessfulStatus(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["status"] = fakeResponse{stdout: []byte(statusPayload)}
+
+	client := newTestClient(runner)
+	snap, err := client.Snapshot(context.Background(), "/repo")
+	require.NoError(t, err)
+
+	assert.Equal(t, "0.4.0", snap.Integration.Version)
+	assert.True(t, snap.Integration.Available)
+	require.Len(t, snap.Workflows, 1)
+
+	wf := snap.Workflows[0]
+	assert.Equal(t, "run_123", wf.WorkflowID)
+	assert.Equal(t, "run_123", wf.RunID)
+	assert.Equal(t, "running", wf.Status)
+	assert.Equal(t, "issue-42", wf.Branch)
+	assert.Equal(t, "/home/user/dev/project-worktrees/issue-42", wf.WorktreePath)
+	require.NotNil(t, wf.IssueNumber)
+	assert.Equal(t, 42, *wf.IssueNumber)
+	assert.Nil(t, wf.PRNumber)
+
+	require.Len(t, snap.Agents, 1)
+	assert.Equal(t, "agent_pi_1", snap.Agents[0].AgentID)
+	assert.Equal(t, "pi-main", snap.Agents[0].Name)
+	assert.Equal(t, "working", snap.Agents[0].Status)
+	assert.Equal(t, "run_123", snap.Agents[0].WorkflowRunID)
+
+	assert.Equal(t, []string{"status"}, runner.lastCall())
+}
+
+func TestNormalizeWorkflow_WithIssueAndPR(t *testing.T) {
+	raw := workflowRunRaw{
+		ID:           "run_456",
+		Title:        "Fix bug",
+		Status:       "succeeded",
+		Repo:         "/repo",
+		WorktreePath: "/worktrees/fix",
+		Branch:       "fix-bug",
+		DefaultAgent: "pi",
+		Github:       githubRaw{Issue: intPtr(99), PullRequest: intPtr(101)},
+		Agents: []agentRaw{
+			{ID: "a1", Kind: "pi", Name: "pi-bot", Status: "done", Summary: "completed"},
+		},
+	}
+
+	wf, agents := normalizeWorkflow(raw)
+
+	assert.Equal(t, "run_456", wf.WorkflowID)
+	assert.Equal(t, "succeeded", wf.Status)
+	assert.Equal(t, "fix-bug", wf.Branch)
+	require.NotNil(t, wf.IssueNumber)
+	assert.Equal(t, 99, *wf.IssueNumber)
+	require.NotNil(t, wf.PRNumber)
+	assert.Equal(t, 101, *wf.PRNumber)
+
+	require.Len(t, agents, 1)
+	assert.Equal(t, "a1", agents[0].AgentID)
+	assert.Equal(t, "done", agents[0].Status)
+}
+
+func TestStartWorkflow_Success(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow": {"id": "run_789", "status": "queued", "default_agent": "pi", "worktree_path": "/path/to/worktree"}}`),
+	}
+
+	client := newTestClient(runner)
+	wf, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/path/to/worktree",
+		Branch:       "feat-x",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "run_789", wf.WorkflowID)
+	assert.Equal(t, "queued", wf.Status)
+	assert.Equal(t, "/path/to/worktree", wf.WorktreePath)
+
+	call := runner.lastCall()
+	assert.Contains(t, call, "workflow")
+	assert.Contains(t, call, "start")
+	assert.Contains(t, call, "--agent")
+	assert.Contains(t, call, "pi")
+	assert.Contains(t, call, "--source")
+	assert.Contains(t, call, "grove")
+}
+
+func TestStartWorkflow_DefaultAgentAndSource(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow": {"id": "run_1", "status": "queued"}}`),
+	}
+
+	client := newTestClient(runner)
+	_, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/wt",
+	})
+	require.NoError(t, err)
+
+	call := runner.lastCall()
+	agentIdx := indexAfter(call, "--agent")
+	require.GreaterOrEqual(t, agentIdx, 0)
+	assert.Equal(t, "pi", call[agentIdx+1])
+
+	sourceIdx := indexAfter(call, "--source")
+	require.GreaterOrEqual(t, sourceIdx, 0)
+	assert.Equal(t, "grove", call[sourceIdx+1])
+}
+
+func TestStartWorkflow_CustomAgentAndSource(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow": {"id": "run_2", "status": "queued"}}`),
+	}
+
+	client := newTestClient(runner)
+	_, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/wt",
+		AgentKind:    "claude",
+		Source:       "manual",
+	})
+	require.NoError(t, err)
+
+	call := runner.lastCall()
+	agentIdx := indexAfter(call, "--agent")
+	require.GreaterOrEqual(t, agentIdx, 0)
+	assert.Equal(t, "claude", call[agentIdx+1])
+
+	sourceIdx := indexAfter(call, "--source")
+	require.GreaterOrEqual(t, sourceIdx, 0)
+	assert.Equal(t, "manual", call[sourceIdx+1])
+}
+
+func TestAvailable_MissingBinary(t *testing.T) {
+	runner := newFakeRunner()
+	client := NewClient(ClientConfig{
+		Binary:  "nonexistent-binary-xyz",
+		Timeout: 5 * time.Second,
+	}, runner)
+
+	info := client.Available(context.Background())
+	assert.False(t, info.Available)
+	assert.Contains(t, info.Error, "not found")
+}
+
+func TestSnapshot_MissingBinary(t *testing.T) {
+	runner := newFakeRunner()
+	client := NewClient(ClientConfig{
+		Binary:  "nonexistent-binary-xyz",
+		Timeout: 5 * time.Second,
+	}, runner)
+
+	snap, err := client.Snapshot(context.Background(), "/repo")
+	require.NoError(t, err)
+	assert.False(t, snap.Integration.Available)
+	assert.Empty(t, snap.Workflows)
+}
+
+func TestStartWorkflow_MissingBinary(t *testing.T) {
+	runner := newFakeRunner()
+	client := NewClient(ClientConfig{
+		Binary:  "nonexistent-binary-xyz",
+		Timeout: 5 * time.Second,
+	}, runner)
+
+	_, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/wt",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not available")
+}
+
+func TestSnapshot_MalformedJSON(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["status"] = fakeResponse{stdout: []byte("not json")}
+
+	client := newTestClient(runner)
+	snap, err := client.Snapshot(context.Background(), "/repo")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse sandcastle status")
+	assert.True(t, snap.Integration.Available)
+	assert.Contains(t, snap.Integration.Error, "malformed")
+}
+
+func TestStartWorkflow_MalformedJSON(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{stdout: []byte("{bad")}
+
+	client := newTestClient(runner)
+	_, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/wt",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse start response")
+}
+
+func TestSnapshot_CommandFailure(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["status"] = fakeResponse{
+		stderr: []byte("connection refused"),
+		err:    &exec.ExitError{},
+	}
+
+	client := newTestClient(runner)
+	snap, err := client.Snapshot(context.Background(), "/repo")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sandcastle status")
+	assert.Contains(t, snap.Integration.Error, "connection refused")
+}
+
+func TestStartWorkflow_CommandFailure(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stderr: []byte("permission denied"),
+		err:    &exec.ExitError{},
+	}
+
+	client := newTestClient(runner)
+	_, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/wt",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "start workflow")
+}
+
+func TestSnapshot_EmptyWorkflows(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["status"] = fakeResponse{
+		stdout: []byte(`{"version": "0.4.0", "updated_at": "2026-09-17T21:19:00Z", "active_workflows": 0, "workflows": []}`),
+	}
+
+	client := newTestClient(runner)
+	snap, err := client.Snapshot(context.Background(), "/repo")
+	require.NoError(t, err)
+	assert.True(t, snap.Integration.Available)
+	assert.Empty(t, snap.Workflows)
+	assert.Empty(t, snap.Agents)
+}
+
+func TestSnapshot_EmptyAgentsAndSteps(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["status"] = fakeResponse{
+		stdout: []byte(`{
+			"version": "0.4.0",
+			"updated_at": "2026-09-17T21:19:00Z",
+			"active_workflows": 1,
+			"workflows": [
+				{
+					"id": "run_1",
+					"title": "Test",
+					"status": "running",
+					"repo": "/repo",
+					"worktree_path": "/wt",
+					"branch": "main",
+					"progress": {"completed": 0, "total": 0, "percent": 0},
+					"github": {"issue": null, "pull_request": null},
+					"agents": [],
+					"steps": [],
+					"started_at": "2026-09-17T21:00:00Z",
+					"updated_at": "2026-09-17T21:19:00Z"
+				}
+			]
+		}`),
+	}
+
+	client := newTestClient(runner)
+	snap, err := client.Snapshot(context.Background(), "/repo")
+	require.NoError(t, err)
+	require.Len(t, snap.Workflows, 1)
+	assert.Empty(t, snap.Agents)
+}
+
+func TestNormalizeWorkflow_FallbackAgent(t *testing.T) {
+	raw := workflowRunRaw{
+		ID:           "run_x",
+		Status:       "queued",
+		WorktreePath: "/wt",
+		Branch:       "main",
+	}
+
+	wf, _ := normalizeWorkflow(raw)
+	assert.Equal(t, "run_x", wf.WorkflowID)
+	assert.Equal(t, "queued", wf.Status)
+}
+
+func TestNewClient_Defaults(t *testing.T) {
+	runner := newFakeRunner()
+	client := NewClient(ClientConfig{}, runner)
+
+	info := client.Available(context.Background())
+	_ = info
+}
