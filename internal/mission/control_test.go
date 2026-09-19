@@ -83,8 +83,9 @@ func TestWorktreePRBranchContainmentMatch(t *testing.T) {
 	assert.Equal(t, "issue-42-fix", state.WorkItems[0].ID)
 }
 
-func TestWorktreePRNoMatchDifferentRepoPath(t *testing.T) {
-	// Same branch name but different repo paths - should NOT link
+func TestWorktreePRExactBranchMatchIgnoresRepoPath(t *testing.T) {
+	// Matching is branch-based. A worktree and PR with the same branch name
+	// match regardless of repo path — the correlation layer does not filter by path.
 	pr := domain.PullRequest{
 		Number:  1,
 		Title:   "Fix something",
@@ -111,9 +112,10 @@ func TestWorktreePRNoMatchDifferentRepoPath(t *testing.T) {
 
 	state := BuildState(input)
 
-	// Rule 3: Different repo paths → keep independent
 	require.Len(t, state.WorkItems, 1)
 	assert.Equal(t, "fix-branch", state.WorkItems[0].ID)
+	require.NotNil(t, state.WorkItems[0].LinkedPR, "exact branch match should link the PR")
+	assert.Equal(t, 1, state.WorkItems[0].LinkedPR.Number)
 }
 
 func TestWorktreeIssueViaPRFallback(t *testing.T) {

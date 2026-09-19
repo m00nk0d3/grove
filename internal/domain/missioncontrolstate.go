@@ -24,24 +24,40 @@ type WorkItem struct {
 	ID              string
 	CreatedAt       int64
 	UpdatedAt       int64
-	LinkedPR        *PullRequest `json:"linked_pr,omitempty"`
-	LinkedIssue     *Issue       `json:"linked_issue,omitempty"`
-	PaneRef         *PaneRef     `json:"pane_ref,omitempty"`
-	Degraded        bool         `json:"degraded,omitempty"`
-	DegradedReason  string       `json:"degraded_reason,omitempty"`
+	LinkedPR        *PullRequest     `json:"linked_pr,omitempty"`
+	LinkedIssue     *Issue           `json:"linked_issue,omitempty"`
+	PaneRef         *PaneRef         `json:"pane_ref,omitempty"`
+	Degraded        bool             `json:"degraded,omitempty"`
+	DegradedReason  string           `json:"degraded_reason,omitempty"`
+	LinkedWorkflows []WorkflowRunRef `json:"linked_workflows,omitempty"`
+	LinkedAgents    []AgentRef       `json:"linked_agents,omitempty"`
+	LinkedPanes     []PaneRef        `json:"linked_panes,omitempty"`
 }
 
 type WorkflowRunRef struct {
-	WorkflowID string
-	RunID      string
+	WorkflowID   string
+	RunID        string
+	WorktreePath string
+	Branch       string
+	Status       string
+	IssueNumber  *int
+	PRNumber     *int
+	Labels       []string
 }
 
 type AgentRef struct {
-	AgentID string
+	AgentID       string
+	Name          string
+	WorkflowRunID string
+	Status        string
 }
 
 type PaneRef struct {
-	PaneID string
+	PaneID  string
+	AgentID string
+	CWD     string
+	Command string
+	Status  string
 }
 
 type IntegrationStatus struct {

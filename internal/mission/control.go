@@ -29,6 +29,10 @@ type BuildInput struct {
 // BuildState creates a complete mission-control state from the available
 // sources. Phase 2 adds correlation and previous-state recovery.
 func BuildState(input BuildInput) domain.MissionControlState {
+	wfs := snapshotWorkflows(input.SandcastleSnapshot)
+	ags := snapshotAgents(input.SandcastleSnapshot)
+	pns := snapshotPanes(input.HerdrSnapshot)
+
 	state := domain.MissionControlState{
 		Status:       domain.UnknownState,
 		Details:      make(map[string]interface{}),
@@ -38,9 +42,9 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		Issues:       cloneIssues(input.Issues),
 		PullRequests: clonePullRequests(input.PullRequests),
 		Sessions:     cloneSessions(input.Sessions),
-		WorkflowRuns: []domain.WorkflowRunRef{},
-		Agents:       []domain.AgentRef{},
-		Panes:        []domain.PaneRef{},
+		WorkflowRuns: wfs,
+		Agents:       ags,
+		Panes:        pns,
 		Integrations: domain.IntegrationStatus{
 			Herdr:      herdrIntegration(input.HerdrSnapshot, input.InsideHerdr),
 			Sandcastle: sandcastleIntegration(input.SandcastleSnapshot),
@@ -58,7 +62,7 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		},
 	}
 
-	state.WorkItems = correlateWorktreesWithIssuesAndPRs(input.Worktrees, input.Issues, input.PullRequests)
+	state.WorkItems = correlateAll(input.Worktrees, input.Issues, input.PullRequests, wfs, ags, pns)
 
 	// Preserve previous state WorkItems when Sandcastle is unavailable
 	if input.SandcastleSnapshot == nil && input.PreviousState != nil {
@@ -195,6 +199,31 @@ func sandcastleIntegration(snapshot *sandcastle.Snapshot) domain.ExternalIntegra
 
 func missingIntegration() domain.ExternalIntegration {
 	return domain.ExternalIntegration{Mode: integrationModeMissing}
+}
+
+// snapshotWorkflows extracts workflow data from a Sandcastle snapshot, returning
+// an empty slice for nil snapshots.
+func snapshotWorkflows(snap *sandcastle.Snapshot) []domain.WorkflowRunRef {
+	if snap == nil {
+		return []domain.WorkflowRunRef{}
+	}
+	return snap.Workflows
+}
+
+// snapshotAgents extracts agent data from a Sandcastle snapshot.
+func snapshotAgents(snap *sandcastle.Snapshot) []domain.AgentRef {
+	if snap == nil {
+		return []domain.AgentRef{}
+	}
+	return snap.Agents
+}
+
+// snapshotPanes extracts pane data from a Herdr snapshot.
+func snapshotPanes(snap *herdr.Snapshot) []domain.PaneRef {
+	if snap == nil {
+		return []domain.PaneRef{}
+	}
+	return snap.Panes
 }
 
 // markStalePaneIDs marks work items that reference pane IDs not present in
