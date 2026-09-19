@@ -1,6 +1,7 @@
 package mission
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/m00nk0d3/grove/internal/domain"
@@ -191,7 +192,6 @@ func TestNoSandcastleSnapshot(t *testing.T) {
 }
 
 func TestSandcastleSnapshotMalformedJSON(t *testing.T) {
-	// Simulate malformed JSON being passed via adapter
 	input := BuildInput{
 		RepoPath:      "/repo/grove",
 		HerdrSnapshot: &herdr.Snapshot{},
@@ -202,6 +202,9 @@ func TestSandcastleSnapshotMalformedJSON(t *testing.T) {
 	// Rule 7: Previous state preserved on refresh failure, integration degraded
 	assert.Equal(t, "missing", state.Integrations.Sandcastle.Mode)
 	require.Len(t, state.WorkItems, 0)
+	// Phase 2: Warning appended for missing Sandcastle
+	require.Len(t, state.Warnings, 1)
+	assert.Contains(t, state.Warnings[0].Message, "Sandcastle")
 }
 
 func TestPreviousStatePreservedOnRefreshFailure(t *testing.T) {
@@ -216,10 +219,10 @@ func TestPreviousStatePreservedOnRefreshFailure(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:              "/repo/grove",
-		SandcastleSnapshot:    nil, // Unavailable
-		HerdrSnapshot:         &herdr.Snapshot{},
-		PreviousState:         previousState,
+		RepoPath:           "/repo/grove",
+		SandcastleSnapshot: nil, // Unavailable
+		HerdrSnapshot:      &herdr.Snapshot{},
+		PreviousState:      previousState,
 	}
 
 	state := BuildState(input)
@@ -227,7 +230,10 @@ func TestPreviousStatePreservedOnRefreshFailure(t *testing.T) {
 	// Rule 8: Previous state preserved gracefully
 	require.Len(t, state.WorkItems, 1)
 	assert.Equal(t, "issue-42", state.WorkItems[0].ID)
-	assert.Equal(t, string(domain.UnknownState), state.Status) // Status not yet updated when Herdr still available
+	assert.Equal(t, string(domain.UnknownState), state.Status)
+	// Phase 2: Warning appended for missing Sandcastle
+	require.Len(t, state.Warnings, 1)
+	assert.Contains(t, state.Warnings[0].Message, "Sandcastle")
 }
 
 // ================================================================
@@ -361,10 +367,10 @@ func TestSandcastleUnavailableWorkflowsStillRender(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:         "/repo/grove",
+		RepoPath:           "/repo/grove",
 		SandcastleSnapshot: nil, // Unavailable
-		HerdrSnapshot: &herdr.Snapshot{},
-		PreviousState:    previousState,
+		HerdrSnapshot:      &herdr.Snapshot{},
+		PreviousState:      previousState,
 	}
 
 	state := BuildState(input)
@@ -372,36 +378,44 @@ func TestSandcastleUnavailableWorkflowsStillRender(t *testing.T) {
 	// Rule 15: Workflows still render, just marked as unavailable
 	assert.Equal(t, "missing", state.Integrations.Sandcastle.Mode)
 	require.Len(t, state.WorkItems, 2) // Previous workitems preserved
-	assert.Equal(t, string(domain.UnknownState), state.Status) // Status not yet updated to degraded in this phase
+	assert.Equal(t, string(domain.UnknownState), state.Status)
+	// Phase 2: Warning appended for missing Sandcastle
+	require.Len(t, state.Warnings, 1)
+	assert.Contains(t, state.Warnings[0].Message, "Sandcastle")
 }
 
 func TestHerdrDegradedInsideHerdr(t *testing.T) {
 	input := BuildInput{
-		RepoPath:      "/repo/grove",
-		HerdrSnapshot: &herdr.Snapshot{},
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
+		InsideHerdr:        true,
 	}
 
 	state := BuildState(input)
 
-	// Rule 16: Inside Herdr but integration degraded → show error message
-	assert.True(t, state.Integrations.Herdr.Available) // Available but potentially in degraded mode
-	// This is where HerdrIntegration would return "degraded" mode from adapter
+	// Rule 16: Inside Herdr but snapshot unavailable → degraded mode
+	assert.Equal(t, "degraded", state.Integrations.Herdr.Mode)
+	assert.False(t, state.Integrations.Herdr.Available)
+	// Warning appended for degraded Herdr
+	require.Len(t, state.Warnings, 1)
+	assert.Contains(t, state.Warnings[0].Message, "Herdr")
 }
 
 func TestMalformedIntegrationJSONWarningAdded(t *testing.T) {
 	input := BuildInput{
-		RepoPath: "/repo/grove",
-		HerdrSnapshot: &herdr.Snapshot{},
-		SandcastleSnapshot: &sandcastle.Snapshot{},
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      nil,
+		SandcastleSnapshot: nil,
 	}
 
 	state := BuildState(input)
 
-	// Rule 17: Malformed JSON → warning added to state
-	// In this simple test, we verify warnings slice exists and can receive messages
+	// Rule 17: Both integrations unavailable → warnings added to state
 	require.NotNil(t, state.Warnings)
-	assert.Len(t, state.Warnings, 0) // Empty initially, would be populated on error
+	require.NotEmpty(t, state.Warnings, "expected warnings when integrations are unavailable")
+	// Status must be degraded when both are unavailable
+	assert.Equal(t, domain.DegradedState, state.Status)
 }
 
 func TestEmptyInputsYieldsEmptyMissionControlState(t *testing.T) {
@@ -457,4 +471,290 @@ func TestCorrelationsInitializedEmpty(t *testing.T) {
 	require.Empty(t, state.Correlations.WorkflowToWorktree)
 	require.Empty(t, state.Correlations.AgentToWorkflow)
 	require.Empty(t, state.Correlations.PaneToAgent)
+}
+
+// ================================================================
+// Phase 2 Red-Phase Tests: Issue #171
+// ================================================================
+// These tests assert required behavior from #171 acceptance criteria.
+// They are expected to FAIL before the production fix is applied.
+// ================================================================
+
+// AC-1 / R1.1b: Previous WorkflowRuns must be preserved when Sandcastle is nil.
+func TestPreviousWorkflowRunsPreserved(t *testing.T) {
+	previousState := &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "wf-1", RunID: "run-1"},
+			{WorkflowID: "wf-2", RunID: "run-2"},
+		},
+	}
+
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		SandcastleSnapshot: nil,
+		HerdrSnapshot:      &herdr.Snapshot{},
+		PreviousState:      previousState,
+	}
+
+	state := BuildState(input)
+
+	// AC-1: Previous WorkflowRuns must survive when Sandcastle is unavailable
+	require.Len(t, state.WorkflowRuns, 2)
+	assert.Equal(t, "wf-1", state.WorkflowRuns[0].WorkflowID)
+	assert.Equal(t, "run-1", state.WorkflowRuns[0].RunID)
+}
+
+// AC-1 / R1.2c: Malformed Sandcastle (nil) must produce a Warning entry.
+func TestMalformedSandcastleWarning(t *testing.T) {
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		SandcastleSnapshot: nil,
+		HerdrSnapshot:      &herdr.Snapshot{},
+		PreviousState: &domain.MissionControlState{
+			WorkItems: []domain.WorkItem{
+				{ID: "issue-42"},
+			},
+		},
+	}
+
+	state := BuildState(input)
+
+	// AC-6: Warnings must be populated when Sandcastle is unavailable
+	require.NotEmpty(t, state.Warnings, "expected warning when Sandcastle is nil")
+	assert.Contains(t, state.Warnings[0].Message, "Sandcastle")
+	assert.NotEmpty(t, state.Warnings[0].Level)
+}
+
+// AC-5 / R1.4: Missing Herdr inside Herdr must be degraded (not standalone).
+func TestMissingHerdrInsideHerdrDegraded(t *testing.T) {
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      nil,
+		SandcastleSnapshot: &sandcastle.Snapshot{},
+		InsideHerdr:        true,
+	}
+
+	state := BuildState(input)
+
+	// AC-5: Inside Herdr + nil snapshot → Mode "degraded"
+	assert.Equal(t, "degraded", state.Integrations.Herdr.Mode)
+	assert.False(t, state.Integrations.Herdr.Available)
+}
+
+// AC-4 / R1.3: Missing Herdr outside Herdr must be standalone (not degraded).
+func TestMissingHerdrOutsideHerdrStandalone(t *testing.T) {
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      nil,
+		SandcastleSnapshot: &sandcastle.Snapshot{},
+		// InsideHerdr defaults to false (zero value) — E8
+	}
+
+	state := BuildState(input)
+
+	// AC-4: Outside Herdr + nil snapshot → Mode "missing"
+	assert.Equal(t, "missing", state.Integrations.Herdr.Mode)
+	assert.False(t, state.Integrations.Herdr.Available)
+}
+
+// AC-8 / R2.4: Correlations maps must be populated after worktree-PR matching.
+func TestCorrelationsPopulated(t *testing.T) {
+	issue42 := 42
+	pr := domain.PullRequest{
+		Number: 42,
+		Title:  "Fix issue-42",
+		Branch: "issue-42",
+		State:  "OPEN",
+	}
+	worktree := domain.Worktree{
+		Path:      "/repo/grove",
+		Branch:    "issue-42",
+		CommitSHA: "abc123",
+		IsClean:   true,
+	}
+
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{{Number: issue42}},
+		PullRequests:       []domain.PullRequest{pr},
+		SandcastleSnapshot: &sandcastle.Snapshot{},
+		HerdrSnapshot:      &herdr.Snapshot{},
+	}
+
+	state := BuildState(input)
+
+	// AC-8: WorktreeToPR must map worktree branch to PR number
+	require.Len(t, state.WorkItems, 1)
+	assert.Equal(t, "issue-42", state.WorkItems[0].ID)
+
+	// R2.4: Correlations must be populated, keyed by worktree path
+	assert.Equal(t, "42", state.Correlations.WorktreeToPR["/repo/grove"],
+		"WorktreeToPR map must be populated with worktree path as key")
+	assert.Equal(t, "42", state.Correlations.WorktreeToIssue["/repo/grove"],
+		"WorktreeToIssue map must be populated with worktree path as key")
+}
+
+// E4: Both integrations missing → state.Status must be "degraded".
+func TestBothIntegrationsMissingDegradedStatus(t *testing.T) {
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      nil,
+		SandcastleSnapshot: nil,
+		// No PreviousState — degraded status must be set regardless
+	}
+
+	state := BuildState(input)
+
+	// E4: Both integrations unavailable → top-level status degraded
+	assert.Equal(t, domain.DegradedState, state.Status,
+		"status must be degraded when all integrations are unavailable")
+	assert.False(t, state.Integrations.Herdr.Available)
+	assert.False(t, state.Integrations.Sandcastle.Available)
+}
+
+// E1: PreviousState nil must not panic on first build.
+func TestEmptyPreviousStateNoPanic(t *testing.T) {
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		SandcastleSnapshot: nil,
+		HerdrSnapshot:      nil,
+		PreviousState:      nil,
+	}
+
+	// Must not panic
+	state := BuildState(input)
+
+	require.NotNil(t, state.WorkItems)
+	require.NotNil(t, state.WorkflowRuns)
+	require.NotNil(t, state.Warnings)
+}
+
+// E6: Previous WorkItem ID matching a fresh WorkItem must not duplicate.
+func TestPreviousWorkItemsNotDuplicated(t *testing.T) {
+	issue42 := 42
+	pr := domain.PullRequest{
+		Number: 42,
+		Title:  "Fix issue-42",
+		Branch: "issue-42",
+		State:  "OPEN",
+	}
+	worktree := domain.Worktree{
+		Path:      "/repo/grove",
+		Branch:    "issue-42",
+		CommitSHA: "abc123",
+		IsClean:   true,
+	}
+
+	previousState := &domain.MissionControlState{
+		WorkItems: []domain.WorkItem{
+			{ID: "issue-42", CreatedAt: 1700000000, UpdatedAt: 1700000000},
+		},
+	}
+
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{{Number: issue42}},
+		PullRequests:       []domain.PullRequest{pr},
+		SandcastleSnapshot: nil,
+		HerdrSnapshot:      &herdr.Snapshot{},
+		PreviousState:      previousState,
+	}
+
+	state := BuildState(input)
+
+	// E6: Fresh correlation wins; previous item with same ID not appended
+	require.Len(t, state.WorkItems, 1)
+	assert.Equal(t, "issue-42", state.WorkItems[0].ID)
+}
+
+// AC-6: Warning for degraded Herdr inside Herdr.
+func TestHerdrDegradedWarning(t *testing.T) {
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      nil,
+		SandcastleSnapshot: &sandcastle.Snapshot{},
+		InsideHerdr:        true,
+	}
+
+	state := BuildState(input)
+
+	// AC-6: Degraded Herdr must produce a warning
+	require.NotEmpty(t, state.Warnings)
+	found := false
+	for _, w := range state.Warnings {
+		if strings.Contains(w.Message, "Herdr") || strings.Contains(w.Message, "herdr") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected warning about degraded Herdr")
+}
+
+// AC-3 / R2.2: WorkItem must have Degraded and DegradedReason fields.
+func TestWorkItemDegradedMarking(t *testing.T) {
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		SandcastleSnapshot: &sandcastle.Snapshot{},
+		HerdrSnapshot:      &herdr.Snapshot{},
+	}
+
+	state := BuildState(input)
+
+	// R2.2: WorkItem struct must have Degraded and DegradedReason fields
+	for _, wi := range state.WorkItems {
+		_ = wi.Degraded       // Field must exist
+		_ = wi.DegradedReason // Field must exist
+	}
+}
+
+// E8: InsideHerdr defaults to false — zero BuildInput means outside Herdr (standalone).
+func TestInsideHerdrDefaultsFalse(t *testing.T) {
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      nil,
+		SandcastleSnapshot: &sandcastle.Snapshot{},
+		// InsideHerdr omitted — zero value false
+	}
+
+	state := BuildState(input)
+
+	// E8: Outside Herdr + nil snapshot → Mode "missing", not "degraded"
+	assert.Equal(t, "missing", state.Integrations.Herdr.Mode)
+	assert.False(t, state.Integrations.Herdr.Available)
+}
+
+// AC-3: Stale pane ID marks WorkItem degraded with reason.
+func TestStalePaneIDMarksWorkItemDegraded(t *testing.T) {
+	previousWorkItem := domain.WorkItem{
+		ID:       "issue-42",
+		PaneRef:  &domain.PaneRef{PaneID: "w1:p3"},
+	}
+
+	previousState := &domain.MissionControlState{
+		WorkItems: []domain.WorkItem{previousWorkItem},
+	}
+
+	// Herdr snapshot with different pane IDs (w1:p3 is absent)
+	herdrSnapshot := &herdr.Snapshot{
+		Panes: []domain.PaneRef{
+			{PaneID: "w1:p1"},
+			{PaneID: "w1:p2"},
+		},
+	}
+
+	input := BuildInput{
+		RepoPath:           "/repo/grove",
+		SandcastleSnapshot: nil,
+		HerdrSnapshot:      herdrSnapshot,
+		PreviousState:      previousState,
+	}
+
+	state := BuildState(input)
+
+	require.Len(t, state.WorkItems, 1)
+	wi := state.WorkItems[0]
+	assert.True(t, wi.Degraded, "work item referencing stale pane must be degraded")
+	assert.Equal(t, "stale pane ID", wi.DegradedReason)
 }

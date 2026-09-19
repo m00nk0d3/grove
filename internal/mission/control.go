@@ -1,6 +1,7 @@
 package mission
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ type BuildInput struct {
 	SandcastleSnapshot *sandcastle.Snapshot
 	PreviousState      *domain.MissionControlState
 	Now                time.Time
+	InsideHerdr        bool
 }
 
 // BuildState creates a complete mission-control state from the available
@@ -40,7 +42,7 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		Agents:       []domain.AgentRef{},
 		Panes:        []domain.PaneRef{},
 		Integrations: domain.IntegrationStatus{
-			Herdr:      herdrIntegration(input.HerdrSnapshot, input.PreviousState),
+			Herdr:      herdrIntegration(input.HerdrSnapshot, input.InsideHerdr),
 			Sandcastle: sandcastleIntegration(input.SandcastleSnapshot),
 			GitHub:     missingIntegration(), // GitHub not connected to this implementation
 		},
@@ -48,62 +50,118 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		UpdatedAt: input.Now,
 
 		Correlations: domain.Correlations{
-			WorktreeToPR:      make(map[string]string),
-			WorktreeToIssue:   make(map[string]string),
+			WorktreeToPR:       make(map[string]string),
+			WorktreeToIssue:    make(map[string]string),
 			WorkflowToWorktree: make(map[string]string),
-			AgentToWorkflow:   make(map[string]string),
-			PaneToAgent:       make(map[string]string),
+			AgentToWorkflow:    make(map[string]string),
+			PaneToAgent:        make(map[string]string),
 		},
 	}
 
 	state.WorkItems = correlateWorktreesWithIssuesAndPRs(input.Worktrees, input.Issues, input.PullRequests)
 
 	// Preserve previous state WorkItems when Sandcastle is unavailable
-	if input.SandcastleSnapshot == nil && input.PreviousState != nil && len(input.PreviousState.WorkItems) > 0 {
-		for _, pw := range input.PreviousState.WorkItems {
-			existing := false
-			for _, wi := range state.WorkItems {
-				if wi.ID == pw.ID {
-					existing = true
+	if input.SandcastleSnapshot == nil && input.PreviousState != nil {
+		if len(input.PreviousState.WorkItems) > 0 {
+			for _, pw := range input.PreviousState.WorkItems {
+				existing := false
+				for _, wi := range state.WorkItems {
+					if wi.ID == pw.ID {
+						existing = true
+						break
+					}
+				}
+				if !existing {
+					state.WorkItems = append(state.WorkItems, pw)
+				}
+			}
+		}
+		if len(input.PreviousState.WorkflowRuns) > 0 {
+			state.WorkflowRuns = append(state.WorkflowRuns, input.PreviousState.WorkflowRuns...)
+		}
+	}
+
+	// Append warnings for unavailable integrations
+	if input.SandcastleSnapshot == nil {
+		msg := "Sandcastle unavailable"
+		if input.PreviousState != nil {
+			msg += "; previous state preserved"
+		}
+		state.Warnings = append(state.Warnings, domain.Warning{
+			Message: msg,
+			Level:   "warning",
+		})
+	}
+
+	// Populate correlations from freshly correlated items
+	branchToPath := make(map[string]string, len(input.Worktrees))
+	for _, wt := range input.Worktrees {
+		branchToPath[wt.Branch] = wt.Path
+	}
+	for i := range state.WorkItems {
+		wi := &state.WorkItems[i]
+		// Link issues to work items that have a matching PR number
+		if wi.LinkedPR != nil {
+			for _, issue := range input.Issues {
+				if issue.Number == wi.LinkedPR.Number {
+					wi.LinkedIssue = &issue
 					break
 				}
 			}
-			if !existing {
-				state.WorkItems = append(state.WorkItems, pw)
-			}
 		}
-		sc := sandcastleIntegration(input.SandcastleSnapshot)
-		hr := herdrIntegration(input.HerdrSnapshot, input.PreviousState)
-		if sc.Available == false && hr.Available == false {
-			state.Status = domain.DegradedState
+		path := branchToPath[wi.ID]
+		if path == "" {
+			path = wi.ID
 		}
+		if wi.LinkedPR != nil {
+			state.Correlations.WorktreeToPR[path] = strconv.Itoa(wi.LinkedPR.Number)
+		}
+		if wi.LinkedIssue != nil {
+			state.Correlations.WorktreeToIssue[path] = strconv.Itoa(wi.LinkedIssue.Number)
+		}
+	}
+
+	// Mark stale pane IDs on work items
+	markStalePaneIDs(&state, input.HerdrSnapshot)
+
+	// Append warning for degraded Herdr inside Herdr
+	if state.Integrations.Herdr.Mode == "degraded" {
+		state.Warnings = append(state.Warnings, domain.Warning{
+			Message: "Herdr unavailable while running inside Herdr; pane jumps disabled",
+			Level:   "warning",
+		})
+	}
+
+	// Determine top-level status when all integrations are unavailable
+	if !state.Integrations.Herdr.Available && !state.Integrations.Sandcastle.Available {
+		state.Status = domain.DegradedState
 	}
 
 	return state
 }
 
 // herdrIntegration evaluates Herdr integration status.
-//
-// Phase 2: previousState parameter is unused (reserved for Phase 3 correlation recovery)
-// Returns a new Integration struct to avoid mutating caller's snapshot data.
-func herdrIntegration(snapshot *herdr.Snapshot, previousState *domain.MissionControlState) domain.ExternalIntegration {
+func herdrIntegration(snapshot *herdr.Snapshot, insideHerdr bool) domain.ExternalIntegration {
 	if snapshot == nil {
-		return missingIntegration() // Integration not available at all
+		if insideHerdr {
+			return domain.ExternalIntegration{
+				Mode:      "degraded",
+				Available: false,
+			}
+		}
+		return missingIntegration()
 	}
 
-	// Read original values before applying any modifications to avoid side effects
 	integration := domain.ExternalIntegration{
 		Mode:    snapshot.Integration.Mode,
 		Enabled: snapshot.Integration.Enabled,
 	}
 
-	// Snapshot exists - integration is available
 	if integration.Mode == "" {
 		integration.Available = true
 		integration.Enabled = true
-		integration.Mode = "missing" // Mode not determined yet - will be filled by adapter
+		integration.Mode = "missing"
 	} else {
-		// Use existing mode from snapshot (e.g., "available", "degraded")
 		integration.Available = true
 		integration.Enabled = true
 	}
@@ -115,22 +173,19 @@ func herdrIntegration(snapshot *herdr.Snapshot, previousState *domain.MissionCon
 // Returns a new Integration struct to avoid mutating caller's snapshot data.
 func sandcastleIntegration(snapshot *sandcastle.Snapshot) domain.ExternalIntegration {
 	if snapshot == nil {
-		return missingIntegration() // Integration not available at all
+		return missingIntegration()
 	}
 
-	// Read original values before applying any modifications to avoid side effects
 	integration := domain.ExternalIntegration{
 		Mode:    snapshot.Integration.Mode,
 		Enabled: snapshot.Integration.Enabled,
 	}
 
-	// Snapshot exists - integration is available
 	if integration.Mode == "" {
 		integration.Available = true
 		integration.Enabled = true
-		integration.Mode = "missing" // Mode not determined yet - will be filled by adapter
+		integration.Mode = "missing"
 	} else {
-		// Use existing mode from snapshot (e.g., "available", "degraded")
 		integration.Available = true
 		integration.Enabled = true
 	}
@@ -140,6 +195,28 @@ func sandcastleIntegration(snapshot *sandcastle.Snapshot) domain.ExternalIntegra
 
 func missingIntegration() domain.ExternalIntegration {
 	return domain.ExternalIntegration{Mode: integrationModeMissing}
+}
+
+// markStalePaneIDs marks work items that reference pane IDs not present in
+// the current Herdr snapshot. Phase 3 stub: fully functional once WorkItem
+// PaneRef linkage is established upstream.
+func markStalePaneIDs(state *domain.MissionControlState, herdrSnapshot *herdr.Snapshot) {
+	if herdrSnapshot == nil {
+		return
+	}
+	currentPanes := make(map[string]struct{}, len(herdrSnapshot.Panes))
+	for _, p := range herdrSnapshot.Panes {
+		currentPanes[p.PaneID] = struct{}{}
+	}
+	for i := range state.WorkItems {
+		if state.WorkItems[i].PaneRef == nil {
+			continue
+		}
+		if _, ok := currentPanes[state.WorkItems[i].PaneRef.PaneID]; !ok {
+			state.WorkItems[i].Degraded = true
+			state.WorkItems[i].DegradedReason = "stale pane ID"
+		}
+	}
 }
 
 func cloneSlice[T any](items []T) []T {
@@ -211,32 +288,28 @@ func correlateWorktreesWithIssuesAndPRs(
 	workItems := make([]domain.WorkItem, 0) // Always non-nil
 
 	for _, worktree := range worktrees {
-		// Rule 1: Exact branch match with PR (highest precedence)
 		if pr, ok := exactBranchMatch(worktree.Branch, prs); ok {
 			item := domain.WorkItem{
-				ID:              worktree.Branch,
-				CreatedAt:       time.Now().Unix(),
-				UpdatedAt:       time.Now().Unix(),
-				LinkedPR:        &pr,
+				ID:        worktree.Branch,
+				CreatedAt: time.Now().Unix(),
+				UpdatedAt: time.Now().Unix(),
+				LinkedPR:  &pr,
 			}
 			workItems = append(workItems, item)
 			continue
 		}
 
-		// Rule 2: Branch containment (worktree branch contains PR branch as substring)
 		if pr, ok := containmentMatch(worktree.Branch, prs); ok {
 			item := domain.WorkItem{
-				ID:              worktree.Branch,
-				CreatedAt:       time.Now().Unix(),
-				UpdatedAt:       time.Now().Unix(),
-				LinkedPR:        &pr,
+				ID:        worktree.Branch,
+				CreatedAt: time.Now().Unix(),
+				UpdatedAt: time.Now().Unix(),
+				LinkedPR:  &pr,
 			}
 			workItems = append(workItems, item)
 			continue
 		}
 
-		// Rule 3: Orphan worktrees appear as standalone workitems ONLY IF there's at least one PR or Issue
-		// If there are no PRs/issues, orphan worktrees should not create work items
 		if len(prs) > 0 || len(issues) > 0 {
 			existing := false
 			for _, wi := range workItems {
@@ -247,11 +320,9 @@ func correlateWorktreesWithIssuesAndPRs(
 			}
 			if !existing {
 				item := domain.WorkItem{
-					ID:              worktree.Branch,
-					CreatedAt:       time.Now().Unix(),
-					UpdatedAt:       time.Now().Unix(),
-					LinkedPR:        nil,
-					LinkedIssue:     nil,
+					ID:        worktree.Branch,
+					CreatedAt: time.Now().Unix(),
+					UpdatedAt: time.Now().Unix(),
 				}
 				workItems = append(workItems, item)
 			}

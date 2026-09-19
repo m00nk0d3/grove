@@ -26,6 +26,9 @@ type WorkItem struct {
 	UpdatedAt       int64
 	LinkedPR        *PullRequest `json:"linked_pr,omitempty"`
 	LinkedIssue     *Issue       `json:"linked_issue,omitempty"`
+	PaneRef         *PaneRef     `json:"pane_ref,omitempty"`
+	Degraded        bool         `json:"degraded,omitempty"`
+	DegradedReason  string       `json:"degraded_reason,omitempty"`
 }
 
 type WorkflowRunRef struct {
