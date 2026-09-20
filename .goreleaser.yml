@@ -19,6 +19,13 @@ archives:
       - goos: windows
         formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: runtime/sandcastle/dist
+        dst: runtime/sandcastle
+      - src: runtime/sandcastle/package.json
+        dst: runtime/sandcastle
+      - src: runtime/sandcastle/README.md
+        dst: runtime/sandcastle
 
 checksum:
   name_template: "checksums.txt"

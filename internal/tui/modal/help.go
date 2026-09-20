@@ -1,11 +1,11 @@
-﻿package modal
+package modal
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
 	"github.com/m00nk0d3/grove/internal/version"
 )
@@ -13,11 +13,11 @@ import (
 type helpTab int
 
 const (
-	tabKeybindings    helpTab = iota
-	tabTips                   // Quick Tips
-	tabTroubleshooting        // Troubleshooting
-	tabAbout                  // About
-	helpTabCount              // sentinel
+	tabKeybindings     helpTab = iota
+	tabTips                    // Quick Tips
+	tabTroubleshooting         // Troubleshooting
+	tabAbout                   // About
+	helpTabCount               // sentinel
 )
 
 var helpTabLabels = [helpTabCount]string{
@@ -51,6 +51,14 @@ var keybindingGroups = []bindingGroup{
 			{"Ctrl+B", "Cleanup stale worktrees & merged branches"},
 			{"s", "Open shell in worktree"},
 			{"x", "Close session and terminal tab"},
+		},
+	},
+	{
+		title: "WORKFLOWS",
+		bindings: [][2]string{
+			{"o (Issues view)", "Run imp for selected issue"},
+			{"o (PRs view)", "Run review, CI repair, or conflict resolution"},
+			{"o (Dashboard)", "Run merged-worktree cleanup"},
 		},
 	},
 	{

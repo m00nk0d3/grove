@@ -4,3 +4,5 @@
 /nexus.exe
 /grove
 /grove.exe
+/runtime/sandcastle/dist/
+/runtime/sandcastle/node_modules/

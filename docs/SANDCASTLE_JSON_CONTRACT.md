@@ -15,22 +15,25 @@ shapes, through fakes, before depending on a live Sandcastle binary.
 In scope for this contract:
 
 ```bash
-sandcastle status --json
-sandcastle workflow list --json
-sandcastle workflow get <run-id> --json
-sandcastle workflow start --json \
+grove-sandcastle status --json
+grove-sandcastle workflow list --json
+grove-sandcastle workflow get <run-id> --json
+grove-sandcastle workflow start --json \
+  --kind imp \
   --repo <repo-path> \
   --worktree <worktree-path> \
-  --agent pi \
+  --agent opencode \
   --source grove
 ```
 
-Deferred to later phases (documented here only to prevent drift):
+Additional supported workflow targets:
 
 ```bash
-sandcastle workflow start --issue <number> --agent pi --json
-sandcastle workflow start --pr <number> --agent pi --json
-sandcastle agent list --json
+grove-sandcastle workflow start --kind imp --issue <number> --agent opencode --json
+grove-sandcastle workflow start --kind review --pr <number> --agent opencode --json
+grove-sandcastle workflow start --kind resolve --pr <number> --agent opencode --json
+grove-sandcastle workflow start --kind ci --pr <number> --agent opencode --json
+grove-sandcastle workflow start --kind clean --agent opencode --json
 ```
 
 Not in scope: stop, pause, retry, or cancel workflow controls, raw log
@@ -40,15 +43,15 @@ scraping, and real-time push updates. Grove integrates through CLI JSON only.
 
 These rules are normative for both sides.
 
-1. **Grove never runs `pi` directly.** Grove starts a Sandcastle workflow;
-   Sandcastle launches Pi Agent (and any supporting agents). Grove's direct
+1. **Grove never runs coding agents directly.** Grove starts a Sandcastle workflow;
+   Sandcastle launches OpenCode (and any supporting agents). Grove's direct
    agent launcher paths are legacy and must not be used for this flow.
-2. **Grove sends `--agent pi`** on `workflow start` unless a future workflow
+2. **Grove sends `--agent opencode`** on `workflow start` unless a future workflow
    template explicitly selects another agent.
 3. **Grove sends `--source grove`** on every `workflow start` Grove issues,
    so Sandcastle can attribute the run to Grove.
 4. **`default_agent` fallback:** if a Grove-started run omits
-   `default_agent`, Grove treats it as `pi`.
+   `default_agent`, Grove treats it as `opencode`.
 5. **Missing Sandcastle binary: non-fatal.** Grove marks the Sandcastle
    integration unavailable, keeps the dashboard in a degraded state with the
    last known work items preserved, and shows a clear integration warning.
@@ -67,7 +70,7 @@ These rules are normative for both sides.
 
 ## Commands
 
-### `sandcastle status --json`
+### `grove-sandcastle status --json`
 
 Lightweight aggregate check-in for Grove's poll loop. Returns the same
 workflow run shape as `workflow list` so Grove has one parser for both.
@@ -85,7 +88,7 @@ workflow run shape as `workflow list` so Grove has one parser for both.
       "repo": "/home/user/dev/project",
       "worktree_path": "/home/user/dev/project-worktrees/issue-42",
       "branch": "issue-42",
-      "default_agent": "pi",
+      "default_agent": "opencode",
       "current_step": "Editing files",
       "progress": {
         "completed": 3,
@@ -134,7 +137,7 @@ Top-level fields:
 | `active_workflows` | integer | yes | Count of `workflows` entries with an active status |
 | `workflows` | array | yes | Workflow runs, same shape as `workflow list` entries; empty array when none |
 
-### `sandcastle workflow list --json`
+### `grove-sandcastle workflow list --json`
 
 List of workflow runs currently tracked by Sandcastle. Sandcastle does not
 need to filter by status; Grove decides what to render (e.g. active runs on
@@ -150,7 +153,7 @@ the global dashboard).
       "repo": "/home/user/dev/project",
       "worktree_path": "/home/user/dev/project-worktrees/issue-42",
       "branch": "issue-42",
-      "default_agent": "pi",
+      "default_agent": "opencode",
       "current_step": "Editing files",
       "progress": {
         "completed": 3,
@@ -204,7 +207,7 @@ and (a subset of) the `workflow` object in the start response.
 | `repo` | string | yes | Absolute repo path |
 | `worktree_path` | string | yes | Absolute worktree path where the run executes |
 | `branch` | string | yes | Branch the run is working on |
-| `default_agent` | string | no | Coding agent kind; Grove defaults to `pi` when omitted |
+| `default_agent` | string | no | Coding agent kind; Grove defaults to `opencode` when omitted |
 | `current_step` | string | no | Human-readable current step title; empty or omitted when idle |
 | `progress` | object | yes | `{completed, total, percent}` integers; `percent` in 0..100 |
 | `github` | object | yes | `{issue, pull_request}`; see below |
@@ -239,7 +242,7 @@ and (a subset of) the `workflow` object in the start response.
 | `title` | string | yes | Human-readable step title |
 | `status` | string | yes | Step status, see Status Vocabulary |
 
-### `sandcastle workflow get <run-id> --json`
+### `grove-sandcastle workflow get <run-id> --json`
 
 Single workflow run object, exactly the same shape as one entry from
 `workflow list`, without the `workflows` wrapper array. Use for drill-down
@@ -253,7 +256,7 @@ detail after a user selects a workflow run.
   "repo": "/home/user/dev/project",
   "worktree_path": "/home/user/dev/project-worktrees/issue-42",
   "branch": "issue-42",
-  "default_agent": "pi",
+  "default_agent": "opencode",
   "current_step": "Editing files",
   "progress": {
     "completed": 3,
@@ -291,15 +294,16 @@ detail after a user selects a workflow run.
 }
 ```
 
-### `sandcastle workflow start --json`
+### `grove-sandcastle workflow start --json`
 
 Grove → Sandcastle request to start a workflow. Grove must always send:
 
 ```bash
-sandcastle workflow start --json \
+grove-sandcastle workflow start --json \
+  --kind imp \
   --repo <repo-path> \
   --worktree <worktree-path> \
-  --agent pi \
+  --agent opencode \
   --source grove
 ```
 
@@ -321,7 +325,7 @@ Minimum start response:
   "workflow": {
     "id": "run_123",
     "status": "queued",
-    "default_agent": "pi",
+    "default_agent": "opencode",
     "worktree_path": "/path/to/worktree"
   }
 }
@@ -331,7 +335,7 @@ Minimum start response:
 | --- | --- | --- | --- |
 | `workflow.id` | string | yes | The run id returned by the start; poll `status`/`list` with it |
 | `workflow.status` | string | yes | `queued` when accepted |
-| `workflow.default_agent` | string | no | As per run shape; Grove defaults to `pi` when omitted |
+| `workflow.default_agent` | string | no | As per run shape; Grove defaults to `opencode` when omitted |
 | `workflow.worktree_path` | string | no | Target worktree path |
 
 The response may include additional fields from the full run shape (rule 8).

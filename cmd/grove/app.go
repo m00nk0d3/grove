@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -139,6 +139,12 @@ type sandcastleSyncedMsg struct {
 	err      error
 }
 
+type sandcastleWorkflowStartedMsg struct {
+	workflow domain.WorkflowRunRef
+	kind     string
+	err      error
+}
+
 // herdrSyncedMsg carries the result of a background Herdr snapshot.
 type herdrSyncedMsg struct {
 	snapshot herdr.Snapshot
@@ -255,6 +261,13 @@ type sessionFocusedMsg struct {
 	err          error
 }
 
+// herdrWorktreeOpenedMsg carries the result of opening and focusing a
+// worktree through Herdr.
+type herdrWorktreeOpenedMsg struct {
+	session domain.Session
+	err     error
+}
+
 // msgAutoDismissDuration is how long the success/info toast stays visible before
 // being cleared by clearMsgCmd.
 const msgAutoDismissDuration = 3 * time.Second
@@ -314,9 +327,9 @@ type activeView int
 
 const (
 	viewDashboard activeView = iota // Global dashboard view
-	viewWorktrees                  // Shows the worktree list (default)
-	viewIssues                     // Shows the GitHub issues list
-	viewPRs                        // Shows the GitHub pull requests list
+	viewWorktrees                   // Shows the worktree list (default)
+	viewIssues                      // Shows the GitHub issues list
+	viewPRs                         // Shows the GitHub pull requests list
 )
 
 // focusedPanel identifies which panel currently has keyboard focus.
@@ -397,6 +410,10 @@ type Model struct {
 	// healthChecker fetches runtime snapshots for Herdr/Sandcastle session
 	// health checks. nil when not initialised (tests, standalone mode).
 	healthChecker sessionHealthChecker
+	// herdrNavigator opens and focuses Herdr-managed worktree panes.
+	herdrNavigator herdrNavigator
+	// workflowStarter launches Grove-owned Sandcastle workflows.
+	workflowStarter sandcastleWorkflowStarter
 
 	// herdrSnapshot holds the last successful Herdr snapshot.
 	herdrSnapshot *herdr.Snapshot
@@ -450,7 +467,22 @@ func (m *Model) Init() tea.Cmd {
 	m.syncing = true
 	// Always start the session tick — it handles both grove-spawned shell sessions
 	// (requires m.db) and externally-started Copilot CLI sessions (no DB needed).
-	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(false), sessionTickCmd(), checkForUpdateCmd(), integrationTickCmd(m.Config))
+	cmds := []tea.Cmd{
+		m.refreshWorktreesCmd(),
+		m.syncGitHubCmd(false),
+		sessionTickCmd(),
+		checkForUpdateCmd(),
+		integrationTickCmd(m.Config),
+	}
+	if m.healthChecker != nil {
+		if m.Config.Herdr.Enabled {
+			cmds = append(cmds, herdrSnapshotCmd(m.healthChecker))
+		}
+		if m.Config.Sandcastle.Enabled {
+			cmds = append(cmds, sandcastleSnapshotCmd(m.healthChecker))
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update handles incoming messages and returns an updated model and command.
@@ -503,6 +535,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.fetchAiderFilesCmd(msg.WorktreePath)
 			}
 			return m, nil
+		case modal.WorkflowLaunchMsg:
+			m.activeModal = nil
+			m.statusMsg = fmt.Sprintf("Starting %s workflow…", msg.Kind)
+			return m, m.startSandcastleWorkflowCmd(msg)
 		case modal.ModalCancelledMsg:
 			m.activeModal = nil
 			return m, nil
@@ -672,6 +708,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			default:
 				if selected, ok := m.selectedWorktree(); ok {
+					useHerdr := m.insideHerdr && m.Config.Herdr.Enabled && m.Config.Herdr.PreferWorktreeAPI
 					// If a live session already exists for this worktree, focus it
 					// instead of spawning a new one. Skip any stale entry whose
 					// shell PID is confirmed dead so that closed terminals don't
@@ -682,10 +719,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if !pathsEqual(s.WorktreePath, selected.Path) {
 							continue
 						}
+						if useHerdr && s.Runtime != domain.RuntimeHerdr {
+							continue
+						}
 						if s.ShellPID != nil && !pidAlive(*s.ShellPID) {
 							break // stale — fall through to spawn
 						}
 						return m, m.focusSessionCmd(s)
+					}
+					if useHerdr {
+						return m, m.openHerdrWorktreeCmd(selected.Path)
 					}
 					return m, m.spawnSessionCmd(selected.Path)
 				}
@@ -772,6 +815,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.maybeLazyLoadCmd()
 			case "t":
 				m.activeModal = modal.NewSettingsModal(m.Config, data.DefaultConfigPath())
+			case "o", "O":
+				if !m.Config.Sandcastle.Enabled {
+					m.statusErr = "Sandcastle workflows are disabled in settings"
+					return m, clearErrorCmd()
+				}
+				if m.workflowStarter == nil {
+					m.statusErr = "Grove Sandcastle runtime is unavailable"
+					return m, clearErrorCmd()
+				}
+				switch m.view {
+				case viewIssues:
+					issue, ok := m.selectedIssue()
+					if !ok {
+						m.statusErr = "No issue selected — select one first"
+						return m, clearErrorCmd()
+					}
+					m.activeModal = modal.NewIssueWorkflowLauncherModal(issue)
+				case viewPRs:
+					if len(m.prs) == 0 || m.selectedPRIdx >= len(m.prs) {
+						m.statusErr = "No PR selected — select one first"
+						return m, clearErrorCmd()
+					}
+					m.activeModal = modal.NewPRWorkflowLauncherModal(m.prs[m.selectedPRIdx])
+				default:
+					m.activeModal = modal.NewMaintenanceWorkflowLauncherModal()
+				}
+				return m, nil
 			case "d", "D":
 				m.view = viewDashboard
 				m.ctxScrollOffset = 0
@@ -1118,10 +1188,43 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.rebuildMissionStateCmd()
 
+	case sandcastleWorkflowStartedMsg:
+		if msg.err != nil {
+			m.statusMsg = ""
+			m.statusErr = fmt.Sprintf("Failed to start %s workflow: %v", msg.kind, msg.err)
+			return m, clearErrorCmd()
+		}
+		if m.sandcastleSnapshot == nil {
+			m.sandcastleSnapshot = &sandcastle.Snapshot{
+				Integration: domain.ExternalIntegration{
+					Name:      "sandcastle",
+					Mode:      "connected",
+					Available: true,
+					Enabled:   true,
+				},
+			}
+		}
+		m.sandcastleSnapshot.Workflows = append(m.sandcastleSnapshot.Workflows, msg.workflow)
+		m.statusMsg = fmt.Sprintf("Started %s workflow", msg.kind)
+		cmds := []tea.Cmd{clearMsgCmd(), m.rebuildMissionStateCmd()}
+		if m.healthChecker != nil {
+			cmds = append(cmds, sandcastleSnapshotCmd(m.healthChecker))
+		}
+		return m, tea.Batch(cmds...)
+
 	case sandcastleSyncedMsg:
 		if msg.err == nil {
 			m.sandcastleSnapshot = &msg.snapshot
 			m.lastSandcastleSync = time.Now()
+		} else {
+			// Keep the last known workflow data while surfacing the current
+			// integration failure instead of making Sandcastle look absent.
+			if m.sandcastleSnapshot != nil {
+				msg.snapshot.Workflows = m.sandcastleSnapshot.Workflows
+				msg.snapshot.Agents = m.sandcastleSnapshot.Agents
+				msg.snapshot.CapturedAt = m.sandcastleSnapshot.CapturedAt
+			}
+			m.sandcastleSnapshot = &msg.snapshot
 		}
 		return m, m.rebuildMissionStateCmd()
 
@@ -1135,6 +1238,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = fmt.Sprintf("Focused session for %s", msg.worktreePath)
 		}
+		return m, clearMsgCmd()
+
+	case herdrWorktreeOpenedMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("Failed to open worktree in Herdr: %v", msg.err)
+			return m, clearErrorCmd()
+		}
+		found := false
+		for i := range m.sessions {
+			if pathsEqual(m.sessions[i].WorktreePath, msg.session.WorktreePath) {
+				m.sessions[i] = msg.session
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.sessions = append(m.sessions, msg.session)
+		}
+		m.statusMsg = fmt.Sprintf("Opened Herdr pane for %s", msg.session.WorktreePath)
 		return m, clearMsgCmd()
 
 	case sessionKilledMsg:
@@ -1226,7 +1348,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View returns a string representation of the model's current state.
 func (m *Model) View() string {
-	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.currentPage, m.sessions, func() *domain.ExternalIntegration { if m.herdrSnapshot != nil { return &m.herdrSnapshot.Integration }; return nil }(), func() *domain.ExternalIntegration { if m.sandcastleSnapshot != nil { return &m.sandcastleSnapshot.Integration }; return nil }(), m.missionState)
+	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.currentPage, m.sessions, func() *domain.ExternalIntegration {
+		if m.herdrSnapshot != nil {
+			return &m.herdrSnapshot.Integration
+		}
+		return nil
+	}(), func() *domain.ExternalIntegration {
+		if m.sandcastleSnapshot != nil {
+			return &m.sandcastleSnapshot.Integration
+		}
+		return nil
+	}(), m.missionState)
 
 	w, h := m.width, m.height
 	if w <= 0 {
@@ -2116,7 +2248,17 @@ func (m *Model) killSessionCmd(session domain.Session) tea.Cmd {
 // focusSessionCmd attempts to bring the terminal window for the given session
 // to the foreground and dispatches sessionFocusedMsg with the outcome.
 func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
+	navigator := m.herdrNavigator
 	return func() tea.Msg {
+		if session.Runtime == domain.RuntimeHerdr {
+			if navigator == nil {
+				return sessionFocusedMsg{worktreePath: session.WorktreePath, err: fmt.Errorf("Herdr navigation unavailable")}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, err := navigator.OpenWorktree(ctx, herdr.OpenWorktreeRequest{Path: session.WorktreePath})
+			return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
+		}
 		pid := 0
 		if session.ShellPID != nil {
 			pid = *session.ShellPID
@@ -2126,12 +2268,80 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 	}
 }
 
+// openHerdrWorktreeCmd opens and focuses a worktree in Herdr, then persists
+// the resulting runtime-backed session.
+func (m *Model) openHerdrWorktreeCmd(worktreePath string) tea.Cmd {
+	navigator := m.herdrNavigator
+	db := m.db
+	return func() tea.Msg {
+		if navigator == nil {
+			return herdrWorktreeOpenedMsg{err: fmt.Errorf("Herdr navigation unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		pane, err := navigator.OpenWorktree(ctx, herdr.OpenWorktreeRequest{Path: worktreePath})
+		if err != nil {
+			return herdrWorktreeOpenedMsg{err: err}
+		}
+		if pane == nil || pane.PaneID == "" {
+			return herdrWorktreeOpenedMsg{err: fmt.Errorf("Herdr returned no pane for %s", worktreePath)}
+		}
+		paneID := pane.PaneID
+		session := domain.Session{
+			WorktreePath: worktreePath,
+			Runtime:      domain.RuntimeHerdr,
+			RuntimeID:    paneID,
+			PaneID:       &paneID,
+			Status:       domain.StatusActive,
+			StartedAt:    time.Now().UTC().Truncate(time.Second),
+		}
+		if db != nil {
+			id, err := data.UpsertSession(db, session)
+			if err != nil {
+				return herdrWorktreeOpenedMsg{err: fmt.Errorf("track Herdr session: %w", err)}
+			}
+			session.ID = id
+		}
+		return herdrWorktreeOpenedMsg{session: session}
+	}
+}
+
 // sessionHealthChecker fetches runtime snapshots for session health checks.
 // Production implementation wraps real herdr/sandcastle clients.
 // Tests inject a fake or leave it nil.
 type sessionHealthChecker interface {
 	HerdrSnapshot() (herdr.Snapshot, error)
 	SandcastleSnapshot(ctx context.Context) (sandcastle.Snapshot, error)
+}
+
+type herdrNavigator interface {
+	OpenWorktree(ctx context.Context, req herdr.OpenWorktreeRequest) (*domain.PaneRef, error)
+}
+
+type sandcastleWorkflowStarter interface {
+	StartWorkflow(ctx context.Context, req sandcastle.StartWorkflowRequest) (domain.WorkflowRunRef, error)
+}
+
+func (m *Model) startSandcastleWorkflowCmd(msg modal.WorkflowLaunchMsg) tea.Cmd {
+	starter := m.workflowStarter
+	repoPath := m.RepoPath
+	defaultAgent := m.Config.Sandcastle.DefaultAgent
+	return func() tea.Msg {
+		if starter == nil {
+			return sandcastleWorkflowStartedMsg{kind: msg.Kind, err: fmt.Errorf("runtime unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		workflow, err := starter.StartWorkflow(ctx, sandcastle.StartWorkflowRequest{
+			Kind:        msg.Kind,
+			RepoPath:    repoPath,
+			IssueNumber: msg.IssueNumber,
+			PRNumber:    msg.PRNumber,
+			AgentKind:   defaultAgent,
+			Source:      "grove",
+		})
+		return sandcastleWorkflowStartedMsg{workflow: workflow, kind: msg.Kind, err: err}
+	}
 }
 
 // defaultHealthChecker is the production sessionHealthChecker backed by real
@@ -2680,17 +2890,17 @@ func (m *Model) prevPage() {
 }
 
 // moveDown advances the selection within the currently focused panel.
-	// Nav panel: cycles the active view forward.
-	// Ctx panel: scrolls the context content down.
-	// List panel (default): moves the item cursor down.
-	func (m *Model) moveDown() {
-		switch m.focused {
-		case panelNav:
-			n := int(m.view) + 1
-			if n > int(viewPRs) {
-				n = int(viewDashboard)
-			}
-			m.view = activeView(n)
+// Nav panel: cycles the active view forward.
+// Ctx panel: scrolls the context content down.
+// List panel (default): moves the item cursor down.
+func (m *Model) moveDown() {
+	switch m.focused {
+	case panelNav:
+		n := int(m.view) + 1
+		if n > int(viewPRs) {
+			n = int(viewDashboard)
+		}
+		m.view = activeView(n)
 	case panelCtx:
 		m.ctxScrollOffset++
 	default: // panelList
@@ -2724,17 +2934,17 @@ func (m *Model) prevPage() {
 }
 
 // moveUp retreats the selection within the currently focused panel.
-	// Nav panel: cycles the active view backward.
-	// Ctx panel: scrolls the context content up.
-	// List panel (default): moves the item cursor up.
-	func (m *Model) moveUp() {
-		switch m.focused {
-		case panelNav:
-			n := int(m.view) - 1
-			if n < 0 {
-				n = int(viewPRs)
-			}
-			m.view = activeView(n)
+// Nav panel: cycles the active view backward.
+// Ctx panel: scrolls the context content up.
+// List panel (default): moves the item cursor up.
+func (m *Model) moveUp() {
+	switch m.focused {
+	case panelNav:
+		n := int(m.view) - 1
+		if n < 0 {
+			n = int(viewPRs)
+		}
+		m.view = activeView(n)
 	case panelCtx:
 		if m.ctxScrollOffset > 0 {
 			m.ctxScrollOffset--

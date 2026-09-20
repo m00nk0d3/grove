@@ -60,8 +60,15 @@ else
   sudo install -m 755 "$TMP_DIR/$BINARY" "$INSTALL_DIR/$BINARY"
 fi
 
+if command -v npm >/dev/null 2>&1 && [ -d "$TMP_DIR/runtime/sandcastle" ]; then
+  echo "Installing Grove Sandcastle runtime..."
+  npm install --global "$TMP_DIR/runtime/sandcastle"
+else
+  echo "Warning: Node.js/npm unavailable; Grove installed without workflow commands."
+fi
+
 echo ""
-echo "✓ nexus v$VERSION installed to $INSTALL_DIR/$BINARY"
+echo "✓ grove v$VERSION installed to $INSTALL_DIR/$BINARY"
 echo ""
 echo "Run: grove"
 echo "Docs: https://github.com/$REPO"

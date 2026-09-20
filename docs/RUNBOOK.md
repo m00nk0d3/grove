@@ -15,6 +15,7 @@ This section is for contributors building and running Grove from source.
 | [Go](https://go.dev/dl/) | 1.25+ | `go version` to verify |
 | [GitHub CLI (`gh`)](https://cli.github.com/) | Latest | `gh auth login` before running |
 | Git | Any recent | Must be in `PATH` |
+| Node.js | 22+ | Required for the bundled Sandcastle workflow runtime |
 
 ### Clone the repository
 
@@ -26,7 +27,8 @@ cd grove
 ### Build
 
 ```bash
-go build ./...
+make build
+make runtime-build
 ```
 
 ### Run (without installing)
@@ -51,8 +53,31 @@ Move the resulting `grove` binary to a directory on your `PATH`.
 ### Run tests
 
 ```bash
-go test ./...
+make test
 ```
+
+### Install the Grove Sandcastle runtime
+
+```bash
+make install-runtime
+```
+
+This installs `grove-sandcastle` and Grove-owned compatibility commands for
+`imp`, `review`, `resolve`, `ci`, and `clean`. The runtime writes telemetry
+under each repository's common Git directory in `grove-workflows/`, allowing
+all worktrees to share one workflow view.
+
+### Launch workflows from Grove
+
+Press `o` to open the context-aware workflow launcher:
+
+- Issues view: run `imp` for the selected issue.
+- Pull requests view: choose `review`, `ci`, or `resolve`.
+- Dashboard or worktrees view: run `clean`.
+
+Grove asks `grove-sandcastle` to reuse or open the repository's Herdr
+workspace, then creates a focused tab for the selected workflow. It does not
+split the Grove pane. OpenCode is the default coding agent.
 
 ### Release process
 
@@ -116,6 +141,7 @@ Key settings:
 | `ai_agents.aider_enabled` | Toggles Aider launcher |
 | `ai_agents.claude_binary` | Override path to the `claude` binary |
 | `ai_agents.aider_binary` | Override path to the `aider` binary |
+| `sandcastle.binary` | Grove workflow telemetry binary; defaults to `grove-sandcastle` |
 | `worktrees.base_branch` | Default branch used when creating worktrees |
 | `worktrees.worktree_root` | Directory where new worktrees are created (relative to repo root) |
 

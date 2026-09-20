@@ -1911,6 +1911,143 @@ func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 	assert.NotNil(t, cmd, "should return a spawnSessionCmd")
 }
 
+type fakeHerdrNavigator struct {
+	openedPath string
+	pane       *domain.PaneRef
+	openErr    error
+}
+
+func (f *fakeHerdrNavigator) OpenWorktree(_ context.Context, req herdr.OpenWorktreeRequest) (*domain.PaneRef, error) {
+	f.openedPath = req.Path
+	return f.pane, f.openErr
+}
+
+type fakeSandcastleWorkflowStarter struct {
+	request  sandcastle.StartWorkflowRequest
+	workflow domain.WorkflowRunRef
+	err      error
+}
+
+func (f *fakeSandcastleWorkflowStarter) StartWorkflow(_ context.Context, req sandcastle.StartWorkflowRequest) (domain.WorkflowRunRef, error) {
+	f.request = req
+	return f.workflow, f.err
+}
+
+func TestModel_OKeyOpensContextualWorkflowLauncher(t *testing.T) {
+	tests := []struct {
+		name string
+		view activeView
+		init func(*Model)
+	}{
+		{
+			name: "issue",
+			view: viewIssues,
+			init: func(m *Model) {
+				m.issues = []domain.Issue{{Number: 42, Title: "Ship workflow launcher"}}
+			},
+		},
+		{
+			name: "pull request",
+			view: viewPRs,
+			init: func(m *Model) {
+				m.prs = []domain.PullRequest{{Number: 17, Title: "Workflow UI"}}
+			},
+		},
+		{
+			name: "dashboard maintenance",
+			view: viewDashboard,
+			init: func(_ *Model) {},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel()
+			m.view = tt.view
+			m.Config.Sandcastle.Enabled = true
+			m.workflowStarter = &fakeSandcastleWorkflowStarter{}
+			tt.init(m)
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+			require.Nil(t, cmd)
+			model := updated.(*Model)
+			_, ok := model.activeModal.(*modal.WorkflowLauncherModal)
+			assert.True(t, ok)
+		})
+	}
+}
+
+func TestModel_WorkflowLaunchMsgStartsOpenCodeWorkflow(t *testing.T) {
+	issueNumber := 42
+	starter := &fakeSandcastleWorkflowStarter{
+		workflow: domain.WorkflowRunRef{WorkflowID: "run_42", Status: domain.WorkflowQueued},
+	}
+	m := NewModel()
+	m.RepoPath = "/repos/grove"
+	m.Config.Sandcastle.DefaultAgent = "opencode"
+	m.workflowStarter = starter
+	m.activeModal = modal.NewIssueWorkflowLauncherModal(domain.Issue{Number: issueNumber})
+
+	updated, cmd := m.Update(modal.WorkflowLaunchMsg{
+		Kind:        modal.WorkflowKindImplement,
+		IssueNumber: &issueNumber,
+	})
+	require.NotNil(t, cmd)
+	assert.Nil(t, updated.(*Model).activeModal)
+
+	msg, ok := cmd().(sandcastleWorkflowStartedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, modal.WorkflowKindImplement, starter.request.Kind)
+	assert.Equal(t, "/repos/grove", starter.request.RepoPath)
+	assert.Equal(t, "opencode", starter.request.AgentKind)
+	require.NotNil(t, starter.request.IssueNumber)
+	assert.Equal(t, issueNumber, *starter.request.IssueNumber)
+}
+
+func TestModel_Enter_InHerdr_OpensAndFocusesHerdrWorktree(t *testing.T) {
+	navigator := &fakeHerdrNavigator{
+		pane: &domain.PaneRef{PaneID: "w1:p2", CWD: "/repos/nexus"},
+	}
+	m := NewModel()
+	m.view = viewDashboard
+	m.insideHerdr = true
+	m.Config.Herdr.Enabled = true
+	m.Config.Herdr.PreferWorktreeAPI = true
+	m.herdrNavigator = navigator
+	m.Worktrees = []domain.Worktree{{Path: "/repos/nexus", Branch: "main"}}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(herdrWorktreeOpenedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "/repos/nexus", navigator.openedPath)
+	assert.Equal(t, domain.RuntimeHerdr, msg.session.Runtime)
+	require.NotNil(t, msg.session.PaneID)
+	assert.Equal(t, "w1:p2", *msg.session.PaneID)
+}
+
+func TestFocusSessionCmd_HerdrSessionReopensFocusedWorktree(t *testing.T) {
+	navigator := &fakeHerdrNavigator{
+		pane: &domain.PaneRef{PaneID: "w1:p9", CWD: "/repos/nexus"},
+	}
+	m := NewModel()
+	m.herdrNavigator = navigator
+	paneID := "w1:p9"
+
+	msg, ok := m.focusSessionCmd(domain.Session{
+		WorktreePath: "/repos/nexus",
+		Runtime:      domain.RuntimeHerdr,
+		PaneID:       &paneID,
+	})().(sessionFocusedMsg)
+
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "/repos/nexus", navigator.openedPath)
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Phase 3: Aider launcher tests
@@ -2827,13 +2964,13 @@ func TestBuildNewTerminalWithCmdCmd(t *testing.T) {
 			wantArgs: []string{"alacritty", "--working-directory", "/home/dev/repo/wt", "-e", "sh", "-c", "aider"},
 		},
 		{
-			name:        "linux kitty (no remote-control) uses kitty --directory",
-			path:        "/home/dev/repo/wt",
-			agentCmd:    "aider",
-			goos:        "linux",
-			kittyWinID:  "1",
-			wantExe:     "kitty",
-			wantArgs:    []string{"kitty", "--directory", "/home/dev/repo/wt", "sh", "-c", "aider"},
+			name:       "linux kitty (no remote-control) uses kitty --directory",
+			path:       "/home/dev/repo/wt",
+			agentCmd:   "aider",
+			goos:       "linux",
+			kittyWinID: "1",
+			wantExe:    "kitty",
+			wantArgs:   []string{"kitty", "--directory", "/home/dev/repo/wt", "sh", "-c", "aider"},
 		},
 		{
 			name:        "linux TERMINAL env uses $TERMINAL -e script",
@@ -2900,32 +3037,32 @@ func TestBuildNewTabWithCmdCmd(t *testing.T) {
 	}{
 		// --- Multiplexers ---
 		{
-			name:     "tmux with agentCmd opens new-window with cmd",
-			path:     "/repo/wt",
-			agentCmd: "gh copilot",
-			goos:     "linux",
-			tmuxEnv:  "set",
-			wantOK:   true,
-			wantExe:  "tmux",
+			name:            "tmux with agentCmd opens new-window with cmd",
+			path:            "/repo/wt",
+			agentCmd:        "gh copilot",
+			goos:            "linux",
+			tmuxEnv:         "set",
+			wantOK:          true,
+			wantExe:         "tmux",
 			wantArgsContain: []string{"new-window", "-c", "/repo/wt", "gh copilot"},
 		},
 		{
-			name:    "tmux without agentCmd opens plain new-window",
-			path:    "/repo/wt",
-			goos:    "linux",
-			tmuxEnv: "set",
-			wantOK:  true,
-			wantExe: "tmux",
+			name:            "tmux without agentCmd opens plain new-window",
+			path:            "/repo/wt",
+			goos:            "linux",
+			tmuxEnv:         "set",
+			wantOK:          true,
+			wantExe:         "tmux",
 			wantArgsContain: []string{"new-window", "-c", "/repo/wt"},
 		},
 		{
-			name:      "zellij with agentCmd runs zellij run",
-			path:      "/repo/wt",
-			agentCmd:  "claude",
-			goos:      "linux",
-			zellijEnv: "set",
-			wantOK:    true,
-			wantExe:   "zellij",
+			name:            "zellij with agentCmd runs zellij run",
+			path:            "/repo/wt",
+			agentCmd:        "claude",
+			goos:            "linux",
+			zellijEnv:       "set",
+			wantOK:          true,
+			wantExe:         "zellij",
 			wantArgsContain: []string{"run", "--cwd", "/repo/wt"},
 		},
 		{
@@ -2948,51 +3085,51 @@ func TestBuildNewTabWithCmdCmd(t *testing.T) {
 		},
 		// --- Kitty remote-control ---
 		{
-			name:       "kitty remote-control with agentCmd opens new tab with cmd",
-			path:       "/repo/wt",
-			agentCmd:   "aider",
-			goos:       "linux",
-			kittyWinID: "42",
-			wantOK:     true,
-			wantExe:    "kitty",
+			name:            "kitty remote-control with agentCmd opens new tab with cmd",
+			path:            "/repo/wt",
+			agentCmd:        "aider",
+			goos:            "linux",
+			kittyWinID:      "42",
+			wantOK:          true,
+			wantExe:         "kitty",
 			wantArgsContain: []string{"@", "new-window", "--new-tab", "--cwd", "/repo/wt", "sh", "-c", "aider"},
 		},
 		{
-			name:       "kitty remote-control with pidFile writes PID before shell",
-			path:       "/repo/wt",
-			pidFile:    "/tmp/nexus.pid",
-			goos:       "linux",
-			kittyWinID: "42",
-			wantOK:     true,
-			wantExe:    "kitty",
+			name:            "kitty remote-control with pidFile writes PID before shell",
+			path:            "/repo/wt",
+			pidFile:         "/tmp/nexus.pid",
+			goos:            "linux",
+			kittyWinID:      "42",
+			wantOK:          true,
+			wantExe:         "kitty",
 			wantArgsContain: []string{"@", "new-window", "--new-tab", "--cwd", "/repo/wt"},
 		},
 		// --- Alacritty IPC ---
 		{
-			name:       "alacritty IPC with agentCmd creates tab with cmd",
-			path:       "/repo/wt",
-			agentCmd:   "gh copilot",
-			goos:       "linux",
-			alacrittyS: "/tmp/alacritty.sock",
-			wantOK:     true,
-			wantExe:    "alacritty",
+			name:            "alacritty IPC with agentCmd creates tab with cmd",
+			path:            "/repo/wt",
+			agentCmd:        "gh copilot",
+			goos:            "linux",
+			alacrittyS:      "/tmp/alacritty.sock",
+			wantOK:          true,
+			wantExe:         "alacritty",
 			wantArgsContain: []string{"msg", "create-tab", "--working-directory", "/repo/wt", "--", "sh", "-c", "gh copilot"},
 		},
 		// --- Windows Terminal ---
 		{
-			name:      "Windows Terminal with agentCmd opens new tab",
-			path:      `C:\repos\wt`,
-			agentCmd:  "gh copilot",
-			goos:      "windows",
-			wtSession: "some-guid",
-			wantOK:    true,
-			wantExe:   "wt",
+			name:            "Windows Terminal with agentCmd opens new tab",
+			path:            `C:\repos\wt`,
+			agentCmd:        "gh copilot",
+			goos:            "windows",
+			wtSession:       "some-guid",
+			wantOK:          true,
+			wantExe:         "wt",
 			wantArgsContain: []string{"-w", "0", "new-tab", "--startingDirectory", `C:\repos\wt`, "cmd", "/K", "gh copilot"},
 		},
 		{
-			name:  "Windows without WT_SESSION returns false",
-			path:  `C:\repos\wt`,
-			goos:  "windows",
+			name:   "Windows without WT_SESSION returns false",
+			path:   `C:\repos\wt`,
+			goos:   "windows",
 			wantOK: false,
 		},
 		// --- macOS iTerm2 ---
@@ -3016,13 +3153,13 @@ func TestBuildNewTabWithCmdCmd(t *testing.T) {
 		},
 		// --- Linux Konsole ---
 		{
-			name:       "Konsole with agentCmd opens new tab",
-			path:       "/home/dev/repo/wt",
-			agentCmd:   "claude",
-			goos:       "linux",
-			konsoleVer: "210401",
-			wantOK:     true,
-			wantExe:    "konsole",
+			name:            "Konsole with agentCmd opens new tab",
+			path:            "/home/dev/repo/wt",
+			agentCmd:        "claude",
+			goos:            "linux",
+			konsoleVer:      "210401",
+			wantOK:          true,
+			wantExe:         "konsole",
 			wantArgsContain: []string{"--new-tab"},
 		},
 		// --- No emulator detected ---
@@ -3380,10 +3517,10 @@ func TestCheckSessionsCmd_DB_DeadShellPruned(t *testing.T) {
 
 // fakeHealthChecker is a test sessionHealthChecker that returns canned snapshots.
 type fakeHealthChecker struct {
-	herdrSnap  herdr.Snapshot
-	herdrErr   error
-	scSnap     sandcastle.Snapshot
-	scErr      error
+	herdrSnap herdr.Snapshot
+	herdrErr  error
+	scSnap    sandcastle.Snapshot
+	scErr     error
 }
 
 func (f *fakeHealthChecker) HerdrSnapshot() (herdr.Snapshot, error) {
@@ -3452,11 +3589,11 @@ func TestCheckSessionsCmd_EnrichKeepsAlive(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	sess := domain.Session{
-		WorktreePath:  "/repo/herdr-alive",
-		Runtime:       domain.RuntimeHerdr,
-		PaneID:        strPtr("pane-2"),
-		Status:        domain.StatusActive,
-		StartedAt:     time.Now().UTC().Truncate(time.Second),
+		WorktreePath: "/repo/herdr-alive",
+		Runtime:      domain.RuntimeHerdr,
+		PaneID:       strPtr("pane-2"),
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
 	}
 	_, err = data.UpsertSession(db, sess)
 	require.NoError(t, err)
@@ -3501,11 +3638,11 @@ func TestCheckSessionsCmd_EnrichMixedDB(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	sessAlive := domain.Session{
-		WorktreePath:  "/repo/herdr-alive",
-		Runtime:       domain.RuntimeHerdr,
-		PaneID:        strPtr("pane-alive"),
-		Status:        domain.StatusActive,
-		StartedAt:     time.Now().UTC().Truncate(time.Second),
+		WorktreePath: "/repo/herdr-alive",
+		Runtime:      domain.RuntimeHerdr,
+		PaneID:       strPtr("pane-alive"),
+		Status:       domain.StatusActive,
+		StartedAt:    time.Now().UTC().Truncate(time.Second),
 	}
 	sessDead := domain.Session{
 		WorktreePath:  "/repo/herdr-dead",
@@ -3962,10 +4099,10 @@ func TestModel_Enter_PR_JumpsToExistingSession(t *testing.T) {
 			wantErrEmpty: true,
 		},
 		{
-			name:      "no worktree and no session for PR → opens checkout modal",
-			pr:        domain.PullRequest{Number: 11, Title: "New PR", Branch: "feat/new-pr", State: "OPEN"},
-			worktrees: []domain.Worktree{},
-			sessions:  []domain.Session{},
+			name:         "no worktree and no session for PR → opens checkout modal",
+			pr:           domain.PullRequest{Number: 11, Title: "New PR", Branch: "feat/new-pr", State: "OPEN"},
+			worktrees:    []domain.Worktree{},
+			sessions:     []domain.Session{},
 			wantModalNil: false,
 			wantCmdNil:   true,
 			wantErrEmpty: true,
@@ -4393,9 +4530,9 @@ func TestEnrichHerdrSessions(t *testing.T) {
 		wantDead     []int64 // IDs of sessions that should be removed
 	}{
 		{
-			name:         "nil herdr snapshot with nil error marks degraded (standalone mode)",
-			sessions:     []domain.Session{{ID: 1, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now}},
-			herdrSnap:    nil, herdrErr: nil, scSnap: nil, scErr: nil,
+			name:      "nil herdr snapshot with nil error marks degraded (standalone mode)",
+			sessions:  []domain.Session{{ID: 1, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now}},
+			herdrSnap: nil, herdrErr: nil, scSnap: nil, scErr: nil,
 			wantAlive:    1,
 			wantDegraded: []int64{1},
 		},
@@ -4548,17 +4685,28 @@ func TestHerdrSyncedMsg_StoresSnapshotOnSuccess(t *testing.T) {
 	assert.Equal(t, "new", model.herdrSnapshot.Panes[0].PaneID)
 }
 
-// TestSandcastleSyncedMsg_PreservesSnapshotOnError verifies that when
-// sandcastleSyncedMsg carries an error the previous snapshot is not overwritten.
+// TestSandcastleSyncedMsg_PreservesDataAndStoresIntegrationError verifies that a
+// failed refresh retains prior workflow data while surfacing the live failure.
 func TestSandcastleSyncedMsg_PreservesSnapshotOnError(t *testing.T) {
 	m := NewModel()
 	existing := sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{{WorkflowID: "keep"}}}
 	m.sandcastleSnapshot = &existing
 
-	m2, _ := m.Update(sandcastleSyncedMsg{err: errors.New("timeout")})
+	failed := sandcastle.Snapshot{
+		Integration: domain.ExternalIntegration{
+			Name:      "sandcastle",
+			Mode:      "degraded",
+			Available: true,
+			Enabled:   true,
+			Error:     "status command unavailable",
+		},
+	}
+	m2, _ := m.Update(sandcastleSyncedMsg{snapshot: failed, err: errors.New("timeout")})
 	model := m2.(*Model)
 	require.NotNil(t, model.sandcastleSnapshot, "snapshot must be preserved on error")
 	assert.Equal(t, "keep", model.sandcastleSnapshot.Workflows[0].WorkflowID)
+	assert.Equal(t, "degraded", model.sandcastleSnapshot.Integration.Mode)
+	assert.Equal(t, "status command unavailable", model.sandcastleSnapshot.Integration.Error)
 }
 
 // TestSandcastleSyncedMsg_StoresSnapshotOnSuccess verifies that a successful
@@ -4760,37 +4908,36 @@ func TestRepeatedPollErrors_DontSetStatus(t *testing.T) {
 	assert.Empty(t, m.statusMsg, "repeated poll errors must not set statusMsg")
 }
 
-
 // TestNavigation_CyclingIncludesDashboard verifies nav cycling includes dashboard view.
 func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
 	tests := []struct {
-		name            string
-		initialView     activeView
-		expectedAfterUp activeView // expected after moveUp from initial state
+		name              string
+		initialView       activeView
+		expectedAfterUp   activeView // expected after moveUp from initial state
 		expectedAfterDown activeView // expected after moveDown from initial state
 	}{
 		{
-			name:            "from dashboard up goes to PRs, down goes to worktrees",
-			initialView:     viewDashboard,
-			expectedAfterUp: viewPRs,
+			name:              "from dashboard up goes to PRs, down goes to worktrees",
+			initialView:       viewDashboard,
+			expectedAfterUp:   viewPRs,
 			expectedAfterDown: viewWorktrees,
 		},
 		{
-			name:            "from worktrees up goes to dashboard, down goes to issues",
-			initialView:     viewWorktrees,
-			expectedAfterUp: viewDashboard,
+			name:              "from worktrees up goes to dashboard, down goes to issues",
+			initialView:       viewWorktrees,
+			expectedAfterUp:   viewDashboard,
 			expectedAfterDown: viewIssues,
 		},
 		{
-			name:            "from issues up goes to worktrees, down goes to PRs",
-			initialView:     viewIssues,
-			expectedAfterUp: viewWorktrees,
+			name:              "from issues up goes to worktrees, down goes to PRs",
+			initialView:       viewIssues,
+			expectedAfterUp:   viewWorktrees,
 			expectedAfterDown: viewPRs,
 		},
 		{
-			name:            "from PRs up goes to issues, down wraps to dashboard",
-			initialView:     viewPRs,
-			expectedAfterUp: viewIssues,
+			name:              "from PRs up goes to issues, down wraps to dashboard",
+			initialView:       viewPRs,
+			expectedAfterUp:   viewIssues,
 			expectedAfterDown: viewDashboard,
 		},
 	}
@@ -4815,4 +4962,3 @@ func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
 		})
 	}
 }
-

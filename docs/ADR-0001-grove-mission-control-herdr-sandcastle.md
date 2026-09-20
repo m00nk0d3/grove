@@ -48,7 +48,7 @@ The ownership model is:
 | Persistent terminal runtime | Herdr |
 | Pane-local agent presence and terminal state | Herdr |
 | Agent process lifecycle (launch, supervision, completion) | Sandcastle |
-| Sandcastle workflow execution | Sandcastle, defaulting to Pi Agent for coding work |
+| Sandcastle workflow execution | Sandcastle, defaulting to OpenCode for coding work |
 | Multi-agent orchestration | Sandcastle |
 | Workflow lifecycle controls beyond start | Out of scope for phase 1 |
 
@@ -180,8 +180,8 @@ In standalone mode:
 - Sandcastle owns workflow execution, agent launching, and multi-agent orchestration.
 - GitHub owns issue and pull-request records; Grove's phase-1 integration is read-only display and correlation.
 - Grove consumes Sandcastle state through CLI JSON in phase 1. The contract is documented in [SANDCASTLE_JSON_CONTRACT.md](./SANDCASTLE_JSON_CONTRACT.md) and is the implementation target for the Sandcastle adapter.
-- Sandcastle workflow starts from Grove should default to Pi Agent as the primary coding agent.
-- Sandcastle workflow status from Grove should identify Pi Agent as the default coding actor unless a workflow reports a different agent.
+- Sandcastle workflow starts from Grove should default to OpenCode as the primary coding agent.
+- Sandcastle workflow status from Grove should identify OpenCode as the default coding actor unless a workflow reports a different agent.
 - Grove should not directly spawn coding agents in the target architecture; it should ask Sandcastle to start workflow runs.
 - Grove renders Sandcastle status visually using the existing Bubble Tea/Lip Gloss UI stack.
 - Grove should not display raw Sandcastle command output as the primary status display.

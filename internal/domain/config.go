@@ -70,9 +70,9 @@ func DefaultConfig() *Config {
 		},
 		Sandcastle: SandcastleConfig{
 			Enabled:             true,
-			Binary:              "sandcastle",
+			Binary:              "grove-sandcastle",
 			PollIntervalSeconds: 5,
-			DefaultAgent:        "pi",
+			DefaultAgent:        "opencode",
 		},
 	}
 }

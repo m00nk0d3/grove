@@ -14,10 +14,10 @@ import (
 func TestWorktreePRExactBranchMatch(t *testing.T) {
 	issue42 := 42
 	pr := domain.PullRequest{
-		Number:   42,
-		Title:    "Fix issue-42",
-		Branch:   "issue-42",
-		State:    "OPEN",
+		Number: 42,
+		Title:  "Fix issue-42",
+		Branch: "issue-42",
+		State:  "OPEN",
 	}
 
 	worktree := domain.Worktree{
@@ -28,12 +28,12 @@ func TestWorktreePRExactBranchMatch(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:      "/repo/grove",
-		Worktrees:     []domain.Worktree{worktree},
-		Issues:        []domain.Issue{{Number: issue42}},
-		PullRequests:  []domain.PullRequest{pr},
-		Sessions:      []domain.Session{},
-		HerdrSnapshot: nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{{Number: issue42}},
+		PullRequests:       []domain.PullRequest{pr},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -53,10 +53,10 @@ func TestWorktreePRExactBranchMatchEmptyInput(t *testing.T) {
 func TestWorktreePRBranchContainmentMatch(t *testing.T) {
 	issue42 := 42
 	pr := domain.PullRequest{
-		Number:   42,
-		Title:    "Fix issue-42",
-		Branch:   "issue-42",
-		State:    "OPEN",
+		Number: 42,
+		Title:  "Fix issue-42",
+		Branch: "issue-42",
+		State:  "OPEN",
 	}
 
 	worktree := domain.Worktree{
@@ -67,12 +67,12 @@ func TestWorktreePRBranchContainmentMatch(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:      "/repo/grove",
-		Worktrees:     []domain.Worktree{worktree},
-		Issues:        []domain.Issue{{Number: issue42}},
-		PullRequests:  []domain.PullRequest{pr},
-		Sessions:      []domain.Session{},
-		HerdrSnapshot: nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{{Number: issue42}},
+		PullRequests:       []domain.PullRequest{pr},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -87,10 +87,10 @@ func TestWorktreePRExactBranchMatchIgnoresRepoPath(t *testing.T) {
 	// Matching is branch-based. A worktree and PR with the same branch name
 	// match regardless of repo path — the correlation layer does not filter by path.
 	pr := domain.PullRequest{
-		Number:  1,
-		Title:   "Fix something",
-		Branch:  "fix-branch",
-		State:   "OPEN",
+		Number: 1,
+		Title:  "Fix something",
+		Branch: "fix-branch",
+		State:  "OPEN",
 	}
 
 	worktreeA := domain.Worktree{
@@ -101,12 +101,12 @@ func TestWorktreePRExactBranchMatchIgnoresRepoPath(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:      "/repo/a",
-		Worktrees:     []domain.Worktree{worktreeA},
-		Issues:        []domain.Issue{{Number: 1}},
-		PullRequests:  []domain.PullRequest{pr},
-		Sessions:      []domain.Session{},
-		HerdrSnapshot: nil,
+		RepoPath:           "/repo/a",
+		Worktrees:          []domain.Worktree{worktreeA},
+		Issues:             []domain.Issue{{Number: 1}},
+		PullRequests:       []domain.PullRequest{pr},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -121,10 +121,10 @@ func TestWorktreePRExactBranchMatchIgnoresRepoPath(t *testing.T) {
 func TestWorktreeIssueViaPRFallback(t *testing.T) {
 	issue42 := 42
 	pr := domain.PullRequest{
-		Number:   42,
-		Title:    "Fix issue-42",
-		Branch:   "issue-42",
-		State:    "OPEN",
+		Number: 42,
+		Title:  "Fix issue-42",
+		Branch: "issue-42",
+		State:  "OPEN",
 	}
 
 	worktree := domain.Worktree{
@@ -135,12 +135,12 @@ func TestWorktreeIssueViaPRFallback(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:      "/repo/grove",
-		Worktrees:     []domain.Worktree{worktree},
-		Issues:        []domain.Issue{{Number: issue42}},
-		PullRequests:  []domain.PullRequest{pr},
-		Sessions:      []domain.Session{},
-		HerdrSnapshot: nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{{Number: issue42}},
+		PullRequests:       []domain.PullRequest{pr},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -160,12 +160,12 @@ func TestOrphanWorktreeNoMatches(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:      "/repo/grove",
-		Worktrees:     []domain.Worktree{worktree},
-		Issues:        []domain.Issue{{Number: 99}}, // Different issue number
-		PullRequests:  []domain.PullRequest{{Number: 88, Branch: "other-branch"}}, // Different PR
-		Sessions:      []domain.Session{},
-		HerdrSnapshot: nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{{Number: 99}},                               // Different issue number
+		PullRequests:       []domain.PullRequest{{Number: 88, Branch: "other-branch"}}, // Different PR
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -182,7 +182,7 @@ func TestOrphanWorktreeNoMatches(t *testing.T) {
 
 func TestNoSandcastleSnapshot(t *testing.T) {
 	input := BuildInput{
-		RepoPath: "/repo/grove",
+		RepoPath:      "/repo/grove",
 		HerdrSnapshot: &herdr.Snapshot{},
 	}
 
@@ -191,6 +191,32 @@ func TestNoSandcastleSnapshot(t *testing.T) {
 	// Rule 6: No Sandcastle snapshot → integration mode is missing
 	assert.Equal(t, "missing", state.Integrations.Sandcastle.Mode)
 	assert.False(t, state.Integrations.Sandcastle.Available)
+}
+
+func TestDegradedSandcastleSnapshotPreservesIntegrationDetails(t *testing.T) {
+	input := BuildInput{
+		RepoPath:      "/repo/grove",
+		HerdrSnapshot: &herdr.Snapshot{},
+		SandcastleSnapshot: &sandcastle.Snapshot{
+			Integration: domain.ExternalIntegration{
+				Name:      "sandcastle",
+				Mode:      "degraded",
+				Available: true,
+				Enabled:   true,
+				Version:   "0.12.0",
+				Error:     "status command unavailable",
+			},
+		},
+	}
+
+	state := BuildState(input)
+
+	assert.Equal(t, "degraded", state.Integrations.Sandcastle.Mode)
+	assert.True(t, state.Integrations.Sandcastle.Available)
+	assert.Equal(t, "0.12.0", state.Integrations.Sandcastle.Version)
+	assert.Equal(t, "status command unavailable", state.Integrations.Sandcastle.Error)
+	require.Len(t, state.Warnings, 1)
+	assert.Contains(t, state.Warnings[0].Message, "status command unavailable")
 }
 
 func TestSandcastleSnapshotMalformedJSON(t *testing.T) {
@@ -211,7 +237,7 @@ func TestSandcastleSnapshotMalformedJSON(t *testing.T) {
 
 func TestPreviousStatePreservedOnRefreshFailure(t *testing.T) {
 	previousWorkItem := domain.WorkItem{
-		ID:       "issue-42",
+		ID:        "issue-42",
 		CreatedAt: 1700000000,
 		UpdatedAt: 1700000000,
 	}
@@ -262,10 +288,10 @@ func TestHerdrSnapshotMalformedJSON(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:         "/repo/grove",
-		HerdrSnapshot:    nil, // Simulates malformed JSON handled by adapter
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      nil, // Simulates malformed JSON handled by adapter
 		SandcastleSnapshot: &sandcastle.Snapshot{},
-		PreviousState:    previousState,
+		PreviousState:      previousState,
 	}
 
 	state := BuildState(input)
@@ -281,8 +307,8 @@ func TestStaleHerdrPaneID(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:       "/repo/grove",
-		HerdrSnapshot:  &herdr.Snapshot{},
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      &herdr.Snapshot{},
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 		PreviousState: &domain.MissionControlState{
 			Panes: []domain.PaneRef{previousPane},
@@ -303,9 +329,9 @@ func TestStaleHerdrPaneID(t *testing.T) {
 
 func TestPaneToAgentViaIDMatch(t *testing.T) {
 	input := BuildInput{
-		RepoPath:       "/repo/grove",
+		RepoPath:           "/repo/grove",
 		SandcastleSnapshot: &sandcastle.Snapshot{},
-		HerdrSnapshot: &herdr.Snapshot{},
+		HerdrSnapshot:      &herdr.Snapshot{},
 	}
 
 	state := BuildState(input)
@@ -318,14 +344,14 @@ func TestPaneToAgentViaIDMatch(t *testing.T) {
 
 func TestCWDBasedFallbackLinkage(t *testing.T) {
 	worktree := domain.Worktree{
-		Path: "/repo/grove/feature-x",
+		Path:   "/repo/grove/feature-x",
 		Branch: "feature-x",
 	}
 
 	input := BuildInput{
-		RepoPath:      "/repo/grove",
-		Worktrees:     []domain.Worktree{worktree},
-		HerdrSnapshot: &herdr.Snapshot{},
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		HerdrSnapshot:      &herdr.Snapshot{},
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -338,8 +364,8 @@ func TestCWDBasedFallbackLinkage(t *testing.T) {
 
 func TestMultiplePanesForSameWorktree(t *testing.T) {
 	input := BuildInput{
-		RepoPath:       "/repo/grove",
-		HerdrSnapshot: &herdr.Snapshot{},
+		RepoPath:           "/repo/grove",
+		HerdrSnapshot:      &herdr.Snapshot{},
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 		PreviousState: &domain.MissionControlState{
 			Panes: []domain.PaneRef{
@@ -462,7 +488,7 @@ func TestCorrelationsStructExists(t *testing.T) {
 
 func TestCorrelationsInitializedEmpty(t *testing.T) {
 	input := BuildInput{
-		RepoPath: "/repo/grove",
+		RepoPath:  "/repo/grove",
 		Worktrees: []domain.Worktree{{Path: "/repo/grove", Branch: "main"}},
 	}
 	state := BuildState(input)
@@ -730,8 +756,8 @@ func TestInsideHerdrDefaultsFalse(t *testing.T) {
 // AC-3: Stale pane ID marks WorkItem degraded with reason.
 func TestStalePaneIDMarksWorkItemDegraded(t *testing.T) {
 	previousWorkItem := domain.WorkItem{
-		ID:       "issue-42",
-		PaneRef:  &domain.PaneRef{PaneID: "w1:p3"},
+		ID:      "issue-42",
+		PaneRef: &domain.PaneRef{PaneID: "w1:p3"},
 	}
 
 	previousState := &domain.MissionControlState{

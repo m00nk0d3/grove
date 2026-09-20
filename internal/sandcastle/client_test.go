@@ -50,7 +50,7 @@ func fakeLookPath(name string) (string, error) {
 func newTestClient(runner *fakeRunner) Client {
 	return NewClient(ClientConfig{
 		Binary:       "sandcastle",
-		DefaultAgent: "pi",
+		DefaultAgent: "opencode",
 		Timeout:      5 * time.Second,
 		LookPath:     fakeLookPath,
 	}, runner)
@@ -112,6 +112,7 @@ func TestSnapshot_SuccessfulStatus(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "0.4.0", snap.Integration.Version)
+	assert.Equal(t, "connected", snap.Integration.Mode)
 	assert.True(t, snap.Integration.Available)
 	require.Len(t, snap.Workflows, 1)
 
@@ -185,8 +186,10 @@ func TestStartWorkflow_Success(t *testing.T) {
 	call := runner.lastCall()
 	assert.Contains(t, call, "workflow")
 	assert.Contains(t, call, "start")
+	assert.Contains(t, call, "--kind")
+	assert.Contains(t, call, "imp")
 	assert.Contains(t, call, "--agent")
-	assert.Contains(t, call, "pi")
+	assert.Contains(t, call, "opencode")
 	assert.Contains(t, call, "--source")
 	assert.Contains(t, call, "grove")
 }
@@ -207,7 +210,7 @@ func TestStartWorkflow_DefaultAgentAndSource(t *testing.T) {
 	call := runner.lastCall()
 	agentIdx := indexAfter(call, "--agent")
 	require.GreaterOrEqual(t, agentIdx, 0)
-	assert.Equal(t, "pi", call[agentIdx+1])
+	assert.Equal(t, "opencode", call[agentIdx+1])
 
 	sourceIdx := indexAfter(call, "--source")
 	require.GreaterOrEqual(t, sourceIdx, 0)
@@ -239,6 +242,51 @@ func TestStartWorkflow_CustomAgentAndSource(t *testing.T) {
 	assert.Equal(t, "manual", call[sourceIdx+1])
 }
 
+func TestStartWorkflow_IncludesGitHubTargets(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow": {"id": "run_3", "status": "queued"}}`),
+	}
+	issueNumber := 42
+	prNumber := 84
+
+	client := newTestClient(runner)
+	_, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:    "/repo",
+		IssueNumber: &issueNumber,
+		PRNumber:    &prNumber,
+	})
+	require.NoError(t, err)
+
+	call := runner.lastCall()
+	assert.Contains(t, call, "--issue")
+	assert.Contains(t, call, "42")
+	assert.Contains(t, call, "--pr")
+	assert.Contains(t, call, "84")
+}
+
+func TestStartWorkflow_IncludesRequestedKind(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow": {"id": "run_4", "status": "queued"}}`),
+	}
+	prNumber := 84
+
+	client := newTestClient(runner)
+	_, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		Kind:      "review",
+		RepoPath:  "/repo",
+		PRNumber:  &prNumber,
+		AgentKind: "opencode",
+	})
+	require.NoError(t, err)
+
+	call := runner.lastCall()
+	kindIdx := indexAfter(call, "--kind")
+	require.GreaterOrEqual(t, kindIdx, 0)
+	assert.Equal(t, "review", call[kindIdx+1])
+}
+
 func TestAvailable_MissingBinary(t *testing.T) {
 	runner := newFakeRunner()
 	client := NewClient(ClientConfig{
@@ -261,6 +309,7 @@ func TestSnapshot_MissingBinary(t *testing.T) {
 	snap, err := client.Snapshot(context.Background(), "/repo")
 	require.NoError(t, err)
 	assert.False(t, snap.Integration.Available)
+	assert.Equal(t, "missing", snap.Integration.Mode)
 	assert.Empty(t, snap.Workflows)
 }
 
@@ -288,6 +337,7 @@ func TestSnapshot_MalformedJSON(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse sandcastle status")
 	assert.True(t, snap.Integration.Available)
+	assert.Equal(t, "degraded", snap.Integration.Mode)
 	assert.Contains(t, snap.Integration.Error, "malformed")
 }
 
@@ -315,6 +365,7 @@ func TestSnapshot_CommandFailure(t *testing.T) {
 	snap, err := client.Snapshot(context.Background(), "/repo")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sandcastle status")
+	assert.Equal(t, "degraded", snap.Integration.Mode)
 	assert.Contains(t, snap.Integration.Error, "connection refused")
 }
 

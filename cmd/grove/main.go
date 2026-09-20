@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"bytes"
@@ -51,11 +51,24 @@ func run() error {
 
 	m := NewModel()
 	m.RepoPath = cwd
+	herdrClient := herdr.NewClient(herdrExecRunner{})
+	sandcastleBinary := m.Config.Sandcastle.Binary
+	if sandcastleBinary == "" || sandcastleBinary == "sandcastle" {
+		if bundledBinary, lookupErr := exec.LookPath("grove-sandcastle"); lookupErr == nil {
+			sandcastleBinary = bundledBinary
+		}
+	}
+	sandcastleClient := sandcastle.NewClient(sandcastle.ClientConfig{
+		Binary:       sandcastleBinary,
+		DefaultAgent: m.Config.Sandcastle.DefaultAgent,
+	}, sandcastle.NewExecCommandRunner())
 	m.healthChecker = &defaultHealthChecker{
-		herdr:      herdr.NewClient(herdrExecRunner{}),
-		sandcastle: sandcastle.NewClient(sandcastle.ClientConfig{}, sandcastle.NewExecCommandRunner()),
+		herdr:      herdrClient,
+		sandcastle: sandcastleClient,
 		repoPath:   cwd,
 	}
+	m.herdrNavigator = herdrClient
+	m.workflowStarter = sandcastleClient
 
 	// Open DB best-effort: non-fatal if it fails (e.g. no write permission).
 	// When db is nil, agent runs are not logged but everything else works.

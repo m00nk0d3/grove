@@ -87,7 +87,7 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		}
 	}
 
-	// Append warnings for unavailable integrations
+	// Append warnings for unavailable or degraded integrations.
 	if input.SandcastleSnapshot == nil {
 		msg := "Sandcastle unavailable"
 		if input.PreviousState != nil {
@@ -95,6 +95,11 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		}
 		state.Warnings = append(state.Warnings, domain.Warning{
 			Message: msg,
+			Level:   "warning",
+		})
+	} else if input.SandcastleSnapshot.Integration.Error != "" {
+		state.Warnings = append(state.Warnings, domain.Warning{
+			Message: "Sandcastle degraded: " + input.SandcastleSnapshot.Integration.Error,
 			Level:   "warning",
 		})
 	}
@@ -203,20 +208,10 @@ func sandcastleIntegration(snapshot *sandcastle.Snapshot) domain.ExternalIntegra
 		return missingIntegration()
 	}
 
-	integration := domain.ExternalIntegration{
-		Mode:    snapshot.Integration.Mode,
-		Enabled: snapshot.Integration.Enabled,
-	}
-
+	integration := snapshot.Integration
 	if integration.Mode == "" {
-		integration.Available = true
-		integration.Enabled = true
 		integration.Mode = "missing"
-	} else {
-		integration.Available = true
-		integration.Enabled = true
 	}
-
 	return integration
 }
 

@@ -54,6 +54,7 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 | [Git](https://git-scm.com/) | Must be in `PATH` |
 | [GitHub CLI (`gh`)](https://cli.github.com/) | Run `gh auth login` before first use |
 | Go 1.25+ | Only needed if building from source |
+| Node.js 22+ | Required for Grove's Sandcastle workflows (`imp`, `review`, `resolve`, `ci`, `clean`) |
 | Claude Code | Optional — enable with `claude_enabled = true` |
 | GitHub Copilot CLI | Optional — `gh extension install github/gh-copilot` |
 | Aider | Optional — `pip install aider-chat` |
@@ -91,9 +92,15 @@ go install github.com/m00nk0d3/grove/cmd/grove@latest
 ```bash
 git clone https://github.com/m00nk0d3/grove
 cd grove
-go build -o grove ./cmd/grove
+make build
+make install-runtime
 ./grove
 ```
+
+Grove ships its own Sandcastle runtime. `make install-runtime` installs
+`grove-sandcastle` plus the compatible `imp`, `review`, `resolve`, `ci`, and
+`clean` commands. Workflow state is stored in the repository's common Git
+directory and appears automatically in Grove's mission-control dashboard.
 
 > Pre-built release archives are also available on the [GitHub Releases page](https://github.com/m00nk0d3/grove/releases) if you prefer to install manually.
 
@@ -106,7 +113,8 @@ go build -o grove ./cmd/grove
 3. Grove opens in the **Worktrees** view — use `j`/`k` to navigate the list
 4. Press `i` to switch to the Issues view, select an issue, and press `Enter` to create a new worktree for it
 5. Press `Enter` or `s` to open a shell inside the selected worktree
-6. Press `a`, `c`, `f`, or `Space` to launch an AI agent in that worktree's context
+6. Press `o` on an issue to run `imp`, or on a PR to choose `review`, `ci`, or `resolve`
+7. Press `a`, `c`, `f`, or `Space` to launch a legacy direct AI agent in a worktree
 
 ---
 

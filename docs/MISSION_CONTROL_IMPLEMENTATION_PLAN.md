@@ -345,15 +345,15 @@ sandcastle workflow get <run-id> --json
 sandcastle workflow start --json \
   --repo <repo-path> \
   --worktree <worktree-path> \
-  --agent pi \
+  --agent opencode \
   --source grove
 ```
 
 ### Optional Later Commands
 
 ```bash
-sandcastle workflow start --issue <number> --agent pi --json
-sandcastle workflow start --pr <number> --agent pi --json
+grove-sandcastle workflow start --issue <number> --agent opencode --json
+grove-sandcastle workflow start --pr <number> --agent opencode --json
 sandcastle agent list --json
 ```
 
@@ -369,7 +369,7 @@ sandcastle agent list --json
       "repo": "/home/user/dev/project",
       "worktree_path": "/home/user/dev/project-worktrees/issue-42",
       "branch": "issue-42",
-      "default_agent": "pi",
+      "default_agent": "opencode",
       "current_step": "Editing files",
       "progress": {
         "completed": 3,
@@ -416,7 +416,7 @@ sandcastle agent list --json
   "workflow": {
     "id": "run_123",
     "status": "queued",
-    "default_agent": "pi",
+    "default_agent": "opencode",
     "worktree_path": "/path/to/worktree"
   }
 }
@@ -424,9 +424,9 @@ sandcastle agent list --json
 
 ### Rules
 
-- Grove sends `--agent pi` unless a future workflow template explicitly selects another agent.
-- Grove never runs `pi` directly.
-- If a Grove-started workflow omits `default_agent`, Grove treats it as `pi`.
+- Grove sends `--agent opencode` unless a future workflow template explicitly selects another agent.
+- Grove never runs coding agents directly.
+- If a Grove-started workflow omits `default_agent`, Grove treats it as `opencode`.
 - Malformed JSON becomes a visible integration error.
 - Missing Sandcastle is non-fatal.
 
@@ -489,7 +489,7 @@ type StartWorkflowRequest struct {
 - Use command timeouts.
 - Preserve stderr in errors.
 - Normalize statuses into Grove domain statuses.
-- Default `AgentKind` to `pi`.
+- Default `AgentKind` to `opencode`.
 - Send `--source grove`.
 - Never panic on missing fields or malformed JSON.
 - Treat missing Sandcastle as unavailable, not fatal.
@@ -503,13 +503,13 @@ Prefer simple top-level sections:
 enabled = true
 binary = "sandcastle"
 poll_interval_seconds = 5
-default_agent = "pi"
+default_agent = "opencode"
 ```
 
 ### Acceptance Criteria
 
 - `Snapshot` parses workflow list JSON.
-- `StartWorkflow` sends `--agent pi` by default.
+- `StartWorkflow` sends `--agent opencode` by default.
 - Errors preserve command stderr.
 - Missing binary produces unavailable integration state.
 - Adapter tests use a fake command runner.
@@ -838,7 +838,7 @@ Show:
 
 - Run ID.
 - Status.
-- Default agent: Pi.
+- Default agent: OpenCode.
 - Worktree.
 - Issue/PR.
 - Progress bar.
@@ -893,7 +893,7 @@ StartWorkflowRequest{
     Branch:       selected.Worktree.Branch,
     IssueNumber:  selected.Issue.Number,
     PRNumber:     selected.PullRequest.Number,
-    AgentKind:    "pi",
+    AgentKind:    "opencode",
     Source:       "grove",
 }
 ```
@@ -903,7 +903,7 @@ StartWorkflowRequest{
 - Start by selected worktree.
 - Start by selected issue.
 - Start by selected pull request.
-- Default agent to Pi.
+- Default agent to OpenCode.
 - Show optimistic queued state after start.
 - Refresh Sandcastle snapshot after start.
 - Attach returned workflow run to selected work item.
@@ -912,7 +912,7 @@ StartWorkflowRequest{
 ### Acceptance Criteria
 
 - Starting a workflow from Grove calls Sandcastle, not Pi directly.
-- Start requests default to `pi`.
+- Start requests default to `opencode`.
 - Started workflow appears visually in Grove.
 - Errors are visible and do not crash the UI.
 
@@ -1099,7 +1099,7 @@ Keep the new dashboard visually consistent and reusable.
 - Status badge.
 - Progress bar.
 - Current step.
-- Default agent: Pi.
+- Default agent: OpenCode.
 - Worktree.
 - Issue/PR.
 - Pane ID if jumpable.
@@ -1188,7 +1188,7 @@ prefer_worktree_api = true
 enabled = true
 binary = "sandcastle"
 poll_interval_seconds = 5
-default_agent = "pi"
+default_agent = "opencode"
 ```
 
 ### Compatibility
@@ -1202,7 +1202,7 @@ default_agent = "pi"
 - Missing config fields default correctly.
 - Existing config files still load.
 - Saved config includes Herdr and Sandcastle defaults.
-- Default Sandcastle agent is `pi`.
+- Default Sandcastle agent is `opencode`.
 
 ## Phase 16: Error and Degraded-State UX
 
@@ -1282,7 +1282,7 @@ Cover:
 
 - Parses workflow list.
 - Parses workflow start response.
-- Sends `--agent pi` by default.
+- Sends `--agent opencode` by default.
 - Preserves a custom agent only if explicitly passed.
 - Handles missing binary.
 - Handles command failure.
@@ -1314,7 +1314,7 @@ Cover:
 - Pressing Enter opens detail dashboard.
 - Escape returns to global dashboard.
 - Start workflow action dispatches Sandcastle request.
-- Start workflow action defaults to Pi Agent.
+- Start workflow action defaults to OpenCode.
 - Herdr jump action dispatches focus/open command.
 - Integration refresh updates mission-control state.
 - Integration errors show visible degraded state.
@@ -1361,7 +1361,7 @@ Deliverable: Grove compiles with new domain/config types and no major UI change.
 - Add command runner.
 - Add Sandcastle client.
 - Parse workflow list.
-- Start workflow with default `pi`.
+- Start workflow with default `opencode`.
 - Add adapter tests.
 
 Deliverable: Grove can call or fake Sandcastle and parse workflow state.
@@ -1425,7 +1425,7 @@ Deliverable: user can drill into worktrees, agents, and workflows, then return t
 ### Milestone 9: Start Sandcastle Workflows
 
 - Add start workflow modal/action.
-- Default to Pi.
+- Default to OpenCode.
 - Start from worktree.
 - Start from issue.
 - Start from PR.
@@ -1466,7 +1466,7 @@ Deliverable: Grove's documented flow is Sandcastle-first.
 - Add command runner.
 - Add Sandcastle client.
 - Parse workflow list.
-- Start workflow with default `pi`.
+- Start workflow with default `opencode`.
 - Test command success/failure/malformed JSON.
 
 ### PR 3: Herdr Adapter
@@ -1507,7 +1507,7 @@ Deliverable: Grove's documented flow is Sandcastle-first.
 ### PR 8: Start Sandcastle Workflows
 
 - Add start workflow modal/action.
-- Default to Pi.
+- Default to OpenCode.
 - Start from worktree, issue, and PR.
 - Refresh status after start.
 
@@ -1543,8 +1543,8 @@ Deliverable: Grove's documented flow is Sandcastle-first.
 - Grove has a mission-control dashboard.
 - Grove has drill-down dashboards for worktrees, agents, and workflows.
 - Grove can display Sandcastle workflow status visually.
-- Grove can start Sandcastle workflows that default to Pi Agent.
-- Grove can show Pi Agent status as part of Sandcastle workflow state.
+- Grove can start Sandcastle workflows that default to OpenCode.
+- Grove can show OpenCode status as part of Sandcastle workflow state.
 - Grove can open or jump to Herdr panes when Herdr is available.
 - Grove can use Herdr-managed worktree open/create in Herdr mode.
 - Grove preserves standalone behavior outside Herdr.

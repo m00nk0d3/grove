@@ -341,13 +341,29 @@ func TestSnapshot_AgentNameFallsBackToStrippedTitle(t *testing.T) {
 }
 
 var (
-	openWorktreeFixture   = `{"id":"cli:worktree:open","result":{"type":"worktree_open","open_status":{"is_open":true,"pane_id":"w6:p30"},"path":"/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open","branch":"test-branch","label":"grove"}}`
+	openWorktreeFixture   = `{"id":"cli:worktree:open","result":{"type":"worktree_opened","root_pane":{"pane_id":"w6:p30","cwd":"/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open"},"worktree":{"path":"/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open","branch":"test-branch","label":"grove"}}}`
+	legacyOpenFixture     = `{"id":"cli:worktree:open","result":{"type":"worktree_open","open_status":{"is_open":true,"pane_id":"w6:p30"},"path":"/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open","branch":"test-branch","label":"grove"}}`
 	createWorktreeFixture = `{"id":"cli:worktree:create","result":{"type":"worktree_create","create_status":{"created":true},"path":"/tmp/test-worktree-123","branch":"test-branch","label":"grove"}}`
 )
 
 func TestOpenWorktree_Success(t *testing.T) {
 	r := newFakeRunner()
 	r.responses["worktree"] = stubResponse{stdout: []byte(openWorktreeFixture)}
+	testEnv(t, true, "")
+
+	result, err := NewClient(r).OpenWorktree(
+		context.Background(),
+		OpenWorktreeRequest{Path: "/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open"},
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "w6:p30", result.PaneID)
+	assert.Equal(t, "/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open", result.CWD)
+}
+
+func TestOpenWorktree_LegacyResponse(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["worktree"] = stubResponse{stdout: []byte(legacyOpenFixture)}
 	testEnv(t, true, "")
 
 	result, err := NewClient(r).OpenWorktree(
@@ -397,7 +413,7 @@ func TestOpenWorktree_ExactCommandArgs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"worktree", "open", "--path", "/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open", "--no-focus", "--json"}, r.lastArgs("worktree"))
+	assert.Equal(t, []string{"worktree", "open", "--path", "/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open", "--focus"}, r.lastArgs("worktree"))
 }
 
 func TestCreateWorktree_Success(t *testing.T) {

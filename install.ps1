@@ -38,6 +38,17 @@ try {
 
     Copy-Item -Path (Join-Path $tmp "$Binary.exe") -Destination (Join-Path $InstallDir "$Binary.exe") -Force
 
+    $runtimePath = Join-Path $tmp "runtime\sandcastle"
+    if ((Get-Command npm -ErrorAction SilentlyContinue) -and (Test-Path $runtimePath)) {
+        Write-Host "Installing Grove Sandcastle runtime..."
+        npm install --global $runtimePath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install Grove Sandcastle runtime."
+        }
+    } else {
+        Write-Warning "Node.js/npm unavailable; Grove installed without workflow commands."
+    }
+
     # Add to user PATH if not already present
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ($userPath -notlike "*$InstallDir*") {

@@ -4,7 +4,7 @@ PKG     := github.com/m00nk0d3/grove/internal/version
 LDFLAGS := -X $(PKG).Version=$(VERSION)
 
 # Cross-compile targets require a POSIX shell (Git Bash / WSL on Windows).
-.PHONY: build test lint clean install release snapshot \
+.PHONY: build test lint clean install runtime-build runtime-test install-runtime release snapshot \
         build-linux build-darwin build-windows
 
 build:
@@ -23,6 +23,7 @@ build-windows:
 
 test:
 	go test ./... -v -count=1
+	cd runtime/sandcastle && npm test
 
 lint:
 	golangci-lint run
@@ -31,7 +32,18 @@ clean:
 	rm -f $(BINARY) $(BINARY)-linux-* $(BINARY)-darwin-* $(BINARY).exe
 	go clean -testcache
 
-install:
+runtime-build:
+	cd runtime/sandcastle && npm run build
+
+runtime-test:
+	cd runtime/sandcastle && npm test
+
+install-runtime:
+	cd runtime/sandcastle && npm install --no-audit --no-fund
+	cd runtime/sandcastle && npm run build
+	npm install --global ./runtime/sandcastle
+
+install: install-runtime
 	go install -ldflags "$(LDFLAGS)" ./cmd/grove
 
 release:

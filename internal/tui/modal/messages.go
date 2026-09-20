@@ -67,6 +67,21 @@ type SpawnAgentMsg struct {
 // UpdateConfirmedMsg is sent when the user confirms the self-update from the update modal.
 type UpdateConfirmedMsg struct{}
 
+const (
+	WorkflowKindImplement = "imp"
+	WorkflowKindReview    = "review"
+	WorkflowKindResolve   = "resolve"
+	WorkflowKindCI        = "ci"
+	WorkflowKindClean     = "clean"
+)
+
+// WorkflowLaunchMsg requests a Grove-owned Sandcastle workflow.
+type WorkflowLaunchMsg struct {
+	Kind        string
+	IssueNumber *int
+	PRNumber    *int
+}
+
 // CandidateKind distinguishes the type of a cleanup candidate.
 type CandidateKind int
 

@@ -30,6 +30,7 @@ type ClientConfig struct {
 
 // StartWorkflowRequest describes a workflow start request to Sandcastle.
 type StartWorkflowRequest struct {
+	Kind         string
 	RepoPath     string
 	WorktreePath string
 	Branch       string
@@ -45,13 +46,13 @@ type sandcastleClient struct {
 }
 
 // NewClient creates a Sandcastle Client with the given config and command runner.
-// A zero Timeout defaults to 10s. A zero DefaultAgent defaults to "pi".
+// A zero Timeout defaults to 10s. A zero DefaultAgent defaults to "opencode".
 func NewClient(config ClientConfig, runner CommandRunner) Client {
 	if config.Timeout == 0 {
 		config.Timeout = 10 * time.Second
 	}
 	if config.DefaultAgent == "" {
-		config.DefaultAgent = "pi"
+		config.DefaultAgent = "opencode"
 	}
 	if config.Binary == "" {
 		config.Binary = "sandcastle"
@@ -68,6 +69,7 @@ func (c *sandcastleClient) Available(_ context.Context) domain.ExternalIntegrati
 	if err != nil {
 		return domain.ExternalIntegration{
 			Name:      "sandcastle",
+			Mode:      "missing",
 			Available: false,
 			Enabled:   true,
 			Error:     "sandcastle binary not found",
@@ -75,6 +77,7 @@ func (c *sandcastleClient) Available(_ context.Context) domain.ExternalIntegrati
 	}
 	return domain.ExternalIntegration{
 		Name:      "sandcastle",
+		Mode:      "available",
 		Available: true,
 		Enabled:   true,
 	}
@@ -95,6 +98,7 @@ func (c *sandcastleClient) Snapshot(ctx context.Context, _ string) (Snapshot, er
 		return Snapshot{
 			Integration: domain.ExternalIntegration{
 				Name:      "sandcastle",
+				Mode:      "degraded",
 				Available: true,
 				Enabled:   true,
 				Error:     preserveStderr(stderr, err),
@@ -107,6 +111,7 @@ func (c *sandcastleClient) Snapshot(ctx context.Context, _ string) (Snapshot, er
 		return Snapshot{
 			Integration: domain.ExternalIntegration{
 				Name:      "sandcastle",
+				Mode:      "degraded",
 				Available: true,
 				Enabled:   true,
 				Error:     "malformed JSON from sandcastle status",
@@ -116,9 +121,11 @@ func (c *sandcastleClient) Snapshot(ctx context.Context, _ string) (Snapshot, er
 
 	integration := domain.ExternalIntegration{
 		Name:      "sandcastle",
+		Mode:      "connected",
 		Available: true,
 		Enabled:   true,
 		Version:   resp.Version,
+		LastSync:  time.Now(),
 	}
 
 	workflows := make([]domain.WorkflowRunRef, 0, len(resp.Workflows))
@@ -153,13 +160,24 @@ func (c *sandcastleClient) StartWorkflow(ctx context.Context, req StartWorkflowR
 	if source == "" {
 		source = "grove"
 	}
+	kind := req.Kind
+	if kind == "" {
+		kind = "imp"
+	}
 
 	args := []string{
 		"workflow", "start", "--json",
+		"--kind", kind,
 		"--repo", req.RepoPath,
 		"--worktree", req.WorktreePath,
 		"--agent", agent,
 		"--source", source,
+	}
+	if req.IssueNumber != nil {
+		args = append(args, "--issue", fmt.Sprintf("%d", *req.IssueNumber))
+	}
+	if req.PRNumber != nil {
+		args = append(args, "--pr", fmt.Sprintf("%d", *req.PRNumber))
 	}
 
 	stdout, stderr, err := c.runCommand(ctx, args...)
@@ -208,20 +226,20 @@ type startWorkflowResponse struct {
 }
 
 type workflowRunRaw struct {
-	ID           string         `json:"id"`
-	Title        string         `json:"title"`
-	Status       string         `json:"status"`
-	Repo         string         `json:"repo"`
-	WorktreePath string         `json:"worktree_path"`
-	Branch       string         `json:"branch"`
-	DefaultAgent string         `json:"default_agent"`
-	CurrentStep  string         `json:"current_step"`
-	Progress     progressRaw   `json:"progress"`
-	Github       githubRaw     `json:"github"`
-	Agents       []agentRaw    `json:"agents"`
-	Steps        []stepRaw     `json:"steps"`
-	StartedAt    string         `json:"started_at"`
-	UpdatedAt    string         `json:"updated_at"`
+	ID           string      `json:"id"`
+	Title        string      `json:"title"`
+	Status       string      `json:"status"`
+	Repo         string      `json:"repo"`
+	WorktreePath string      `json:"worktree_path"`
+	Branch       string      `json:"branch"`
+	DefaultAgent string      `json:"default_agent"`
+	CurrentStep  string      `json:"current_step"`
+	Progress     progressRaw `json:"progress"`
+	Github       githubRaw   `json:"github"`
+	Agents       []agentRaw  `json:"agents"`
+	Steps        []stepRaw   `json:"steps"`
+	StartedAt    string      `json:"started_at"`
+	UpdatedAt    string      `json:"updated_at"`
 }
 
 type progressRaw struct {
@@ -231,17 +249,17 @@ type progressRaw struct {
 }
 
 type githubRaw struct {
-	Issue      *int `json:"issue"`
+	Issue       *int `json:"issue"`
 	PullRequest *int `json:"pull_request"`
 }
 
 type agentRaw struct {
-	ID     string `json:"id"`
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID      string `json:"id"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
 	Summary string `json:"summary"`
-	PaneID string `json:"pane_id"`
+	PaneID  string `json:"pane_id"`
 }
 
 type stepRaw struct {
@@ -256,7 +274,7 @@ type stepRaw struct {
 func normalizeWorkflow(w workflowRunRaw) (domain.WorkflowRunRef, []domain.AgentRef) {
 	agent := w.DefaultAgent
 	if agent == "" {
-		agent = "pi"
+		agent = "opencode"
 	}
 
 	wf := domain.WorkflowRunRef{

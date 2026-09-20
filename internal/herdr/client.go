@@ -211,15 +211,13 @@ func (c Client) listWorktrees(workspaceID string) ([]Worktree, error) {
 	return out, nil
 }
 
-// OpenWorktree opens an existing worktree in Herdr without focusing the pane.
-// Returns a PaneRef if the worktree was already open; returns an error with
-// empty snapshot if the worktree does not exist or cannot be opened.
+// OpenWorktree opens an existing worktree in Herdr and focuses its root pane.
 func (c Client) OpenWorktree(ctx context.Context, req OpenWorktreeRequest) (*domain.PaneRef, error) {
 	if err := c.checkHerdrAvailable(); err != nil {
 		return nil, fmt.Errorf("open worktree: %w", err)
 	}
 
-	args := []string{"worktree", "open", "--path", req.Path, "--no-focus", "--json"}
+	args := []string{"worktree", "open", "--path", req.Path, "--focus"}
 	stdout, stderr, err := c.run(args)
 	if err != nil {
 		return nil, fmt.Errorf("herdr worktree open: %w; %s", err, string(stderr))
@@ -230,14 +228,15 @@ func (c Client) OpenWorktree(ctx context.Context, req OpenWorktreeRequest) (*dom
 		return nil, fmt.Errorf("parse herdr worktree open: %w", err)
 	}
 
-	// If the worktree is not already open, return nil (user must create it first).
-	if !env.Result.OpenStatus.IsOpen {
-		return nil, fmt.Errorf("worktree %q does not exist or is not open", req.Path)
+	paneID := fallback(env.Result.RootPane.PaneID, env.Result.OpenStatus.PaneID)
+	path := fallback(env.Result.Worktree.Path, env.Result.Path)
+	if paneID == "" {
+		return nil, fmt.Errorf("herdr worktree open returned no pane for %q", req.Path)
 	}
 
 	return &domain.PaneRef{
-		PaneID: env.Result.OpenStatus.PaneID,
-		CWD:    env.Result.Path,
+		PaneID: paneID,
+		CWD:    fallback(path, req.Path),
 		Status: "open",
 	}, nil
 }
@@ -433,9 +432,9 @@ type OpenWorktreeRequest struct {
 
 // CreateWorktreeRequest describes a worktree create request to Herdr.
 type CreateWorktreeRequest struct {
-	Branch  string // Branch name for the new worktree
-	Base    string // Base branch (usually main)
-	Path    string // Worktree path relative to repo root
+	Branch string // Branch name for the new worktree
+	Base   string // Base branch (usually main)
+	Path   string // Worktree path relative to repo root
 }
 
 // --- response envelopes for worktree open/create --------------------------
@@ -448,10 +447,17 @@ type openWorktreeEnvelope struct {
 
 type openWorktreeResult struct {
 	Type       string             `json:"type"`
+	RootPane   openWorktreePane   `json:"root_pane"`
+	Worktree   rawWorktree        `json:"worktree"`
 	OpenStatus openWorktreeStatus `json:"open_status"`
 	Path       string             `json:"path"`
 	Branch     string             `json:"branch"`
 	Label      string             `json:"label"`
+}
+
+type openWorktreePane struct {
+	PaneID string `json:"pane_id"`
+	CWD    string `json:"cwd"`
 }
 
 // openWorktreeStatus describes whether the worktree was already open.

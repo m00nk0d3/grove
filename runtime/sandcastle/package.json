@@ -1,0 +1,38 @@
+{
+  "name": "@grove/sandcastle-runtime",
+  "version": "0.1.0",
+  "description": "Grove-owned Sandcastle workflow runtime and telemetry API",
+  "main": "dist/orchestrator.js",
+  "bin": {
+    "imp": "dist/orchestrator.js",
+    "agent-flow": "dist/orchestrator.js",
+    "review": "dist/pr-review.js",
+    "clean": "dist/cleanup.js",
+    "resolve": "dist/conflict-resolver.js",
+    "ci": "dist/ci-fix.js",
+    "grove-sandcastle": "dist/sandcastle.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && node -e \"for (const file of ['dist/orchestrator.js', 'dist/pr-review.js', 'dist/cleanup.js', 'dist/conflict-resolver.js', 'dist/ci-fix.js', 'dist/sandcastle.js']) require('node:fs').chmodSync(file, 0o755)\"",
+    "start": "tsx src/orchestrator.ts",
+    "test": "npm run build && node --test dist/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@ai-hero/sandcastle": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}

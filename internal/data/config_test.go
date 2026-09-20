@@ -107,7 +107,7 @@ default_agent = "custom_pi"
 				assert.Equal(t, 30, cfg.Herdr.PollIntervalSeconds)
 				assert.True(t, cfg.Herdr.PreferWorktreeAPI)
 				assert.False(t, cfg.Sandcastle.Enabled)
-				assert.Equal(t, "sandcastle", cfg.Sandcastle.Binary)
+				assert.Equal(t, "grove-sandcastle", cfg.Sandcastle.Binary)
 				assert.Equal(t, 5, cfg.Sandcastle.PollIntervalSeconds)
 				assert.Equal(t, "custom_pi", cfg.Sandcastle.DefaultAgent)
 			},
@@ -134,9 +134,9 @@ default_agent = "custom_pi"
 				}, cfg.Herdr)
 				assert.Equal(t, domain.SandcastleConfig{
 					Enabled:             true,
-					Binary:              "sandcastle",
+					Binary:              "grove-sandcastle",
 					PollIntervalSeconds: 5,
-					DefaultAgent:        "pi",
+					DefaultAgent:        "opencode",
 				}, cfg.Sandcastle)
 			},
 		},
