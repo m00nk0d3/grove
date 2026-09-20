@@ -313,9 +313,10 @@ func (m *Model) maybeLazyLoadCmd() tea.Cmd {
 type activeView int
 
 const (
-	viewWorktrees activeView = iota // Shows the worktree list (default)
-	viewIssues                      // Shows the GitHub issues list
-	viewPRs                         // Shows the GitHub pull requests list
+	viewDashboard activeView = iota // Global dashboard view
+	viewWorktrees                  // Shows the worktree list (default)
+	viewIssues                     // Shows the GitHub issues list
+	viewPRs                        // Shows the GitHub pull requests list
 )
 
 // focusedPanel identifies which panel currently has keyboard focus.
@@ -771,6 +772,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.maybeLazyLoadCmd()
 			case "t":
 				m.activeModal = modal.NewSettingsModal(m.Config, data.DefaultConfigPath())
+			case "d", "D":
+				m.view = viewDashboard
+				m.ctxScrollOffset = 0
 			case "w", "W":
 				m.view = viewWorktrees
 				m.ctxScrollOffset = 0
@@ -1222,7 +1226,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View returns a string representation of the model's current state.
 func (m *Model) View() string {
-	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.currentPage, m.sessions)
+	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.currentPage, m.sessions, func() *domain.ExternalIntegration { if m.herdrSnapshot != nil { return &m.herdrSnapshot.Integration }; return nil }(), func() *domain.ExternalIntegration { if m.sandcastleSnapshot != nil { return &m.sandcastleSnapshot.Integration }; return nil }(), m.missionState)
 
 	w, h := m.width, m.height
 	if w <= 0 {
@@ -2669,17 +2673,17 @@ func (m *Model) prevPage() {
 }
 
 // moveDown advances the selection within the currently focused panel.
-// Nav panel: cycles the active view forward.
-// Ctx panel: scrolls the context content down.
-// List panel (default): moves the item cursor down.
-func (m *Model) moveDown() {
-	switch m.focused {
-	case panelNav:
-		n := int(m.view) + 1
-		if n > int(viewPRs) {
-			n = int(viewWorktrees)
-		}
-		m.view = activeView(n)
+	// Nav panel: cycles the active view forward.
+	// Ctx panel: scrolls the context content down.
+	// List panel (default): moves the item cursor down.
+	func (m *Model) moveDown() {
+		switch m.focused {
+		case panelNav:
+			n := int(m.view) + 1
+			if n > int(viewPRs) {
+				n = int(viewDashboard)
+			}
+			m.view = activeView(n)
 	case panelCtx:
 		m.ctxScrollOffset++
 	default: // panelList
@@ -2713,17 +2717,17 @@ func (m *Model) moveDown() {
 }
 
 // moveUp retreats the selection within the currently focused panel.
-// Nav panel: cycles the active view backward.
-// Ctx panel: scrolls the context content up.
-// List panel (default): moves the item cursor up.
-func (m *Model) moveUp() {
-	switch m.focused {
-	case panelNav:
-		n := int(m.view) - 1
-		if n < int(viewWorktrees) {
-			n = int(viewPRs)
-		}
-		m.view = activeView(n)
+	// Nav panel: cycles the active view backward.
+	// Ctx panel: scrolls the context content up.
+	// List panel (default): moves the item cursor up.
+	func (m *Model) moveUp() {
+		switch m.focused {
+		case panelNav:
+			n := int(m.view) - 1
+			if n < 0 {
+				n = int(viewPRs)
+			}
+			m.view = activeView(n)
 	case panelCtx:
 		if m.ctxScrollOffset > 0 {
 			m.ctxScrollOffset--

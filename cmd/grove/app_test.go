@@ -1074,10 +1074,11 @@ func TestModel_JK_NavFocused_ChangesView(t *testing.T) {
 	}{
 		{name: "j from worktrees → issues", key: 'j', initialView: viewWorktrees, wantView: viewIssues},
 		{name: "j from issues → PRs", key: 'j', initialView: viewIssues, wantView: viewPRs},
-		{name: "j from PRs wraps → worktrees", key: 'j', initialView: viewPRs, wantView: viewWorktrees},
+		{name: "j from PRs wraps → dashboard", key: 'j', initialView: viewPRs, wantView: viewDashboard},
+		{name: "k from dashboard → PRs", key: 'k', initialView: viewDashboard, wantView: viewPRs},
 		{name: "k from PRs → issues", key: 'k', initialView: viewPRs, wantView: viewIssues},
 		{name: "k from issues → worktrees", key: 'k', initialView: viewIssues, wantView: viewWorktrees},
-		{name: "k from worktrees wraps → PRs", key: 'k', initialView: viewWorktrees, wantView: viewPRs},
+		{name: "k from worktrees wraps → dashboard", key: 'k', initialView: viewWorktrees, wantView: viewDashboard},
 	}
 
 	for _, tt := range tests {
@@ -4757,5 +4758,61 @@ func TestRepeatedPollErrors_DontSetStatus(t *testing.T) {
 
 	assert.Empty(t, m.statusErr, "repeated poll errors must not set statusErr")
 	assert.Empty(t, m.statusMsg, "repeated poll errors must not set statusMsg")
+}
+
+
+// TestNavigation_CyclingIncludesDashboard verifies nav cycling includes dashboard view.
+func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialView     activeView
+		expectedAfterUp activeView // expected after moveUp from initial state
+		expectedAfterDown activeView // expected after moveDown from initial state
+	}{
+		{
+			name:            "from dashboard up goes to PRs, down goes to worktrees",
+			initialView:     viewDashboard,
+			expectedAfterUp: viewPRs,
+			expectedAfterDown: viewWorktrees,
+		},
+		{
+			name:            "from worktrees up goes to dashboard, down goes to issues",
+			initialView:     viewWorktrees,
+			expectedAfterUp: viewDashboard,
+			expectedAfterDown: viewIssues,
+		},
+		{
+			name:            "from issues up goes to worktrees, down goes to PRs",
+			initialView:     viewIssues,
+			expectedAfterUp: viewWorktrees,
+			expectedAfterDown: viewPRs,
+		},
+		{
+			name:            "from PRs up goes to issues, down wraps to dashboard",
+			initialView:     viewPRs,
+			expectedAfterUp: viewIssues,
+			expectedAfterDown: viewDashboard,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel()
+			m.view = tt.initialView
+			m.focused = panelNav // Navigate cycling happens in nav panel
+			require.NotNil(t, m)
+
+			// Test moveUp (cycling backward from initial state)
+			m.moveUp()
+			assert.Equal(t, tt.expectedAfterUp, m.view, "%s: moveUp should navigate to %v", tt.name, tt.expectedAfterUp)
+
+			// Reset and test moveDown (cycling forward from initial state)
+			m2 := NewModel()
+			m2.view = tt.initialView
+			m2.focused = panelNav
+			m2.moveDown()
+			assert.Equal(t, tt.expectedAfterDown, m2.view, "%s: moveDown should navigate to %v", tt.name, tt.expectedAfterDown)
+		})
+	}
 }
 
