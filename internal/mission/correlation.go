@@ -125,6 +125,7 @@ func correlateAll(
 			result = append(result, domain.WorkItem{
 				ID:          fmt.Sprintf("issue-%d", issue.Number),
 				LinkedIssue: &issue,
+				Status:      string(domain.StatusIdle),
 			})
 		}
 		for _, pr := range prs {
@@ -132,7 +133,43 @@ func correlateAll(
 			result = append(result, domain.WorkItem{
 				ID:       fmt.Sprintf("pr-%d", pr.Number),
 				LinkedPR: &pr,
+				Status:   string(domain.StatusIdle),
 			})
+		}
+	}
+
+	// Set status for each work item based on linked workflows and agents
+	for i := range result {
+		item := &result[i]
+		if len(item.LinkedWorkflows) > 0 || len(item.LinkedAgents) > 0 {
+			// Determine status from first linked workflow/agent
+			if len(item.LinkedWorkflows) > 0 {
+				wf := item.LinkedWorkflows[0]
+				switch wf.Status {
+				case domain.WorkflowRunning:
+					item.Status = string(domain.StatusRunning)
+				case domain.WorkflowFailed:
+					item.Status = string(domain.StatusFailed)
+				case domain.WorkflowSucceeded:
+					item.Status = string(domain.StatusSucceeded)
+				}
+			} else if len(item.LinkedAgents) > 0 {
+				agent := item.LinkedAgents[0]
+				switch agent.Status {
+				case domain.AgentWorking:
+					item.Status = string(domain.StatusRunning)
+				case domain.AgentFailed:
+					item.Status = string(domain.StatusFailed)
+				}
+			} else if item.Degraded {
+				item.Status = string(domain.StatusBlocked)
+			} else {
+				item.Status = string(domain.StatusIdle)
+			}
+		} else if item.Degraded {
+			item.Status = string(domain.StatusBlocked)
+		} else {
+			item.Status = string(domain.StatusIdle)
 		}
 	}
 

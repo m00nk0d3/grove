@@ -249,7 +249,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	var list string
 	switch view {
 	case viewDashboard:
-		list = renderDashboard(worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, ctxInner, sessions)
+		list = renderDashboard(missionState, issues, prs, theme, listInner, panelHeight, focused == panelList, ctxInner, sessions)
 	case viewIssues:
 		list = renderIssueList(visibleIssues, visibleSelectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList)
 	case viewPRs:
@@ -268,7 +268,13 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 
 // renderDashboard renders the global dashboard view showing a grid of work items,
 // AI agents, and workflow runs from mission-control state.
-func renderDashboard(worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, ctxInner int, sessions []domain.Session) string {
+func renderDashboard(missionState *domain.MissionControlState, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, ctxInner int, sessions []domain.Session) string {
+	// Use nil-safe WorkItems for backward compatibility (when missionState is not populated)
+	var workItems []domain.WorkItem
+	if missionState != nil {
+		workItems = missionState.WorkItems
+	}
+
 	const (
 		cursor   = 2
 		dashW    = 20
@@ -288,7 +294,16 @@ func renderDashboard(worktrees []domain.Worktree, issues []domain.Issue, prs []d
 	}
 	var items []gridItem
 
-	// Work items: issues and PRs
+	// Work items (primary display from mission state)
+	for _, wi := range workItems {
+		items = append(items, gridItem{
+			cursor: "  ",
+			label:  fmt.Sprintf("%s", truncateStr(wi.ID, nameW)),
+			status: wi.Status,
+		})
+	}
+
+	// Work items: issues and PRs (fallback for back-compat)
 	for _, pr := range prs {
 		items = append(items, gridItem{
 			cursor: "  ",
@@ -316,7 +331,7 @@ func renderDashboard(worktrees []domain.Worktree, issues []domain.Issue, prs []d
 	}
 
 	// Workflows (placeholder until mission-control builder added)
-	for _, wt := range worktrees {
+	for _, wt := range workItems {
 		if wt.LinkedPR != nil {
 			items = append(items, gridItem{
 				cursor: "  ",
