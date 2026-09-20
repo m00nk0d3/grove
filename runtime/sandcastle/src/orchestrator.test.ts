@@ -43,6 +43,7 @@ import {
   createLeanReport,
   implementationSessionId,
   readLeanReportEvidence,
+  runValidationWithRepair,
 } from "./orchestrator.js";
 
 test("parseCliArgs accepts an issue number", () => {
@@ -477,6 +478,14 @@ test("every specialist enforces the shared file-size standard", () => {
       ".agent/PLAN.md",
     ),
     SPECIALISTS.REVIEWER("42", ".agent/REQUIREMENTS.md"),
+    SPECIALISTS.IMPLEMENTER_VALIDATION_FIXES(
+      "TYPESCRIPT",
+      "42",
+      "owner/repo",
+      ".agent/PLAN.md",
+      "npm test",
+      "git exited with status 2: file.ts:3: trailing whitespace.",
+    ),
     SPECIALISTS.PR_REVIEWER(
       "owner/repo",
       "42",
@@ -573,6 +582,48 @@ test("review blockers are handed back to the implementation specialist", () => {
   assert.match(reviewer, /do not modify source files/i);
   assert.match(reviewer, /original implementation specialist/);
   assert.doesNotMatch(reviewer, /fix all confirmed blockers in the worktree/i);
+});
+
+test("verifier is required to run the whitespace delivery gate", () => {
+  const verifier = SPECIALISTS.VERIFIER(
+    "42",
+    ".agent/REQUIREMENTS.md",
+    ".agent/PLAN.md",
+  );
+
+  assert.match(verifier, /git diff --check/);
+  assert.match(verifier, /fix whitespace errors/i);
+});
+
+test("validation failures receive one bounded implementation repair attempt", () => {
+  let validationAttempts = 0;
+  const failures: string[] = [];
+
+  runValidationWithRepair(
+    () => {
+      validationAttempts += 1;
+      if (validationAttempts === 1) {
+        throw new Error("file.go:166: trailing whitespace.");
+      }
+    },
+    (failure) => failures.push(failure),
+  );
+
+  assert.equal(validationAttempts, 2);
+  assert.deepEqual(failures, ["file.go:166: trailing whitespace."]);
+});
+
+test("validation reports the final failure after its repair attempt", () => {
+  assert.throws(
+    () =>
+      runValidationWithRepair(
+        () => {
+          throw new Error("go test failed");
+        },
+        () => {},
+      ),
+    /Validation still fails after one implementation repair attempt: go test failed/,
+  );
 });
 
 test("lean reports use concrete reviewer evidence instead of generic placeholders", () => {

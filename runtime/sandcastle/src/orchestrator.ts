@@ -89,6 +89,31 @@ export function implementationSessionId(repo: string, issueNum: string): string 
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+export function runValidationWithRepair(
+  validate: () => void,
+  repair: (failure: string) => void,
+): void {
+  try {
+    validate();
+    return;
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : String(error);
+    console.log(
+      "\x1b[33m[Validation Repair]\x1b[0m Returning the failure to the implementation specialist.",
+    );
+    repair(failure);
+  }
+
+  try {
+    validate();
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Validation still fails after one implementation repair attempt: ${failure}`,
+    );
+  }
+}
+
 export function createLeanReport(
   repo: string,
   issueNum: string,
@@ -481,6 +506,28 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       }
     };
 
+    const verifyWithRepair = (handoffPath: string): void => {
+      const verification = getVerificationCommand(stack);
+      runValidationWithRepair(
+        () => verifyWorktree(stack, targetDir),
+        (failure) =>
+          runSpecialist(
+            `${stack.toLowerCase()}-validation-repair`,
+            SPECIALISTS.IMPLEMENTER_VALIDATION_FIXES(
+              stack,
+              issueNum,
+              repo,
+              handoffPath,
+              `${verification.command} ${verification.args.join(" ")}`,
+              failure,
+            ),
+            [],
+            undefined,
+            implementerSessionId,
+          ),
+      );
+    };
+
     const commitChanges = (subject: string): void => {
       const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
       if (!status) {
@@ -556,14 +603,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           "verifier",
           SPECIALISTS.VERIFIER(issueNum, requirementsPath, planPath),
         );
-        verifyWorktree(stack, targetDir);
+        verifyWithRepair(planPath);
       });
       runStep("adversarial-review", () => {
         runSpecialist(
           "reviewer",
           SPECIALISTS.REVIEWER(issueNum, requirementsPath),
         );
-        verifyWorktree(stack, targetDir);
+        verifyWithRepair(planPath);
       });
       runStep("cleanup", () => {
         fs.rmSync(path.join(targetDir, agentDir), { recursive: true, force: true });
@@ -650,7 +697,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           `Lean review still has blockers after ${REVIEW_BATCH_SIZE} implementation cycles.`,
         );
       });
-      runStep("verification", () => verifyWorktree(stack, targetDir));
+      runStep("verification", () => verifyWithRepair(leanPlanPath));
       runStep("cleanup", () => {
         fs.rmSync(path.join(targetDir, agentDir), { recursive: true, force: true });
         const parentAgentDir = path.join(targetDir, ".agent");

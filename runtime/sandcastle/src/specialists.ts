@@ -154,6 +154,43 @@ Completion criteria:
 - Every reported blocker is addressed and validated, ready for a fresh independent review.
 `,
 
+  IMPLEMENTER_VALIDATION_FIXES: (
+    stack: TechStack,
+    issueNum: string,
+    repo: string,
+    handoffPath: string,
+    validationCommand: string,
+    failure: string,
+  ): string => `
+${IMPLEMENTATION_PROMPTS[stack]}
+
+You are returning as the original Implementation Specialist for ${repo}#${issueNum}.
+
+${CODE_ORGANIZATION_STANDARD}
+
+Objective:
+- Repair the implementation after Grove's delivery validation failed.
+
+Required work:
+1. Re-read the implementation handoff at '${handoffPath}' and inspect the current diff and repository state.
+2. Diagnose and fix only the issue that caused this validation failure:
+
+\`\`\`text
+${failure}
+\`\`\`
+
+3. Run '${validationCommand}' and 'git diff --check'.
+4. Leave the worktree ready for Grove to rerun both delivery gates.
+
+Boundaries:
+- Do not commit, push, create or edit pull requests, or alter Git history.
+- Do not weaken tests, suppress diagnostics, or expand scope.
+- Preserve correct existing implementation work.
+
+Completion criteria:
+- '${validationCommand}' and 'git diff --check' both pass.
+`,
+
   ISSUE_ANALYST: (
     issueNum: string,
     repo: string,
@@ -279,7 +316,8 @@ Required work:
 2. Run the narrowest tests, type checks, lint checks, and build commands that cover the changed behavior.
 3. For documentation, metadata, or configuration-only changes, prefer existing documentation lint, link checking, schema validation, formatting, or build commands; do not require a newly invented test.
 4. Diagnose failures. Fix failures caused by this change, then rerun the affected checks.
-5. Report unrelated baseline failures explicitly instead of hiding or broadly fixing them.
+5. Run 'git diff --check' and fix whitespace errors before completing.
+6. Report unrelated baseline failures explicitly instead of hiding or broadly fixing them.
 
 Boundaries:
 - Do not expand scope beyond the issue.
