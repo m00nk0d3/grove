@@ -4648,3 +4648,114 @@ func TestUpdate_IntegrationsTickMsg_DispatchesRefreshCmds(t *testing.T) {
 	assert.Equal(t, "w1", model4.sandcastleSnapshot.Workflows[0].WorkflowID)
 }
 
+// TestNewModel_InsideHerdrDetection verifies that NewModel detects the
+// inside-Herdr environment from the HERDR_ENV variable.
+func TestNewModel_InsideHerdrDetection(t *testing.T) {
+	t.Setenv("HERDR_ENV", "1")
+	m := NewModel()
+	assert.True(t, m.insideHerdr, "insideHerdr should be true when HERDR_ENV is set")
+}
+
+func TestNewModel_InsideHerdrDetection_Standalone(t *testing.T) {
+	t.Setenv("HERDR_ENV", "")
+	m := NewModel()
+	assert.False(t, m.insideHerdr, "insideHerdr should be false when HERDR_ENV is unset")
+}
+
+// TestRebuildMissionStateCmd_InsideHerdrPassed verifies that insideHerdr
+// flows through to BuildInput.InsideHerdr so the Herdr integration shows
+// "degraded" instead of "missing" when running inside Herdr with a nil snapshot.
+func TestRebuildMissionStateCmd_InsideHerdrPassed(t *testing.T) {
+	m := NewModel()
+	m.insideHerdr = true
+	// No snapshot — inside Herdr should produce degraded, not missing.
+	cmd := m.rebuildMissionStateCmd()
+	msg := cmd()
+	result := msg.(missionControlUpdatedMsg)
+	assert.Equal(t, domain.DegradedState, result.state.Integrations.Herdr.Mode,
+		"inside Herdr with nil snapshot should show degraded mode")
+}
+
+func TestRebuildMissionStateCmd_OutsideHerdrMissing(t *testing.T) {
+	m := NewModel()
+	m.insideHerdr = false
+	// No snapshot — outside Herdr should show missing.
+	cmd := m.rebuildMissionStateCmd()
+	msg := cmd()
+	result := msg.(missionControlUpdatedMsg)
+	assert.Equal(t, "missing", result.state.Integrations.Herdr.Mode,
+		"outside Herdr with nil snapshot should show missing mode")
+}
+
+// TestHerdrSyncedMsg_SetsLastSync verifies that a successful herdrSyncedMsg
+// records the time of the sync.
+func TestHerdrSyncedMsg_SetsLastSync(t *testing.T) {
+	m := NewModel()
+	assert.True(t, m.lastHerdrSync.IsZero(), "should start with zero timestamp")
+
+	before := time.Now()
+	m2, _ := m.Update(herdrSyncedMsg{snapshot: herdr.Snapshot{}})
+	model := m2.(*Model)
+	after := time.Now()
+
+	assert.False(t, model.lastHerdrSync.IsZero(), "lastHerdrSync should be set after success")
+	assert.False(t, model.lastHerdrSync.Before(before), "timestamp should not be before handler")
+	assert.False(t, model.lastHerdrSync.After(after), "timestamp should not be after handler")
+}
+
+// TestHerdrSyncedMsg_ErrorNoSync verifies that a failed herdrSyncedMsg
+// does not update the sync timestamp.
+func TestHerdrSyncedMsg_ErrorNoSync(t *testing.T) {
+	m := NewModel()
+	m.lastHerdrSync = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	m2, _ := m.Update(herdrSyncedMsg{err: errors.New("fail")})
+	model := m2.(*Model)
+	assert.Equal(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), model.lastHerdrSync,
+		"lastHerdrSync should not change on error")
+}
+
+// TestSandcastleSyncedMsg_SetsLastSync verifies that a successful sandcastleSyncedMsg
+// records the time of the sync.
+func TestSandcastleSyncedMsg_SetsLastSync(t *testing.T) {
+	m := NewModel()
+	assert.True(t, m.lastSandcastleSync.IsZero(), "should start with zero timestamp")
+
+	before := time.Now()
+	m2, _ := m.Update(sandcastleSyncedMsg{snapshot: sandcastle.Snapshot{}})
+	model := m2.(*Model)
+	after := time.Now()
+
+	assert.False(t, model.lastSandcastleSync.IsZero(), "lastSandcastleSync should be set after success")
+	assert.False(t, model.lastSandcastleSync.Before(before), "timestamp should not be before handler")
+	assert.False(t, model.lastSandcastleSync.After(after), "timestamp should not be after handler")
+}
+
+// TestSandcastleSyncedMsg_ErrorNoSync verifies that a failed sandcastleSyncedMsg
+// does not update the sync timestamp.
+func TestSandcastleSyncedMsg_ErrorNoSync(t *testing.T) {
+	m := NewModel()
+	m.lastSandcastleSync = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	m2, _ := m.Update(sandcastleSyncedMsg{err: errors.New("fail")})
+	model := m2.(*Model)
+	assert.Equal(t, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), model.lastSandcastleSync,
+		"lastSandcastleSync should not change on error")
+}
+
+// TestRepeatedPollErrors_DontSetStatus verifies that repeated integration
+// poll errors do not set statusErr or statusMsg on the model.
+func TestRepeatedPollErrors_DontSetStatus(t *testing.T) {
+	m := NewModel()
+
+	for i := 0; i < 5; i++ {
+		m2, _ := m.Update(herdrSyncedMsg{err: errors.New("poll error")})
+		m = m2.(*Model)
+		m3, _ := m.Update(sandcastleSyncedMsg{err: errors.New("poll error")})
+		m = m3.(*Model)
+	}
+
+	assert.Empty(t, m.statusErr, "repeated poll errors must not set statusErr")
+	assert.Empty(t, m.statusMsg, "repeated poll errors must not set statusMsg")
+}
+
