@@ -20,14 +20,28 @@ func UpsertSession(db *DB, s domain.Session) (int64, error) {
 	}
 	updatedAt := time.Now().UTC().Format(time.RFC3339)
 
+	runtime := string(s.Runtime)
+	if runtime == "" {
+		runtime = string(domain.RuntimeLocal)
+	}
+
 	res, err := db.Conn.Exec(
 		`INSERT OR REPLACE INTO active_sessions
-		 (worktree_path, shell_pid, agent_name, prompt, status, started_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		 (worktree_path, runtime, runtime_id, shell_pid, agent_name,
+		  workflow_run_id, herdr_workspace_id, herdr_tab_id, herdr_pane_id,
+		  prompt, degraded_reason, status, started_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.WorktreePath,
+		runtime,
+		s.RuntimeID,
 		s.ShellPID,
 		s.AgentName,
+		s.WorkflowRunID,
+		s.WorkspaceID,
+		s.TabID,
+		s.PaneID,
 		s.Prompt,
+		s.DegradedReason,
 		string(s.Status),
 		startedAt,
 		updatedAt,
@@ -46,7 +60,9 @@ func UpsertSession(db *DB, s domain.Session) (int64, error) {
 // An empty database returns an empty slice and no error.
 func GetSessions(db *DB) ([]domain.Session, error) {
 	rows, err := db.Conn.Query(
-		`SELECT id, worktree_path, shell_pid, agent_name, prompt, status, started_at, updated_at
+		`SELECT id, worktree_path, runtime, runtime_id, shell_pid, agent_name,
+		      workflow_run_id, herdr_workspace_id, herdr_tab_id, herdr_pane_id,
+		      prompt, degraded_reason, status, started_at, updated_at
 		 FROM active_sessions
 		 ORDER BY started_at DESC`,
 	)
@@ -76,7 +92,9 @@ func GetSessions(db *DB) ([]domain.Session, error) {
 // when no row matches.
 func GetSessionByWorktree(db *DB, worktreePath string) (*domain.Session, error) {
 	row := db.Conn.QueryRow(
-		`SELECT id, worktree_path, shell_pid, agent_name, prompt, status, started_at, updated_at
+		`SELECT id, worktree_path, runtime, runtime_id, shell_pid, agent_name,
+		      workflow_run_id, herdr_workspace_id, herdr_tab_id, herdr_pane_id,
+		      prompt, degraded_reason, status, started_at, updated_at
 		 FROM active_sessions
 		 WHERE LOWER(worktree_path) = LOWER(?)`,
 		worktreePath,
@@ -123,25 +141,48 @@ type rowScanner interface {
 // distinguish "not found" from other errors.
 func scanSession(s rowScanner) (domain.Session, error) {
 	var (
-		sess      domain.Session
-		shellPID  sql.NullInt64
-		agentName sql.NullString
-		prompt    sql.NullString
-		startedAt sql.NullString
-		updatedAt sql.NullString
+		sess          domain.Session
+		runtime       sql.NullString
+		runtimeID     sql.NullString
+		shellPID      sql.NullInt64
+		agentName     sql.NullString
+		workflowRunID sql.NullString
+		workspaceID   sql.NullString
+		tabID         sql.NullString
+		paneID        sql.NullString
+		prompt        sql.NullString
+		degradedReason sql.NullString
+		startedAt     sql.NullString
+		updatedAt     sql.NullString
 	)
 	err := s.Scan(
 		&sess.ID,
 		&sess.WorktreePath,
+		&runtime,
+		&runtimeID,
 		&shellPID,
 		&agentName,
+		&workflowRunID,
+		&workspaceID,
+		&tabID,
+		&paneID,
 		&prompt,
+		&degradedReason,
 		&sess.Status,
 		&startedAt,
 		&updatedAt,
 	)
 	if err != nil {
 		return domain.Session{}, err
+	}
+
+	if runtime.Valid && runtime.String != "" {
+		sess.Runtime = domain.SessionRuntime(runtime.String)
+	} else {
+		sess.Runtime = domain.RuntimeLocal
+	}
+	if runtimeID.Valid {
+		sess.RuntimeID = runtimeID.String
 	}
 	if shellPID.Valid {
 		v := int(shellPID.Int64)
@@ -150,8 +191,23 @@ func scanSession(s rowScanner) (domain.Session, error) {
 	if agentName.Valid {
 		sess.AgentName = &agentName.String
 	}
+	if workflowRunID.Valid {
+		sess.WorkflowRunID = &workflowRunID.String
+	}
+	if workspaceID.Valid {
+		sess.WorkspaceID = &workspaceID.String
+	}
+	if tabID.Valid {
+		sess.TabID = &tabID.String
+	}
+	if paneID.Valid {
+		sess.PaneID = &paneID.String
+	}
 	if prompt.Valid {
 		sess.Prompt = &prompt.String
+	}
+	if degradedReason.Valid {
+		sess.DegradedReason = &degradedReason.String
 	}
 	if startedAt.Valid && startedAt.String != "" {
 		t, err := parseSessionTime(startedAt.String)

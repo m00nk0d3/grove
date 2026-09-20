@@ -3119,6 +3119,27 @@ func TestFilterAliveSessions(t *testing.T) {
 			},
 			wantLen: 2, // live PID + nil-PID (recent)
 		},
+		{
+			name: "herdr session with nil PID is kept",
+			sessions: []domain.Session{
+				{ID: 6, WorktreePath: "/wt/f", Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: time.Now().Add(-48 * time.Hour)},
+			},
+			wantLen: 1,
+		},
+		{
+			name: "herdr session with nil PID over 24h is kept",
+			sessions: []domain.Session{
+				{ID: 7, WorktreePath: "/wt/g", Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: time.Now().Add(-72 * time.Hour)},
+			},
+			wantLen: 1,
+		},
+		{
+			name: "legacy session (empty Runtime) with nil PID over 24h is dropped",
+			sessions: []domain.Session{
+				{ID: 8, WorktreePath: "/wt/h", Runtime: "", Status: domain.StatusActive, StartedAt: time.Now().Add(-25 * time.Hour)},
+			},
+			wantLen: 0,
+		},
 	}
 
 	for _, tt := range tests {

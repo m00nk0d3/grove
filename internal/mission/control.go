@@ -296,6 +296,11 @@ func cloneSessions(items []domain.Session) []domain.Session {
 		cloned[i].ShellPID = clonePointer(items[i].ShellPID)
 		cloned[i].AgentName = clonePointer(items[i].AgentName)
 		cloned[i].Prompt = clonePointer(items[i].Prompt)
+		cloned[i].WorkspaceID = clonePointer(items[i].WorkspaceID)
+		cloned[i].TabID = clonePointer(items[i].TabID)
+		cloned[i].PaneID = clonePointer(items[i].PaneID)
+		cloned[i].WorkflowRunID = clonePointer(items[i].WorkflowRunID)
+		cloned[i].DegradedReason = clonePointer(items[i].DegradedReason)
 	}
 	return cloned
 }
