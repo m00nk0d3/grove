@@ -403,6 +403,13 @@ type Model struct {
 	sandcastleSnapshot *sandcastle.Snapshot
 	// missionState holds the latest mission-control state.
 	missionState *domain.MissionControlState
+
+	// insideHerdr is true when Grove runs inside a Herdr session (HERDR_ENV set).
+	insideHerdr bool
+	// lastHerdrSync is the time of the last successful Herdr snapshot.
+	lastHerdrSync time.Time
+	// lastSandcastleSync is the time of the last successful Sandcastle snapshot.
+	lastSandcastleSync time.Time
 }
 
 // NewModel creates and returns a new Model instance with all required fields initialized.
@@ -424,10 +431,11 @@ func NewModel() *Model {
 	}
 
 	return &Model{
-		Config:    cfg,
-		themeIdx:  themeIdx,
-		statusErr: configErr,
-		focused:   panelList,
+		Config:      cfg,
+		themeIdx:    themeIdx,
+		statusErr:   configErr,
+		focused:     panelList,
+		insideHerdr: os.Getenv("HERDR_ENV") != "",
 		fuzzyInput: func() textinput.Model {
 			ti := textinput.New()
 			ti.Placeholder = "Search worktrees, issues, PRs, files..."
@@ -1102,12 +1110,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case herdrSyncedMsg:
 		if msg.err == nil {
 			m.herdrSnapshot = &msg.snapshot
+			m.lastHerdrSync = time.Now()
 		}
 		return m, m.rebuildMissionStateCmd()
 
 	case sandcastleSyncedMsg:
 		if msg.err == nil {
 			m.sandcastleSnapshot = &msg.snapshot
+			m.lastSandcastleSync = time.Now()
 		}
 		return m, m.rebuildMissionStateCmd()
 
@@ -1405,6 +1415,7 @@ func (m *Model) rebuildMissionStateCmd() tea.Cmd {
 	}
 
 	repoPath := m.RepoPath
+	insideHerdr := m.insideHerdr
 	return func() tea.Msg {
 		state := mission.BuildState(mission.BuildInput{
 			RepoPath:           repoPath,
@@ -1416,6 +1427,7 @@ func (m *Model) rebuildMissionStateCmd() tea.Cmd {
 			SandcastleSnapshot: scSnap,
 			PreviousState:      prev,
 			Now:                time.Now(),
+			InsideHerdr:        insideHerdr,
 		})
 		return missionControlUpdatedMsg{state: state}
 	}
