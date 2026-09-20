@@ -19,12 +19,6 @@ sync_interval_minutes = 10
 [appearance]
 theme = "dark-mode"
 
-[ai_agents]
-copilot_enabled = true
-claude_enabled  = false
-aider_enabled   = true
-claude_binary   = "/usr/local/bin/claude"
-
 [worktrees]
 base_branch   = "develop"
 worktree_root = "/tmp/wt"
@@ -52,10 +46,6 @@ func TestLoadConfig(t *testing.T) {
 				assert.Equal(t, false, cfg.GitHub.AutoSync)
 				assert.Equal(t, 10, cfg.GitHub.SyncIntervalMinutes)
 				assert.Equal(t, "dark-mode", cfg.Appearance.Theme)
-				assert.Equal(t, true, cfg.AIAgents.CopilotEnabled)
-				assert.Equal(t, false, cfg.AIAgents.ClaudeEnabled)
-				assert.Equal(t, true, cfg.AIAgents.AiderEnabled)
-				assert.Equal(t, "/usr/local/bin/claude", cfg.AIAgents.ClaudeBinary)
 				assert.Equal(t, "develop", cfg.Worktrees.BaseBranch)
 				assert.Equal(t, "/tmp/wt", cfg.Worktrees.WorktreeRoot)
 			},
@@ -141,25 +131,6 @@ default_agent = "custom_pi"
 			},
 		},
 		{
-			name: "partial TOML without ai_agents section inherits defaults",
-			setup: func(t *testing.T) string {
-				t.Helper()
-				dir := t.TempDir()
-				path := filepath.Join(dir, "config.toml")
-				// No [ai_agents] section — CopilotEnabled must still be true (default).
-				partial := "[appearance]\ntheme = \"matrix\"\n"
-				require.NoError(t, os.WriteFile(path, []byte(partial), 0o644))
-				return path
-			},
-			wantErr: false,
-			wantCheck: func(t *testing.T, cfg *domain.Config) {
-				t.Helper()
-				assert.Equal(t, "matrix", cfg.Appearance.Theme)
-				assert.Equal(t, true, cfg.AIAgents.CopilotEnabled, "CopilotEnabled must default to true when not specified in config")
-				assert.Equal(t, true, cfg.AIAgents.ClaudeEnabled, "ClaudeEnabled must default to true when not specified in config")
-			},
-		},
-		{
 			name: "invalid TOML returns error",
 			setup: func(t *testing.T) string {
 				t.Helper()
@@ -207,12 +178,6 @@ func TestSaveConfig(t *testing.T) {
 						SyncIntervalMinutes: 15,
 					},
 					Appearance: domain.AppearanceConfig{Theme: "digital-noir"},
-					AIAgents: domain.AIAgentsConfig{
-						CopilotEnabled: true,
-						ClaudeEnabled:  true,
-						AiderEnabled:   false,
-						ClaudeBinary:   "claude",
-					},
 					Worktrees: domain.WorktreesConfig{
 						BaseBranch:   "main",
 						WorktreeRoot: "../worktrees",
@@ -256,8 +221,6 @@ func TestSaveConfig(t *testing.T) {
 			assert.Equal(t, cfg.Appearance.Theme, loaded.Appearance.Theme)
 			assert.Equal(t, cfg.Worktrees.BaseBranch, loaded.Worktrees.BaseBranch)
 			assert.Equal(t, cfg.GitHub.SyncIntervalMinutes, loaded.GitHub.SyncIntervalMinutes)
-			assert.Equal(t, cfg.AIAgents.CopilotEnabled, loaded.AIAgents.CopilotEnabled)
-			assert.Equal(t, cfg.AIAgents.ClaudeBinary, loaded.AIAgents.ClaudeBinary)
 			assert.Equal(t, cfg.Herdr, loaded.Herdr)
 			assert.Equal(t, cfg.Sandcastle, loaded.Sandcastle)
 		})

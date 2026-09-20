@@ -78,54 +78,6 @@ func NewSettingsModal(cfg *domain.Config, configPath string) *SettingsModal {
 		},
 	}
 
-	aiFields := []settingsField{
-		{
-			label: "CopilotEnabled",
-			kind:  "bool",
-			get: func(c *domain.Config) string {
-				if c.AIAgents.CopilotEnabled {
-					return "true"
-				}
-				return "false"
-			},
-			set: func(c *domain.Config, v string) { c.AIAgents.CopilotEnabled = v == "true" },
-		},
-		{
-			label: "ClaudeEnabled",
-			kind:  "bool",
-			get: func(c *domain.Config) string {
-				if c.AIAgents.ClaudeEnabled {
-					return "true"
-				}
-				return "false"
-			},
-			set: func(c *domain.Config, v string) { c.AIAgents.ClaudeEnabled = v == "true" },
-		},
-		{
-			label: "AiderEnabled",
-			kind:  "bool",
-			get: func(c *domain.Config) string {
-				if c.AIAgents.AiderEnabled {
-					return "true"
-				}
-				return "false"
-			},
-			set: func(c *domain.Config, v string) { c.AIAgents.AiderEnabled = v == "true" },
-		},
-		{
-			label: "ClaudeBinary",
-			kind:  "string",
-			get:   func(c *domain.Config) string { return c.AIAgents.ClaudeBinary },
-			set:   func(c *domain.Config, v string) { c.AIAgents.ClaudeBinary = v },
-		},
-		{
-			label: "AiderBinary",
-			kind:  "string",
-			get:   func(c *domain.Config) string { return c.AIAgents.AiderBinary },
-			set:   func(c *domain.Config, v string) { c.AIAgents.AiderBinary = v },
-		},
-	}
-
 	worktreeFields := []settingsField{
 		{
 			label: "BaseBranch",
@@ -144,8 +96,8 @@ func NewSettingsModal(cfg *domain.Config, configPath string) *SettingsModal {
 	return &SettingsModal{
 		cfg:        cfg,
 		configPath: configPath,
-		tabs:       []string{"Appearance", "GitHub", "AI Agents", "Worktrees"},
-		fields:     [][]settingsField{appearanceFields, githubFields, aiFields, worktreeFields},
+		tabs:       []string{"Appearance", "GitHub", "Worktrees"},
+		fields:     [][]settingsField{appearanceFields, githubFields, worktreeFields},
 		theme:      styles.NewTheme("digital-noir"),
 	}
 }

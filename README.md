@@ -1,6 +1,6 @@
-﻿# NEXUS — Git Worktree Orchestrator & AI Agent Hub
+﻿# Grove — Worktree and Workflow Mission Control
 
-> Manage Git worktrees, track GitHub PRs and Issues, launch AI coding agents, and keep tabs on every active session — all from a single terminal interface. No browser. No tab soup. Just vibes.
+> Manage Git worktrees, track GitHub PRs and issues, launch Sandcastle workflows, and monitor every active session from one terminal interface.
 
 ![Latest Release](https://img.shields.io/github/v/release/m00nk0d3/grove?logo=github&label=latest)
 ![Go version](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)
@@ -20,13 +20,13 @@ Modern software development means juggling multiple things at once: several feat
 
 - **Context-switching hell.** Stashing changes, checking out branches, losing your editor state, repeating. Git worktrees are the solution, but their CLI is clunky and easy to forget. Grove puts your entire worktree landscape on one screen and lets you jump between them instantly.
 
-- **The five-app shuffle.** Terminal for git, browser for GitHub, another terminal for the agent, Slack for the PR link, repeat. Grove collapses all of that into a single pane of glass: worktrees, PRs, issues, and agent launchers — no browser tab required.
+- **The five-app shuffle.** Terminal for git, browser for GitHub, another terminal for the workflow, Slack for the PR link, repeat. Grove collapses worktrees, PRs, issues, workflows, and sessions into a single pane of glass.
 
-- **AI agents without context.** Spinning up Claude Code or Copilot in the wrong directory (or forgetting which worktree maps to which feature) wastes time and produces wrong answers. Grove launches agents *inside the correct worktree* automatically, so your AI always has the right repo context.
+- **Workflow context drift.** Starting implementation or review work in the wrong checkout wastes time and produces bad results. Grove delegates execution to Sandcastle with the selected repository, issue, PR, and worktree context.
 
 - **"Which branch had that issue again?"** Grove links GitHub issues and PRs to their worktrees so you always know what's where. No more `git branch -a | grep vague-memory`.
 
-In short: if you work on multiple features simultaneously and use AI coding tools, Grove removes the glue work so you can focus on the actual code.
+In short: if you work on multiple features simultaneously, Grove removes the glue work so you can focus on the actual code.
 
 ---
 
@@ -37,10 +37,10 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 - **GitHub sync** — pull requests and issues fetched via the `gh` CLI and kept fresh in the background
 - **Issue hierarchy & sub-issue branching** — navigate parent/child issue trees and spin up a worktree for any sub-issue in one move, with smart guards so you never branch off a ghost
 - **Active sessions dashboard** — mission control for your worktrees: see exactly what's alive, what's idle, and what's absolutely on fire 🔥
-- **AI agent launchers** — spawn Claude Code, GitHub Copilot, or Aider in the correct worktree directory with a single keypress
+- **Sandcastle workflow launcher** — run `imp`, `review`, `ci`, `resolve`, and `clean` from a context-aware action menu
 - **Auto-update notifications** — Grove checks for new versions on startup and can update itself; no more `brew upgrade` guilt-trips
 - **Global fuzzy finder** — press `/` or `Ctrl+F` to search across worktrees, issues, PRs, files, branches, and agent history simultaneously; results update in real-time as you type
-- **AI-assisted PR review** — press `Ctrl+R` on any PR to auto-provision a review worktree and pre-seed your AI agent with a structured code-review prompt
+- **Workflow telemetry** — monitor Sandcastle runs and their agents without Grove owning agent process launches
 - **9 built-in themes** — Digital Noir, Matrix, Light, Everforest, Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, and One Dark; cycle them live with `t`
 - **In-app help** — press `f1` or `?` at any time for a searchable keybindings and troubleshooting reference
 - **Local persistence** — config lives in `~/.grove/config.toml`; metadata is cached in SQLite so Grove starts fast
@@ -55,9 +55,6 @@ In short: if you work on multiple features simultaneously and use AI coding tool
 | [GitHub CLI (`gh`)](https://cli.github.com/) | Run `gh auth login` before first use |
 | Go 1.25+ | Only needed if building from source |
 | Node.js 22+ | Required for Grove's Sandcastle workflows (`imp`, `review`, `resolve`, `ci`, `clean`) |
-| Claude Code | Optional — enable with `claude_enabled = true` |
-| GitHub Copilot CLI | Optional — `gh extension install github/gh-copilot` |
-| Aider | Optional — `pip install aider-chat` |
 
 ---
 
@@ -112,9 +109,8 @@ directory and appears automatically in Grove's mission-control dashboard.
 2. Run `grove`
 3. Grove opens in the **Worktrees** view — use `j`/`k` to navigate the list
 4. Press `i` to switch to the Issues view, select an issue, and press `Enter` to create a new worktree for it
-5. Press `Enter` or `s` to open a shell inside the selected worktree
-6. Press `o` on an issue to run `imp`, or on a PR to choose `review`, `ci`, or `resolve`
-7. Press `a`, `c`, `f`, or `Space` to launch a legacy direct AI agent in a worktree
+5. Press `Enter` to open or focus the selected worktree
+6. Focus the visible **Actions** panel to run `imp`, `review`, `ci`, `resolve`, or `clean`
 
 ---
 
@@ -129,26 +125,14 @@ directory and appears automatically in Grove's mission-control dashboard.
 | `Tab` | Cycle panel focus / tab |
 | `Enter` | Open shell in worktree / Select |
 
-### Worktree Operations
+### Context Actions
 
 | Key | Action |
 |---|---|
 | `Enter` (Issues view) | Create worktree from selected issue |
 | `Enter` (PRs view) | Checkout PR into a new worktree |
 | `Enter` (Worktrees view) | Open / focus shell in worktree |
-| `Ctrl+D` | Delete selected worktree |
-| `s` | Open shell in worktree |
-| `x` | Kill session and close terminal tab |
-
-### AI Agents
-
-| Key | Action |
-|---|---|
-| `a` | Spawn Claude Code (with optional inline prompt) |
-| `c` | Spawn GitHub Copilot (with optional inline prompt) |
-| `f` | Spawn Aider (opens file picker first) |
-| `Space` | Unified agent launcher (shows all agents and availability) |
-| `Ctrl+R` | AI-assisted PR review (PRs view only — auto-provisions worktree + pre-seeded prompt) |
+| `a` | Focus the visible context Actions panel |
 
 ### Views
 
@@ -157,7 +141,7 @@ directory and appears automatically in Grove's mission-control dashboard.
 | `w` / `W` | Worktrees view |
 | `i` / `I` | Issues view (with sub-issue hierarchy!) |
 | `p` / `P` | PRs view |
-| `t` | Open settings (theme, sync config, AI agents) |
+| `t` | Open settings |
 
 ### Global
 
@@ -165,7 +149,6 @@ directory and appears automatically in Grove's mission-control dashboard.
 |---|---|
 | `f1` / `?` | Open help modal |
 | `/` / `Ctrl+F` | Open fuzzy finder (search worktrees, issues, PRs, files, branches) |
-| `g` | Open selected item in GitHub |
 | `r` | Force-refresh GitHub data (bypasses cache) |
 | `PgDown` / `n` | Next page (issues / PRs lists) |
 | `PgUp` | Previous page |
@@ -190,15 +173,11 @@ sync_interval_minutes = 5
 #            "tokyonight", "catppuccin", "kanagawa", "rose-pine", "onedark"
 theme = "digital-noir"
 
-[ai_agents]
-# Enable or disable individual agent launchers.
-copilot_enabled = true
-claude_enabled  = true
-aider_enabled   = false
-
-# Override the binary name/path if it differs from the default.
-claude_binary = "claude"
-aider_binary  = "aider"
+[sandcastle]
+enabled = true
+binary = "grove-sandcastle"
+poll_interval_seconds = 5
+default_agent = "opencode"
 
 [worktrees]
 # The branch used as the base when creating new worktrees.
@@ -214,10 +193,8 @@ worktree_root = "../worktrees"
 
 Active sessions are displayed inline in the **Worktrees** view — no separate view needed. See which agents are running, which shells are alive, and which worktrees are just sitting there pretending to be productive.
 
-- **`s`** — open a new shell session in the selected worktree
-- **`x`** — kill the active session for the selected worktree
-
-No more `ps aux | grep claude` crimes. It's all in one place.
+- Focus **Actions** to open a separate shell, close a tracked session, delete
+  the worktree, or run cleanup.
 
 ---
 
@@ -236,13 +213,17 @@ Results update in real-time as you type. `Enter` dispatches a smart action per r
 
 ---
 
-## AI-Assisted PR Review
+## Sandcastle Workflows
 
-In the **PRs** view, press `Ctrl+R` on any pull request to trigger an AI-assisted review:
+The right-hand **Actions** panel updates with the current selection. Press
+**`a`** to focus it, use **`j`/`k`** to select an action, and press **Enter**:
 
-1. Grove auto-provisions a dedicated review worktree for the PR branch
-2. Opens the unified agent launcher pre-seeded with a structured code-review prompt covering correctness, security, performance, maintainability, and breaking changes
-3. Your AI agent starts reviewing with full repository context — no copy-pasting, no browser tab required
+- Issues can start `imp`.
+- Pull requests can start `review`, `ci`, or `resolve`.
+- Worktrees and the dashboard can start `clean`.
+
+Sandcastle owns agent selection and process launching. Grove supplies context,
+opens the workflow in Herdr, and displays runtime status.
 
 ---
 
@@ -262,42 +243,12 @@ Grove checks for new versions on startup and lets you know when there's somethin
 
 ---
 
-## AI Agent Setup
-
-### GitHub Copilot
-
-```bash
-# Install the Copilot CLI extension
-gh extension install github/gh-copilot
-
-# Authenticate (if not already done)
-gh auth login
-```
-
-Enable in config (default: `true`). Trigger in Grove: **`c`**.
-
-### Claude Code
-
-Install via the official guide: <https://docs.anthropic.com/en/docs/claude-code>
-
-The binary must be named `claude` (or set `claude_binary` to its full path). Enable in config (default: `true`). Trigger in Grove: **`a`**.
-
-### Aider
-
-```bash
-pip install aider-chat
-```
-
-Set `aider_enabled = true` in `~/.grove/config.toml`. Trigger in Grove: **`f`** for direct launch, or **`Space`** → select Aider in the unified launcher.
-
----
-
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | Empty issues / PRs list or "gh: not logged in" | Run `gh auth login` and follow the prompts |
-| "binary not found" when spawning an agent | Install the missing tool or set `*_enabled = false` in config |
+| Sandcastle workflows are unavailable | Run `make install-runtime` or configure `sandcastle.binary` |
 | No worktrees visible — "git not in PATH" | Ensure Git is installed: `git --version` |
 | Deleted worktrees still appear | Run `git worktree prune` in your repo, then press `r` in Grove |
 | Warning banner on startup — config not loading | Check `~/.grove/config.toml` for TOML syntax errors; delete to restore defaults |

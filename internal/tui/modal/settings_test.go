@@ -21,13 +21,6 @@ func newTestCfg() *domain.Config {
 			AutoSync:            false,
 			SyncIntervalMinutes: 5,
 		},
-		AIAgents: domain.AIAgentsConfig{
-			CopilotEnabled: true,
-			ClaudeEnabled:  false,
-			AiderEnabled:   false,
-			ClaudeBinary:   "claude",
-			AiderBinary:    "aider",
-		},
 		Worktrees: domain.WorktreesConfig{
 			BaseBranch:   "main",
 			WorktreeRoot: "../worktrees",
@@ -87,9 +80,6 @@ func TestSettingsModal_TabNavigation(t *testing.T) {
 	m, _ = sendKey(m, tea.KeyTab)
 	assert.Equal(t, 2, m.activeTab)
 
-	m, _ = sendKey(m, tea.KeyTab)
-	assert.Equal(t, 3, m.activeTab)
-
 	// Tab wraps around.
 	m, _ = sendKey(m, tea.KeyTab)
 	assert.Equal(t, 0, m.activeTab, "tab should wrap to first tab")
@@ -97,7 +87,7 @@ func TestSettingsModal_TabNavigation(t *testing.T) {
 	// Right arrow on a non-choice field (navigate to GitHub tab first).
 	m, _ = sendKey(m, tea.KeyTab) // → tab 1 (GitHub)
 	require.Equal(t, 1, m.activeTab)
-	m, _ = sendKey(m, tea.KeyRight) // should move to tab 2 (AI Agents)
+	m, _ = sendKey(m, tea.KeyRight) // should move to tab 2 (Worktrees)
 	assert.Equal(t, 2, m.activeTab)
 
 	// Shift+Tab moves backward.

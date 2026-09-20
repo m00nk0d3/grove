@@ -69,7 +69,7 @@ all worktrees to share one workflow view.
 
 ### Launch workflows from Grove
 
-Press `o` to open the context-aware workflow launcher:
+Use the visible right-hand Actions panel to start workflows:
 
 - Issues view: run `imp` for the selected issue.
 - Pull requests view: choose `review`, `ci`, or `resolve`.
@@ -113,7 +113,7 @@ Grove is fully implemented and shipping. The latest release is available on the 
 - GitHub CLI (`gh`) authenticated to the target account
 - Go toolchain
 - A git repository with worktrees enabled
-- Optional: Claude Code and Aider binaries if those launchers are enabled
+- Node.js 22+ for the Grove-owned Sandcastle runtime
 
 ## Setup
 
@@ -136,11 +136,6 @@ Key settings:
 | `github.auto_sync` | Enables background sync |
 | `github.sync_interval_minutes` | Refresh cadence |
 | `appearance.theme` | UI theme (`digital-noir`, `matrix`, `light`, `everforest`, `tokyonight`, `catppuccin`, `kanagawa`, `rose-pine`, `onedark`) |
-| `ai_agents.copilot_enabled` | Toggles Copilot launcher |
-| `ai_agents.claude_enabled` | Toggles Claude launcher |
-| `ai_agents.aider_enabled` | Toggles Aider launcher |
-| `ai_agents.claude_binary` | Override path to the `claude` binary |
-| `ai_agents.aider_binary` | Override path to the `aider` binary |
 | `sandcastle.binary` | Grove workflow telemetry binary; defaults to `grove-sandcastle` |
 | `worktrees.base_branch` | Default branch used when creating worktrees |
 | `worktrees.worktree_root` | Directory where new worktrees are created (relative to repo root) |
@@ -174,11 +169,12 @@ Key settings:
 - Use auto-sync for steady-state updates.
 - Prefer cached data during temporary API failures.
 
-### Agent launchers
+### Sandcastle workflows
 
-- Use Copilot for quick guidance and suggestions.
-- Use Claude for broader reasoning and multi-step changes.
-- Use Aider when you want file-scoped editing assistance.
+- Select an issue, focus Actions with `a`, and start `imp`.
+- Select a pull request, focus Actions, and start `review`, `ci`, or `resolve`.
+- From a worktree or the dashboard, focus Actions and start `clean`.
+- Configure agent selection in Sandcastle; Grove does not launch agents directly.
 
 ## Troubleshooting
 

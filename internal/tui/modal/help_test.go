@@ -213,12 +213,12 @@ func TestHelpModal_View_KeybindingsTab_ShowsNavigationSection(t *testing.T) {
 	assert.Contains(t, view, "NAVIGATION")
 }
 
-func TestHelpModal_View_KeybindingsTab_ShowsWorktreeOpsSection(t *testing.T) {
+func TestHelpModal_View_KeybindingsTab_ShowsContextActionsSection(t *testing.T) {
 	m := NewHelpModal()
 	m.activeTab = tabKeybindings
 	view := m.View()
 
-	assert.Contains(t, view, "WORKTREE")
+	assert.Contains(t, view, "CONTEXT ACTIONS")
 }
 
 func TestHelpModal_View_TipsTab_ShowsContent(t *testing.T) {

@@ -44,26 +44,6 @@ type ParentWorktreeRequiredMsg struct {
 	ParentNumber int
 }
 
-// AiderLaunchMsg is sent when the user confirms Aider file selection.
-type AiderLaunchMsg struct {
-	Files []string
-}
-
-// Agent name constants — used in SpawnAgentMsg.AgentName and the app dispatch switch.
-const (
-	AgentNameClaude  = "claude"
-	AgentNameCopilot = "copilot"
-	AgentNameAider   = "aider"
-)
-
-// SpawnAgentMsg is sent when the user confirms spawning an AI agent from the launcher.
-type SpawnAgentMsg struct {
-	AgentName    string   // AgentNameClaude, AgentNameCopilot, or AgentNameAider
-	WorktreePath string   // Path to the worktree directory
-	Prompt       string   // Prompt text (empty for Aider which uses file picker)
-	Files        []string // Reserved for Aider file-picker; populated in follow-on issue
-}
-
 // UpdateConfirmedMsg is sent when the user confirms the self-update from the update modal.
 type UpdateConfirmedMsg struct{}
 
@@ -81,6 +61,14 @@ type WorkflowLaunchMsg struct {
 	IssueNumber *int
 	PRNumber    *int
 }
+
+const (
+	ContextActionOpen       = "open"
+	ContextActionOpenShell  = "open-shell"
+	ContextActionClose      = "close-session"
+	ContextActionDelete     = "delete-worktree"
+	ContextActionOpenGitHub = "open-github"
+)
 
 // CandidateKind distinguishes the type of a cleanup candidate.
 type CandidateKind int

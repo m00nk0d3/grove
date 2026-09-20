@@ -16,7 +16,9 @@ The target ownership model is:
 | Herdr | Terminal workspaces, tabs, panes, focus, persistence, pane jumps, and pane-local process visibility |
 | GitHub | System of record for issues, pull requests, labels, reviews, and checks |
 
-Grove should not launch coding agents directly in the target architecture. Grove starts Sandcastle workflows, Sandcastle launches Pi Agent and any supporting agents, Herdr owns the terminal runtime, and Grove renders the resulting state. Direct agent launchers from Grove are legacy and explicitly out of scope.
+Grove does not launch coding agents directly. Grove starts Sandcastle
+workflows, Sandcastle launches the selected agent and any supporting agents,
+Herdr owns the terminal runtime, and Grove renders the resulting state.
 
 Displaying or discovering an agent does not imply lifecycle ownership. Herdr may observe an agent in a pane, and Grove may correlate and display that observation, but Sandcastle owns the agent process and workflow lifecycle. GitHub integration is read-only in Phase 1: Grove displays and correlates metadata but does not mutate GitHub records.
 
@@ -85,7 +87,7 @@ Make the intended ownership split impossible to misunderstand before implementat
 
 - Keep the ADR as the architecture source of truth.
 - Ensure docs say Grove starts and monitors Sandcastle workflows instead of directly launching coding agents.
-- Mark direct Claude/Copilot/Aider launchers as legacy/current behavior, not the target flow.
+- Remove the historical direct Claude/Copilot/Aider launchers.
 - Document Pi Agent as Sandcastle's default coding agent for Grove-started workflows.
 - Document that Herdr owns terminal panes and jump targets.
 - Document that Sandcastle status must be visual Bubble Tea/Lip Gloss UI, not raw output.
@@ -1193,8 +1195,8 @@ default_agent = "opencode"
 
 ### Compatibility
 
-- Keep `[ai_agents]` for existing users while direct launchers remain.
-- Treat `[ai_agents]` as legacy once Sandcastle workflow start is stable.
+- Remove `[ai_agents]` after Sandcastle workflow start is stable; Sandcastle
+  owns agent selection and process launching.
 - Settings should eventually display integration availability.
 
 ### Acceptance Criteria

@@ -5,7 +5,6 @@ import "time"
 type Config struct {
 	GitHub     GitHubConfig     `toml:"github"`
 	Appearance AppearanceConfig `toml:"appearance"`
-	AIAgents   AIAgentsConfig   `toml:"ai_agents"`
 	Herdr      HerdrConfig      `toml:"herdr"`
 	Sandcastle SandcastleConfig `toml:"sandcastle"`
 	Worktrees  WorktreesConfig  `toml:"worktrees"`
@@ -27,14 +26,6 @@ func (c GitHubConfig) SyncInterval() time.Duration {
 
 type AppearanceConfig struct {
 	Theme string `toml:"theme"`
-}
-
-type AIAgentsConfig struct {
-	CopilotEnabled bool   `toml:"copilot_enabled"`
-	ClaudeEnabled  bool   `toml:"claude_enabled"`
-	AiderEnabled   bool   `toml:"aider_enabled"`
-	ClaudeBinary   string `toml:"claude_binary"`
-	AiderBinary    string `toml:"aider_binary"`
 }
 
 type HerdrConfig struct {
@@ -61,7 +52,6 @@ func DefaultConfig() *Config {
 		Appearance: AppearanceConfig{Theme: "digital-noir"},
 		Worktrees:  WorktreesConfig{BaseBranch: "main", WorktreeRoot: "../worktrees"},
 		GitHub:     GitHubConfig{AutoSync: true, SyncIntervalMinutes: 5},
-		AIAgents:   AIAgentsConfig{CopilotEnabled: true, ClaudeEnabled: true},
 		Herdr: HerdrConfig{
 			Enabled:             true,
 			Binary:              "herdr",

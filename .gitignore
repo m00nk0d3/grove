@@ -6,3 +6,4 @@
 /grove.exe
 /runtime/sandcastle/dist/
 /runtime/sandcastle/node_modules/
+/.sandcastle/

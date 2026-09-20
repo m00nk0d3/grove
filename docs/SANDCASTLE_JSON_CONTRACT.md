@@ -45,7 +45,7 @@ These rules are normative for both sides.
 
 1. **Grove never runs coding agents directly.** Grove starts a Sandcastle workflow;
    Sandcastle launches OpenCode (and any supporting agents). Grove's direct
-   agent launcher paths are legacy and must not be used for this flow.
+   direct agent launcher paths have been removed and must not be used for this flow.
 2. **Grove sends `--agent opencode`** on `workflow start` unless a future workflow
    template explicitly selects another agent.
 3. **Grove sends `--source grove`** on every `workflow start` Grove issues,

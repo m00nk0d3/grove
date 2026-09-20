@@ -1,6 +1,11 @@
-﻿# Grove: Git Worktree Orchestrator & AI Agent Hub - Development Plan v1.0
+﻿# Grove Historical Development Plan v1.0
 
-> **Historical baseline:** This plan documents Grove's original direct-launcher architecture and current legacy behavior. For the target Mission Control architecture and ownership boundaries, use [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md) and the [Mission Control implementation plan](./MISSION_CONTROL_IMPLEMENTATION_PLAN.md). New agent work must start a Sandcastle workflow; Grove must not launch Pi Agent or other coding agents directly.
+> **Archived:** This plan documents Grove's retired direct-agent architecture and
+> is not a description of the current product. For the active Mission Control
+> architecture and ownership boundaries, use [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md)
+> and the [Mission Control implementation plan](./MISSION_CONTROL_IMPLEMENTATION_PLAN.md).
+> Grove no longer contains direct agent launchers; Sandcastle owns agent
+> selection and process launching.
 
 ## Problem Statement
 Developers managing multiple context-heavy development streams need a unified terminal interface to:

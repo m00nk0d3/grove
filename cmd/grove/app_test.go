@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -820,10 +819,9 @@ func TestModel_PRNavigation(t *testing.T) {
 	}
 }
 
-// TestModel_G_Key_OpensInBrowser verifies the [g] key opens the selected
-// issue or PR in the browser (returns non-nil Cmd), and is a no-op in
-// viewWorktrees or when the list is empty.
-func TestModel_G_Key_OpensInBrowser(t *testing.T) {
+// TestModel_ContextActionOpenGitHub opens the selected issue or PR in the
+// browser and reports an error when the selection has no GitHub item.
+func TestModel_ContextActionOpenGitHub(t *testing.T) {
 	tests := []struct {
 		name       string
 		view       activeView
@@ -834,30 +832,30 @@ func TestModel_G_Key_OpensInBrowser(t *testing.T) {
 		wantCmdNil bool
 	}{
 		{
-			name:       "g in viewIssues with issue selected returns non-nil Cmd",
+			name:       "issue selection returns non-nil Cmd",
 			view:       viewIssues,
 			issues:     []domain.Issue{{Number: 5, Title: "Test Issue"}},
 			issueIdx:   0,
 			wantCmdNil: false,
 		},
 		{
-			name:       "g in viewPRs with PR selected returns non-nil Cmd",
+			name:       "PR selection returns non-nil Cmd",
 			view:       viewPRs,
 			prs:        []domain.PullRequest{{Number: 42, Title: "My PR", Branch: "feat/awesome", Author: "alice", State: "OPEN"}},
 			prIdx:      0,
 			wantCmdNil: false,
 		},
 		{
-			name:       "g in viewWorktrees is a no-op (returns nil Cmd)",
+			name:       "worktree selection returns clear-error Cmd",
 			view:       viewWorktrees,
-			wantCmdNil: true,
+			wantCmdNil: false,
 		},
 		{
-			name:       "g in viewIssues with empty issues list returns nil Cmd",
+			name:       "empty issues list returns clear-error Cmd",
 			view:       viewIssues,
 			issues:     []domain.Issue{},
 			issueIdx:   0,
-			wantCmdNil: true,
+			wantCmdNil: false,
 		},
 	}
 
@@ -875,12 +873,12 @@ func TestModel_G_Key_OpensInBrowser(t *testing.T) {
 			model.selectedIssueIdx = tt.issueIdx
 			model.selectedPRIdx = tt.prIdx
 
-			_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+			_, cmd := model.handleContextAction(modal.ContextActionOpenGitHub)
 
 			if tt.wantCmdNil {
 				assert.Nil(t, cmd, "expected nil Cmd (no-op) but got non-nil")
 			} else {
-				assert.NotNil(t, cmd, "expected non-nil Cmd to open in browser")
+				assert.NotNil(t, cmd, "expected non-nil context action Cmd")
 			}
 		})
 	}
@@ -1097,33 +1095,32 @@ func TestModel_JK_NavFocused_ChangesView(t *testing.T) {
 	}
 }
 
-// TestModel_JK_CtxFocused_ChangesScrollOffset verifies that j/k change the
-// context panel scroll offset when the ctx panel is focused.
-func TestModel_JK_CtxFocused_ChangesScrollOffset(t *testing.T) {
+func TestModel_JK_CtxFocused_ChangesActionSelection(t *testing.T) {
 	tests := []struct {
-		name          string
-		key           rune
-		initialOffset int
-		wantOffset    int
+		name       string
+		key        rune
+		initialIdx int
+		wantIdx    int
 	}{
-		{name: "j increments offset", key: 'j', initialOffset: 0, wantOffset: 1},
-		{name: "j increments from non-zero", key: 'j', initialOffset: 3, wantOffset: 4},
-		{name: "k decrements offset", key: 'k', initialOffset: 2, wantOffset: 1},
-		{name: "k at zero stays at zero", key: 'k', initialOffset: 0, wantOffset: 0},
+		{name: "j advances action", key: 'j', initialIdx: 0, wantIdx: 1},
+		{name: "k moves to previous action", key: 'k', initialIdx: 2, wantIdx: 1},
+		{name: "k at zero stays at zero", key: 'k', initialIdx: 0, wantIdx: 0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			model := NewModel()
 			require.NotNil(t, model)
+			model.view = viewIssues
+			model.issues = []domain.Issue{{Number: 42}}
 			model.focused = panelCtx
-			model.ctxScrollOffset = tt.initialOffset
+			model.contextActionIdx = tt.initialIdx
 
 			updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			m, ok := updated.(*Model)
 			require.True(t, ok)
 
-			assert.Equal(t, tt.wantOffset, m.ctxScrollOffset)
+			assert.Equal(t, tt.wantIdx, m.contextActionIdx)
 		})
 	}
 }
@@ -1167,599 +1164,6 @@ func TestModel_WindowSizeMsg_StoresDimensions(t *testing.T) {
 			assert.Equal(t, tt.wantHeight, m.height)
 		})
 	}
-}
-
-// TestModelUpdate_SKeyOpensShellInWorktreeverifies that pressing "s" in
-// viewWorktrees with a selected worktree triggers spawnSessionCmd.
-func TestModelUpdate_SKeyOpensShellInWorktree(t *testing.T) {
-	tests := []struct {
-		name       string
-		view       activeView
-		worktrees  []domain.Worktree
-		wantCmdNil bool
-	}{
-		{
-			name: "s key triggers spawnSessionCmd when in worktrees view",
-			view: viewWorktrees,
-			worktrees: []domain.Worktree{
-				{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
-			},
-			wantCmdNil: false,
-		},
-		{
-			name:       "s key returns clearErrorCmd when worktree list is empty",
-			view:       viewWorktrees,
-			worktrees:  nil,
-			wantCmdNil: false, // clearErrorCmd is returned with the "no worktree selected" error
-		},
-		{
-			name: "s key does nothing in issues view",
-			view: viewIssues,
-			worktrees: []domain.Worktree{
-				{Path: "/tmp/my-wt", Branch: "feat/my-branch", IsClean: true},
-			},
-			wantCmdNil: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			model := NewModel()
-			require.NotNil(t, model)
-			model.view = tt.view
-			model.Worktrees = tt.worktrees
-
-			_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-			if tt.wantCmdNil {
-				assert.Nil(t, cmd)
-			} else {
-				assert.NotNil(t, cmd, "expected a non-nil cmd from spawnSessionCmd or clearErrorCmd")
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3: GitHub Copilot launcher tests
-// ---------------------------------------------------------------------------
-
-// newTestDB is a test helper that opens an in-memory SQLite DB for tests
-// that need to exercise the DB logging path on the Model.
-func newTestDB(t *testing.T) (*data.DB, error) {
-	t.Helper()
-	db, err := data.NewDB(":memory:")
-	if err != nil {
-		return nil, err
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return db, nil
-}
-
-// TestModel_C_Key_TriggersCopilotPrompt verifies that pressing 'c' with
-// CopilotEnabled=true and a selected worktree activates the copilot prompt
-// input. When CopilotEnabled=false or no worktree exists, it is a no-op.
-func TestModel_C_Key_TriggersCopilotPrompt(t *testing.T) {
-	tests := []struct {
-		name             string
-		copilotEnabled   bool
-		hasWorktree      bool
-		wantPromptActive bool
-	}{
-		{
-			name:             "c key with disabled config shows error",
-			copilotEnabled:   false,
-			hasWorktree:      true,
-			wantPromptActive: false,
-		},
-		{
-			name:             "c key with no worktree shows error",
-			copilotEnabled:   true,
-			hasWorktree:      false,
-			wantPromptActive: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			model := NewModel()
-			model.Config.AIAgents.CopilotEnabled = tt.copilotEnabled
-			model.view = viewWorktrees
-			if tt.hasWorktree {
-				model.Worktrees = []domain.Worktree{
-					{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-				}
-			}
-
-			updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
-			updatedModel, ok := updated.(*Model)
-			require.True(t, ok)
-
-			assert.False(t, updatedModel.copilotPromptActive,
-				"copilotPromptActive should be false")
-			assert.NotEmpty(t, updatedModel.statusErr, "should show an error message to the user")
-		})
-	}
-
-	// Separate sub-test for the "gh on PATH" happy path, skipped if gh is absent.
-	t.Run("c key with enabled config and selected worktree activates prompt", func(t *testing.T) {
-		if _, err := exec.LookPath("gh"); err != nil {
-			t.Skip("gh not on PATH; skipping test that requires gh CLI")
-		}
-
-		model := NewModel()
-		model.Config.AIAgents.CopilotEnabled = true
-		model.view = viewWorktrees
-		model.Worktrees = []domain.Worktree{
-			{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-		}
-
-		updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
-		updatedModel, ok := updated.(*Model)
-		require.True(t, ok)
-
-		assert.True(t, updatedModel.copilotPromptActive,
-			"copilotPromptActive should be true when gh is on PATH")
-		assert.NotNil(t, cmd, "textinput.Init() should return a non-nil cmd")
-	})
-
-	// Verify that 'c' in a non-worktree view shows error even when enabled.
-	t.Run("c key in issues view shows error even when enabled", func(t *testing.T) {
-		model := NewModel()
-		model.Config.AIAgents.CopilotEnabled = true
-		model.view = viewIssues
-		model.Worktrees = []domain.Worktree{
-			{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-		}
-
-		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
-		updatedModel, ok := updated.(*Model)
-		require.True(t, ok)
-
-		assert.False(t, updatedModel.copilotPromptActive,
-			"copilotPromptActive should stay false when not in worktrees view")
-		assert.NotEmpty(t, updatedModel.statusErr, "should show an error message when not in worktrees view")
-	})
-}
-
-// TestBuildCopilotCmd_BuildsCorrectCommand verifies that buildCopilotCmd
-// produces the right exec.Cmd args and working directory.
-func TestBuildCopilotCmd_BuildsCorrectCommand(t *testing.T) {
-	tests := []struct {
-		name         string
-		worktreePath string
-		prompt       string
-		wantArgs     []string
-		wantDir      string
-	}{
-		{
-			name:         "simple prompt",
-			worktreePath: "/tmp/my-worktree",
-			prompt:       "fix the null pointer",
-			wantArgs:     []string{"gh", "copilot", "-i", "fix the null pointer"},
-			wantDir:      "/tmp/my-worktree",
-		},
-		{
-			name:         "multi-word prompt",
-			worktreePath: "/repo/feat-branch",
-			prompt:       "add unit tests for auth handler",
-			wantArgs:     []string{"gh", "copilot", "-i", "add unit tests for auth handler"},
-			wantDir:      "/repo/feat-branch",
-		},
-		{
-			name:         "empty prompt runs gh copilot without -i",
-			worktreePath: "/tmp/my-worktree",
-			prompt:       "",
-			wantArgs:     []string{"gh", "copilot"},
-			wantDir:      "/tmp/my-worktree",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := buildCopilotCmd(tt.worktreePath, tt.prompt)
-			require.NotNil(t, cmd)
-			assert.Equal(t, tt.wantArgs, cmd.Args)
-			assert.Equal(t, tt.wantDir, cmd.Dir)
-		})
-	}
-}
-
-// TestModel_CopilotPrompt_EscCancels verifies that pressing Esc while the
-// copilot prompt is active clears copilotPromptActive without spawning.
-func TestModel_CopilotPrompt_EscCancels(t *testing.T) {
-	model := NewModel()
-	model.copilotPromptActive = true
-	model.Worktrees = []domain.Worktree{{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"}}
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.False(t, updatedModel.copilotPromptActive,
-		"Esc should deactivate the copilot prompt")
-}
-
-// TestModel_CopilotPrompt_EscClearsInputValue verifies that Esc also resets
-// the text input value so it starts fresh on the next invocation.
-func TestModel_CopilotPrompt_EscClearsInputValue(t *testing.T) {
-	model := NewModel()
-	model.copilotPromptActive = true
-	model.copilotPromptInput.SetValue("some typed text")
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.Equal(t, "", updatedModel.copilotPromptInput.Value(),
-		"Esc should clear the copilot prompt input value")
-}
-
-// TestModel_CopilotPrompt_EnterWithEmptyPrompt_Spawns verifies that
-// pressing Enter with an empty prompt spawns the agent without a prompt arg.
-func TestModel_CopilotPrompt_EnterWithEmptyPrompt_Spawns(t *testing.T) {
-	model := NewModel()
-	model.copilotPromptActive = true
-	model.Worktrees = []domain.Worktree{{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"}}
-	// Leave input value empty (default)
-
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.False(t, updatedModel.copilotPromptActive,
-		"empty-prompt Enter should close the copilot prompt")
-	assert.NotNil(t, cmd, "empty-prompt Enter should return a spawn Cmd")
-}
-
-// TestModel_AgentDoneMsg_ClearsPrompt verifies that receiving agentDoneMsg
-// clears the copilot prompt state regardless of exit code.
-func TestModel_AgentDoneMsg_ClearsPrompt(t *testing.T) {
-	tests := []struct {
-		name     string
-		exitCode int
-	}{
-		{name: "exit code 0 clears prompt", exitCode: 0},
-		{name: "non-zero exit code still clears prompt", exitCode: 1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			model := NewModel()
-			model.copilotPromptActive = true
-
-			updated, _ := model.Update(agentDoneMsg{
-				agentName: "copilot",
-				prompt:    "test prompt",
-				exitCode:  tt.exitCode,
-			})
-			updatedModel, ok := updated.(*Model)
-			require.True(t, ok)
-
-			assert.False(t, updatedModel.copilotPromptActive,
-				"agentDoneMsg should clear copilotPromptActive")
-		})
-	}
-}
-
-// TestModel_AgentDoneMsg_LogsToDBWhenAvailable verifies that agentDoneMsg
-// triggers a DB log call when model.db is set (non-nil).
-func TestModel_AgentDoneMsg_LogsToDBWhenAvailable(t *testing.T) {
-	// We test the logging path by supplying a real in-memory DB.
-	db, err := newTestDB(t)
-	require.NoError(t, err)
-
-	model := NewModel()
-	model.copilotPromptActive = true
-	model.db = db
-
-	updated, _ := model.Update(agentDoneMsg{
-		agentName: "copilot",
-		prompt:    "fix bug",
-		exitCode:  0,
-	})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	// No error should be set on the model.
-	assert.Empty(t, updatedModel.statusErr, "DB log should not set an error on success")
-
-	// Verify the row was actually written.
-	var count int
-	require.NoError(t, db.Conn.QueryRow(
-		"SELECT COUNT(*) FROM agent_history WHERE agent_name = 'copilot'",
-	).Scan(&count))
-	assert.Equal(t, 1, count, "one agent_history row should have been inserted")
-}
-
-// TestModel_View_ShowsCopilotPromptWhenActive verifies that View() returns a
-// string containing the prompt UI when copilotPromptActive is true.
-func TestModel_View_ShowsCopilotPromptWhenActive(t *testing.T) {
-	model := NewModel()
-	model.copilotPromptActive = true
-
-	view := model.View()
-
-	assert.Contains(t, view, "Spawn Copilot",
-		"View should show the Copilot prompt header when active")
-	assert.Contains(t, view, "Esc cancel",
-		"View should show the cancel hint when copilot prompt is active")
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3: Claude Code launcher tests
-// ---------------------------------------------------------------------------
-
-// TestSpawnClaudeCmd_UsesCustomBinaryPath verifies that buildClaudeCmd
-// places the custom binary path as the executable and the prompt as arg.
-func TestSpawnClaudeCmd_UsesCustomBinaryPath(t *testing.T) {
-	tests := []struct {
-		name         string
-		worktreePath string
-		prompt       string
-		binaryPath   string
-		wantArgs     []string
-		wantDir      string
-	}{
-		{
-			name:         "uses default claude binary",
-			worktreePath: "/tmp/my-worktree",
-			prompt:       "refactor the handler",
-			binaryPath:   "claude",
-			wantArgs:     []string{"claude", "refactor the handler"},
-			wantDir:      "/tmp/my-worktree",
-		},
-		{
-			name:         "uses custom binary path",
-			worktreePath: "/repo/feat-branch",
-			prompt:       "write unit tests",
-			binaryPath:   "/usr/local/bin/claude",
-			wantArgs:     []string{"/usr/local/bin/claude", "write unit tests"},
-			wantDir:      "/repo/feat-branch",
-		},
-		{
-			name:         "empty prompt omits prompt arg",
-			worktreePath: "/tmp/my-worktree",
-			prompt:       "",
-			binaryPath:   "claude",
-			wantArgs:     []string{"claude"},
-			wantDir:      "/tmp/my-worktree",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := buildClaudeCmd(tt.worktreePath, tt.prompt, tt.binaryPath)
-			require.NotNil(t, cmd)
-			assert.Equal(t, tt.wantArgs, cmd.Args)
-			assert.Equal(t, tt.wantDir, cmd.Dir)
-		})
-	}
-}
-
-// TestSpawnClaudeCmd_BinaryNotFound_ReturnsError verifies that resolveClaudeBinary
-// returns an error when the binary is not found on PATH.
-func TestSpawnClaudeCmd_BinaryNotFound_ReturnsError(t *testing.T) {
-	cfg := domain.DefaultConfig()
-	cfg.AIAgents.ClaudeBinary = "definitely-not-a-real-binary-xyz-12345"
-
-	_, err := resolveClaudeBinary(cfg)
-	require.Error(t, err, "resolveClaudeBinary should return error for missing binary")
-}
-
-// TestResolveClaudeBinary_DefaultsToClaudeBinary verifies that an empty ClaudeBinary
-// config field falls back to "claude" (which may or may not be on PATH).
-func TestResolveClaudeBinary_DefaultsToClaudeBinary(t *testing.T) {
-	cfg := domain.DefaultConfig()
-	cfg.AIAgents.ClaudeBinary = ""
-
-	// We cannot assume "claude" is installed, so we only check that the error
-	// message (if any) mentions "claude" rather than an empty string.
-	path, err := resolveClaudeBinary(cfg)
-	if err != nil {
-		assert.Contains(t, err.Error(), "claude",
-			"error for missing default binary should mention 'claude'")
-	} else {
-		assert.NotEmpty(t, path, "resolved path should be non-empty when claude is on PATH")
-	}
-}
-
-// TestModel_A_Key_TriggersClaude verifies [a] key activates the Claude prompt
-// when ClaudeEnabled=true and a worktree is selected (if binary exists),
-// and shows an error message when conditions are not met.
-func TestModel_A_Key_TriggersClaude(t *testing.T) {
-	tests := []struct {
-		name             string
-		claudeEnabled    bool
-		hasWorktree      bool
-		wantPromptActive bool
-	}{
-		{
-			name:             "a key with disabled config shows error",
-			claudeEnabled:    false,
-			hasWorktree:      true,
-			wantPromptActive: false,
-		},
-		{
-			name:             "a key with no worktree shows error",
-			claudeEnabled:    true,
-			hasWorktree:      false,
-			wantPromptActive: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			model := NewModel()
-			model.Config.AIAgents.ClaudeEnabled = tt.claudeEnabled
-			model.view = viewWorktrees
-			if tt.hasWorktree {
-				model.Worktrees = []domain.Worktree{
-					{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-				}
-			}
-
-			updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
-			updatedModel, ok := updated.(*Model)
-			require.True(t, ok)
-
-			assert.False(t, updatedModel.claudePromptActive,
-				"claudePromptActive should be false")
-			assert.NotEmpty(t, updatedModel.statusErr, "should show an error message to the user")
-		})
-	}
-
-	// Happy path: only run if claude is actually on PATH.
-	t.Run("a key with enabled config and selected worktree activates prompt", func(t *testing.T) {
-		if _, err := exec.LookPath("claude"); err != nil {
-			t.Skip("claude not on PATH; skipping test that requires claude binary")
-		}
-
-		model := NewModel()
-		model.Config.AIAgents.ClaudeEnabled = true
-		model.view = viewWorktrees
-		model.Worktrees = []domain.Worktree{
-			{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-		}
-
-		updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
-		updatedModel, ok := updated.(*Model)
-		require.True(t, ok)
-
-		assert.True(t, updatedModel.claudePromptActive,
-			"claudePromptActive should be true when claude is on PATH")
-		assert.NotNil(t, cmd, "textinput.Focus() should return a non-nil cmd")
-	})
-
-	t.Run("a key in issues view shows error even when enabled", func(t *testing.T) {
-		model := NewModel()
-		model.Config.AIAgents.ClaudeEnabled = true
-		model.view = viewIssues
-		model.Worktrees = []domain.Worktree{
-			{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-		}
-
-		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
-		updatedModel, ok := updated.(*Model)
-		require.True(t, ok)
-
-		assert.False(t, updatedModel.claudePromptActive,
-			"claudePromptActive should stay false when not in worktrees view")
-		assert.NotEmpty(t, updatedModel.statusErr, "should show an error message when not in worktrees view")
-	})
-}
-
-// TestModel_ClaudePrompt_EscCancels verifies that pressing Esc while the
-// Claude prompt is active clears claudePromptActive without spawning.
-func TestModel_ClaudePrompt_EscCancels(t *testing.T) {
-	model := NewModel()
-	model.claudePromptActive = true
-	model.Worktrees = []domain.Worktree{{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"}}
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.False(t, updatedModel.claudePromptActive,
-		"Esc should deactivate the claude prompt")
-}
-
-// TestModel_ClaudePrompt_EscClearsInputValue verifies that Esc also resets
-// the Claude text input value so it starts fresh on the next invocation.
-func TestModel_ClaudePrompt_EscClearsInputValue(t *testing.T) {
-	model := NewModel()
-	model.claudePromptActive = true
-	model.claudePromptInput.SetValue("some typed text")
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.Equal(t, "", updatedModel.claudePromptInput.Value(),
-		"Esc should clear the claude prompt input value")
-}
-
-// TestModel_ClaudePrompt_EnterWithEmptyPrompt_Spawns verifies that
-// pressing Enter with an empty prompt spawns the agent without a prompt arg.
-func TestModel_ClaudePrompt_EnterWithEmptyPrompt_Spawns(t *testing.T) {
-	model := NewModel()
-	model.claudePromptActive = true
-	model.Config.AIAgents.ClaudeEnabled = true
-	model.Config.AIAgents.ClaudeBinary = "go" // "go" is always on PATH when running go test
-	model.Worktrees = []domain.Worktree{{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"}}
-
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.False(t, updatedModel.claudePromptActive,
-		"empty-prompt Enter should close the claude prompt")
-	assert.NotNil(t, cmd, "empty-prompt Enter should return a spawn Cmd")
-}
-
-// TestModel_AgentDoneMsg_ClearsClaudePrompt verifies that receiving agentDoneMsg
-// clears the claude prompt state regardless of exit code.
-func TestModel_AgentDoneMsg_ClearsClaudePrompt(t *testing.T) {
-	tests := []struct {
-		name     string
-		exitCode int
-	}{
-		{name: "exit code 0 clears claude prompt", exitCode: 0},
-		{name: "non-zero exit code still clears claude prompt", exitCode: 1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			model := NewModel()
-			model.claudePromptActive = true
-
-			updated, _ := model.Update(agentDoneMsg{
-				agentName: "claude",
-				prompt:    "test prompt",
-				exitCode:  tt.exitCode,
-			})
-			updatedModel, ok := updated.(*Model)
-			require.True(t, ok)
-
-			assert.False(t, updatedModel.claudePromptActive,
-				"agentDoneMsg should clear claudePromptActive")
-		})
-	}
-}
-
-// TestModel_View_ShowsClaudePromptWhenActive verifies that View() returns a
-// string containing the Claude prompt UI when claudePromptActive is true.
-func TestModel_View_ShowsClaudePromptWhenActive(t *testing.T) {
-	model := NewModel()
-	model.claudePromptActive = true
-
-	view := model.View()
-
-	assert.Contains(t, view, "Spawn Claude Code",
-		"View should show the Claude prompt header when active")
-	assert.Contains(t, view, "Esc cancel",
-		"View should show the cancel hint when claude prompt is active")
-}
-
-// TestModel_A_Key_BinaryNotFound_SetsError verifies that pressing [a] when
-// the claude binary is not resolvable sets a user-visible error on the model.
-func TestModel_A_Key_BinaryNotFound_SetsError(t *testing.T) {
-	model := NewModel()
-	model.Config.AIAgents.ClaudeEnabled = true
-	model.Config.AIAgents.ClaudeBinary = "definitely-not-a-real-binary-xyz-12345"
-	model.view = viewWorktrees
-	model.Worktrees = []domain.Worktree{
-		{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-	}
-
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.False(t, updatedModel.claudePromptActive,
-		"prompt should not open when binary is not found")
-	assert.NotNil(t, cmd, "clearErrorCmd should be returned when binary is missing")
-	assert.Contains(t, updatedModel.statusErr, "claude binary not found",
-		"error should mention the missing binary")
 }
 
 // ---------------------------------------------------------------------------
@@ -1933,7 +1337,7 @@ func (f *fakeSandcastleWorkflowStarter) StartWorkflow(_ context.Context, req san
 	return f.workflow, f.err
 }
 
-func TestModel_OKeyOpensContextualWorkflowLauncher(t *testing.T) {
+func TestModel_AKeyFocusesContextActions(t *testing.T) {
 	tests := []struct {
 		name string
 		view activeView
@@ -1964,15 +1368,14 @@ func TestModel_OKeyOpensContextualWorkflowLauncher(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := NewModel()
 			m.view = tt.view
-			m.Config.Sandcastle.Enabled = true
-			m.workflowStarter = &fakeSandcastleWorkflowStarter{}
 			tt.init(m)
 
-			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 			require.Nil(t, cmd)
 			model := updated.(*Model)
-			_, ok := model.activeModal.(*modal.WorkflowLauncherModal)
-			assert.True(t, ok)
+			assert.Equal(t, panelCtx, model.focused)
+			assert.Equal(t, 0, model.contextActionIdx)
+			assert.NotEmpty(t, model.availableContextActions())
 		})
 	}
 }
@@ -1986,12 +1389,12 @@ func TestModel_WorkflowLaunchMsgStartsOpenCodeWorkflow(t *testing.T) {
 	m.RepoPath = "/repos/grove"
 	m.Config.Sandcastle.DefaultAgent = "opencode"
 	m.workflowStarter = starter
-	m.activeModal = modal.NewIssueWorkflowLauncherModal(domain.Issue{Number: issueNumber})
+	m.view = viewIssues
+	m.issues = []domain.Issue{{Number: issueNumber}}
+	m.focused = panelCtx
+	m.contextActionIdx = 1
 
-	updated, cmd := m.Update(modal.WorkflowLaunchMsg{
-		Kind:        modal.WorkflowKindImplement,
-		IssueNumber: &issueNumber,
-	})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.NotNil(t, cmd)
 	assert.Nil(t, updated.(*Model).activeModal)
 
@@ -2046,381 +1449,6 @@ func TestFocusSessionCmd_HerdrSessionReopensFocusedWorktree(t *testing.T) {
 	require.True(t, ok)
 	require.NoError(t, msg.err)
 	assert.Equal(t, "/repos/nexus", navigator.openedPath)
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Phase 3: Aider launcher tests
-// ---------------------------------------------------------------------------
-
-// TestBuildAiderCmd_PassesSelectedFiles verifies that buildAiderCmd constructs
-// an exec.Cmd with "aider" as the binary, the files as positional arguments,
-// and Dir set to the worktree path.
-func TestBuildAiderCmd_PassesSelectedFiles(t *testing.T) {
-	tests := []struct {
-		name         string
-		worktreePath string
-		files        []string
-		binaryPath   string
-		wantArgs     []string
-	}{
-		{
-			name:         "single file",
-			worktreePath: "/tmp/my-wt",
-			files:        []string{"main.go"},
-			binaryPath:   "aider",
-			wantArgs:     []string{"aider", "main.go"},
-		},
-		{
-			name:         "multiple files",
-			worktreePath: "/tmp/my-wt",
-			files:        []string{"main.go", "go.mod", "README.md"},
-			binaryPath:   "aider",
-			wantArgs:     []string{"aider", "main.go", "go.mod", "README.md"},
-		},
-		{
-			name:         "custom binary path",
-			worktreePath: "/tmp/my-wt",
-			files:        []string{"main.go"},
-			binaryPath:   "/usr/local/bin/aider",
-			wantArgs:     []string{"/usr/local/bin/aider", "main.go"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := buildAiderCmd(tt.worktreePath, tt.files, tt.binaryPath)
-			require.NotNil(t, cmd)
-			assert.Equal(t, tt.wantArgs, cmd.Args)
-			assert.Equal(t, tt.worktreePath, cmd.Dir)
-		})
-	}
-}
-
-// TestSpawnAiderCmd_BinaryNotFound_ReturnsNilCmd verifies that spawnAiderCmd
-// returns a clearErrorCmd and sets statusErr when the configured aider binary is not found.
-func TestSpawnAiderCmd_BinaryNotFound_ReturnsNilCmd(t *testing.T) {
-	model := NewModel()
-	model.Config.AIAgents.AiderBinary = "definitely-not-a-real-binary-xyz-12345"
-
-	cmd := model.spawnAiderCmd("/tmp/my-wt", []string{"main.go"})
-
-	assert.NotNil(t, cmd, "spawnAiderCmd must return clearErrorCmd when binary is not found")
-	assert.Contains(t, model.statusErr, "aider not found")
-}
-
-// TestResolveAiderBinary_DefaultsToAider verifies that an empty AiderBinary
-// config field falls back to "aider" (which may or may not be on PATH).
-func TestResolveAiderBinary_DefaultsToAider(t *testing.T) {
-	cfg := domain.DefaultConfig()
-	cfg.AIAgents.AiderBinary = ""
-
-	path, err := resolveAiderBinary(cfg)
-	if err != nil {
-		assert.Contains(t, err.Error(), "aider",
-			"error for missing default binary should mention 'aider'")
-	} else {
-		assert.NotEmpty(t, path, "resolved path should be non-empty when aider is on PATH")
-	}
-}
-
-// TestResolveAiderBinary_CustomBinary_NotFound verifies that resolveAiderBinary
-// returns an error when a custom binary is not found on PATH.
-func TestResolveAiderBinary_CustomBinary_NotFound(t *testing.T) {
-	cfg := domain.DefaultConfig()
-	cfg.AIAgents.AiderBinary = "definitely-not-a-real-binary-xyz-12345"
-
-	_, err := resolveAiderBinary(cfg)
-	require.Error(t, err, "resolveAiderBinary should return error for missing binary")
-}
-
-// TestModel_F_Key_AiderDisabled_SetsError verifies that pressing 'f' when
-// AiderEnabled=false shows a user-visible error and returns nil Cmd.
-func TestModel_F_Key_AiderDisabled_SetsError(t *testing.T) {
-	model := NewModel()
-	model.Config.AIAgents.AiderEnabled = false
-	model.view = viewWorktrees
-	model.Worktrees = []domain.Worktree{
-		{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-	}
-
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.NotNil(t, cmd, "clearErrorCmd should be returned when aider is disabled")
-	assert.Contains(t, updatedModel.statusErr, "aider_enabled")
-}
-
-// TestModel_F_Key_NoWorktree_SetsError verifies that pressing 'f' with
-// AiderEnabled=true but no worktree selected shows an error.
-func TestModel_F_Key_NoWorktree_SetsError(t *testing.T) {
-	model := NewModel()
-	model.Config.AIAgents.AiderEnabled = true
-	model.view = viewWorktrees
-	// no worktrees
-
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.NotNil(t, cmd, "clearErrorCmd should be returned when no worktree selected")
-	assert.NotEmpty(t, updatedModel.statusErr)
-}
-
-// TestModel_F_Key_WrongView_SetsError verifies that pressing 'f' in a non-worktrees
-// view (e.g. viewIssues) shows a helpful error.
-func TestModel_F_Key_WrongView_SetsError(t *testing.T) {
-	model := NewModel()
-	model.Config.AIAgents.AiderEnabled = true
-	model.view = viewIssues
-	model.Worktrees = []domain.Worktree{
-		{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-	}
-
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.NotNil(t, cmd, "clearErrorCmd should be returned when in wrong view")
-	assert.Contains(t, updatedModel.statusErr, "Worktrees view")
-}
-
-// TestModel_AiderFilesFetchedMsg_OpensModal verifies that receiving a successful
-// aiderFilesFetchedMsg sets activeModal to an AiderFilePicker.
-func TestModel_AiderFilesFetchedMsg_OpensModal(t *testing.T) {
-	model := NewModel()
-	require.NotNil(t, model)
-
-	files := []string{"main.go", "go.mod"}
-	updated, cmd := model.Update(aiderFilesFetchedMsg{
-		worktreePath: "/tmp/wt",
-		files:        files,
-	})
-	m, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.Nil(t, cmd)
-	assert.NotNil(t, m.activeModal, "active modal should be set after files are fetched")
-	assert.Equal(t, "Aider — Select Files", m.activeModal.Title())
-}
-
-// TestModel_AiderFilesFetchedMsg_ErrorSetsError verifies that an error in
-// aiderFilesFetchedMsg is surfaced as m.Error and no modal is opened.
-func TestModel_AiderFilesFetchedMsg_ErrorSetsError(t *testing.T) {
-	model := NewModel()
-	require.NotNil(t, model)
-
-	updated, cmd := model.Update(aiderFilesFetchedMsg{
-		worktreePath: "/tmp/wt",
-		err:          errors.New("git failed"),
-	})
-	m, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.NotNil(t, cmd, "clearErrorCmd should be returned on file fetch error")
-	assert.Nil(t, m.activeModal)
-	assert.Contains(t, m.statusErr, "Failed to list files")
-}
-
-// TestModel_F_Key_AiderNotOnPath_SetsError verifies that pressing 'f' when
-// the aider binary is not resolvable sets a user-visible error on the model.
-func TestModel_F_Key_AiderNotOnPath_SetsError(t *testing.T) {
-	model := NewModel()
-	model.Config.AIAgents.AiderEnabled = true
-	model.Config.AIAgents.AiderBinary = "definitely-not-a-real-binary-xyz-12345"
-	model.view = viewWorktrees
-	model.Worktrees = []domain.Worktree{
-		{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"},
-	}
-
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.NotNil(t, cmd, "clearErrorCmd should be returned when aider binary is missing")
-	assert.Contains(t, updatedModel.statusErr, "aider not found",
-		"error should mention that the aider binary is missing")
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3: Agent launcher ([space] key + SpawnAgentMsg dispatch) tests
-// ---------------------------------------------------------------------------
-
-// TestModel_SpaceKey_InWorktreeView_WithSelection_OpensAgentLauncher verifies
-// that pressing [space] in the worktrees view with a selection opens the agent launcher modal.
-func TestModel_SpaceKey_InWorktreeView_WithSelection_OpensAgentLauncher(t *testing.T) {
-	m := NewModel()
-	m.view = viewWorktrees
-	m.Worktrees = []domain.Worktree{
-		{Path: "/repos/nexus", Branch: "main"},
-	}
-	m.selectedIdx = 0
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
-	next, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.NotNil(t, next.activeModal, "should open the agent launcher modal")
-	assert.Nil(t, cmd, "no async command needed to open the launcher")
-	assert.Empty(t, next.statusErr, "no error should be set")
-}
-
-// TestModel_SpaceKey_InWorktreeView_NoSelection_SetsError verifies that pressing
-// [space] with no worktree selected shows a friendly error instead of panicking.
-func TestModel_SpaceKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
-	m := NewModel()
-	m.view = viewWorktrees
-	// Worktrees is empty — nothing to select.
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
-	next, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.Nil(t, next.activeModal, "no modal should open when nothing is selected")
-	assert.Contains(t, next.statusErr, "No worktree selected")
-}
-
-// TestModel_SpaceKey_NotInWorktreeView_SetsError verifies that pressing [space]
-// outside the worktrees view surfaces a navigation hint error.
-func TestModel_SpaceKey_NotInWorktreeView_SetsError(t *testing.T) {
-	m := NewModel()
-	m.view = viewIssues
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
-	next, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.Nil(t, next.activeModal, "no modal should open in issues view")
-	assert.Contains(t, next.statusErr, "Worktrees view")
-}
-
-// TestModel_SpawnAgentMsg_Copilot_ClearsModalAndReturnsCmd verifies that
-// a SpawnAgentMsg for copilot clears the active modal and returns a spawn command.
-func TestModel_SpawnAgentMsg_Copilot_ClearsModalAndReturnsCmd(t *testing.T) {
-	m := NewModel()
-	m.Worktrees = []domain.Worktree{{Path: "/repos/nexus", Branch: "main"}}
-	m.selectedIdx = 0
-	// Prime the model with an open modal (simulate user having opened the launcher).
-	m.activeModal = modal.NewAgentLauncherModal(m.Config, "/repos/nexus")
-
-	updated, cmd := m.Update(modal.SpawnAgentMsg{
-		AgentName:    modal.AgentNameCopilot,
-		WorktreePath: "/repos/nexus",
-		Prompt:       "suggest improvements",
-	})
-	next, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.Nil(t, next.activeModal, "modal must be cleared after SpawnAgentMsg")
-	assert.NotNil(t, cmd, "should return a spawn command for copilot")
-}
-
-// TestModel_SpawnAgentMsg_Claude_ClearsModalAndReturnsCmd verifies the same for claude.
-func TestModel_SpawnAgentMsg_Claude_ClearsModalAndReturnsCmd(t *testing.T) {
-	m := NewModel()
-	// Use "go" as a stand-in binary — it is always on PATH in this repo's CI environment.
-	m.Config.AIAgents.ClaudeBinary = "go"
-	m.activeModal = modal.NewAgentLauncherModal(m.Config, "/repos/nexus")
-
-	updated, cmd := m.Update(modal.SpawnAgentMsg{
-		AgentName:    modal.AgentNameClaude,
-		WorktreePath: "/repos/nexus",
-		Prompt:       "refactor this",
-	})
-	next, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.Nil(t, next.activeModal, "modal must be cleared after SpawnAgentMsg")
-	assert.NotNil(t, cmd, "should return a spawn command for claude")
-}
-
-// TestModel_SpawnAgentMsg_Aider_ClearsModalAndFetchesFiles verifies that
-// SpawnAgentMsg for aider clears the modal and returns a file-fetch command.
-func TestModel_SpawnAgentMsg_Aider_ClearsModalAndFetchesFiles(t *testing.T) {
-	m := NewModel()
-	m.activeModal = modal.NewAgentLauncherModal(m.Config, "/repos/nexus")
-
-	updated, cmd := m.Update(modal.SpawnAgentMsg{
-		AgentName:    modal.AgentNameAider,
-		WorktreePath: "/repos/nexus",
-	})
-	next, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.Nil(t, next.activeModal, "modal must be cleared after SpawnAgentMsg")
-	assert.NotNil(t, cmd, "aider should return a fetchAiderFilesCmd")
-	assert.Empty(t, next.statusErr, "no error should be set when aider is triggered")
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3: Suspend/Resume tests
-// ---------------------------------------------------------------------------
-
-// TestAgentDoneMsg_NonZeroExit_ShowsErrorInStatusBar verifies that when an agent
-// exits with code > 1, the model's Error field is set. Exit code 1 is treated as
-// a normal interactive quit and does not show an error.
-func TestAgentDoneMsg_NonZeroExit_ShowsErrorInStatusBar(t *testing.T) {
-	tests := []struct {
-		name      string
-		exitCode  int
-		wantError string
-	}{
-		{
-			name:      "exit code 1 is treated as normal quit (no error)",
-			exitCode:  1,
-			wantError: "",
-		},
-		{
-			name:      "exit code 127 shows warning",
-			exitCode:  127,
-			wantError: "⚠ Agent exited with code 127",
-		},
-		{
-			name:      "exit code 0 does not set error",
-			exitCode:  0,
-			wantError: "",
-		},
-		{
-			name:      "exit code 2 shows warning",
-			exitCode:  2,
-			wantError: "⚠ Agent exited with code 2",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			model := NewModel()
-
-			updated, cmd := model.Update(agentDoneMsg{
-				agentName: "copilot",
-				prompt:    "test",
-				exitCode:  tt.exitCode,
-			})
-			m, ok := updated.(*Model)
-			require.True(t, ok)
-
-			assert.Equal(t, tt.wantError, m.statusErr,
-				"statusErr field should match expected warning for exit code %d", tt.exitCode)
-			// agentDoneMsg must always trigger a worktree refresh.
-			assert.NotNil(t, cmd, "agentDoneMsg must return a refreshWorktreesCmd")
-		})
-	}
-}
-
-// TestAgentDoneMsg_ZeroExit_TriggersRefresh verifies that even a successful
-// agent exit (code 0) still returns a refreshWorktreesCmd so the worktree list
-// is reloaded after the subprocess exits.
-func TestAgentDoneMsg_ZeroExit_TriggersRefresh(t *testing.T) {
-	model := NewModel()
-
-	_, cmd := model.Update(agentDoneMsg{
-		agentName: "claude",
-		prompt:    "refactor",
-		exitCode:  0,
-	})
-
-	assert.NotNil(t, cmd, "zero-exit agentDoneMsg must still return a refreshWorktreesCmd")
 }
 
 // ---------------------------------------------------------------------------
@@ -2569,36 +1597,6 @@ func TestModel_QKey_QuitsApp(t *testing.T) {
 	assert.Equal(t, tea.Quit(), msg, "q should produce tea.Quit")
 }
 
-// TestModel_QKey_SuppressedWhenCopilotPromptActive verifies that q does NOT quit
-// when the copilot text input is focused — it should be routed to the input instead.
-func TestModel_QKey_SuppressedWhenCopilotPromptActive(t *testing.T) {
-	model := NewModel()
-	model.copilotPromptActive = true
-	model.Worktrees = []domain.Worktree{{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"}}
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.True(t, updatedModel.copilotPromptActive,
-		"q should not quit when copilot prompt is active")
-}
-
-// TestModel_QKey_SuppressedWhenClaudePromptActive verifies that q does NOT quit
-// when the Claude text input is focused — it should be routed to the input instead.
-func TestModel_QKey_SuppressedWhenClaudePromptActive(t *testing.T) {
-	model := NewModel()
-	model.claudePromptActive = true
-	model.Worktrees = []domain.Worktree{{Path: "/tmp/wt", Branch: "main", CommitSHA: "abc"}}
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
-	updatedModel, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.True(t, updatedModel.claudePromptActive,
-		"q should not quit when claude prompt is active")
-}
-
 // ---------------------------------------------------------------------------
 // Phase 2 (sessions): buildNewTerminalCmd and sessionSpawnedMsg tests
 // ---------------------------------------------------------------------------
@@ -2730,32 +1728,12 @@ func TestModelUpdate_SessionSpawnedMsg_SuccessSetsStatusMsg(t *testing.T) {
 	assert.Empty(t, next.statusErr, "no error on success")
 }
 
-// TestModel_SKey_InWorktreeView_WithSelection_ReturnsSpawnCmd verifies that
-// pressing s in the worktrees view with a selection returns a non-nil Cmd.
-func TestModel_SKey_InWorktreeView_WithSelection_ReturnsSpawnCmd(t *testing.T) {
-	m := NewModel()
-	m.view = viewWorktrees
-	m.Worktrees = []domain.Worktree{
-		{Path: "/repos/nexus", Branch: "main"},
-	}
-	m.selectedIdx = 0
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	next, ok := updated.(*Model)
-	require.True(t, ok)
-
-	assert.NotNil(t, cmd, "s key on selected worktree should return a spawn Cmd")
-	assert.Empty(t, next.statusErr, "no error when a worktree is selected")
-}
-
-// TestModel_SKey_InWorktreeView_NoSelection_SetsError verifies that pressing s
-// in the worktrees view with no selection sets statusErr.
-func TestModel_SKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
+func TestModel_ContextActionOpenShell_NoSelectionSetsError(t *testing.T) {
 	m := NewModel()
 	m.view = viewWorktrees
 	m.Worktrees = nil
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, cmd := m.handleContextAction(modal.ContextActionOpenShell)
 	next, ok := updated.(*Model)
 	require.True(t, ok)
 
@@ -2763,9 +1741,7 @@ func TestModel_SKey_InWorktreeView_NoSelection_SetsError(t *testing.T) {
 	assert.NotNil(t, cmd, "clearErrorCmd should be returned")
 }
 
-// TestModel_EnterKey_SpawnsSessionLikeSKey verifies that Enter and s both
-// trigger spawnSessionCmd (same behavior).
-func TestModel_EnterKey_SpawnsSessionLikeSKey(t *testing.T) {
+func TestModel_EnterKeySpawnsSession(t *testing.T) {
 	m := NewModel()
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
@@ -3355,9 +2331,7 @@ func TestModel_Enter_StaleSession_TriggersSpawn(t *testing.T) {
 	assert.NotNil(t, cmd, "Enter on worktree with stale session should return a spawn Cmd")
 }
 
-// TestModel_X_WithSession_TriggersKill verifies that pressing x on a worktree
-// with an active session dispatches a kill command.
-func TestModel_X_WithSession_TriggersKill(t *testing.T) {
+func TestModel_ContextActionClose_WithSessionTriggersKill(t *testing.T) {
 	pid := os.Getpid()
 	worktreePath := "/home/user/repos/wt1"
 
@@ -3371,14 +2345,12 @@ func TestModel_X_WithSession_TriggersKill(t *testing.T) {
 	m.selectedIdx = 0
 	m.view = viewWorktrees
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	_, cmd := m.handleContextAction(modal.ContextActionClose)
 
-	assert.NotNil(t, cmd, "x on worktree with session should return a kill Cmd")
+	assert.NotNil(t, cmd, "close action should return a kill Cmd")
 }
 
-// TestModel_X_WithoutSession_ShowsError verifies that pressing x on a worktree
-// with no active session sets a friendly error message.
-func TestModel_X_WithoutSession_ShowsError(t *testing.T) {
+func TestModel_ContextActionClose_WithoutSessionShowsError(t *testing.T) {
 	m := NewModel()
 	m.Worktrees = []domain.Worktree{
 		{Path: "/home/user/repos/wt1", Branch: "main", CommitSHA: "abc123"},
@@ -3387,7 +2359,7 @@ func TestModel_X_WithoutSession_ShowsError(t *testing.T) {
 	m.selectedIdx = 0
 	m.view = viewWorktrees
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, cmd := m.handleContextAction(modal.ContextActionClose)
 	m2, ok := updated.(*Model)
 	require.True(t, ok)
 
@@ -3822,53 +2794,6 @@ func TestUpdateModal_DoesNotSwallowGithubSyncedMsg(t *testing.T) {
 	assert.Equal(t, 42, m3.prs[0].Number)
 }
 
-// TestPRReviewWorktreePath verifies the pr-<number>-<branch-slug> naming convention
-// and that paths are scoped to the repo name to avoid cross-project collisions.
-func TestPRReviewWorktreePath(t *testing.T) {
-	tests := []struct {
-		name     string
-		repoPath string
-		prNumber int
-		branch   string
-		wantPath string
-	}{
-		{
-			name:     "simple branch name",
-			repoPath: filepath.Join("/home", "user", "nexus"),
-			prNumber: 42,
-			branch:   "feat-my-feature",
-			wantPath: filepath.Join("/home", "user", "worktrees", "nexus", "pr-42-feat-my-feature"),
-		},
-		{
-			name:     "branch with slashes",
-			repoPath: filepath.Join("/home", "user", "nexus"),
-			prNumber: 7,
-			branch:   "feat/issue-7-login",
-			wantPath: filepath.Join("/home", "user", "worktrees", "nexus", "pr-7-feat-issue-7-login"),
-		},
-		{
-			name:     "main branch",
-			repoPath: filepath.Join("/home", "user", "nexus"),
-			prNumber: 1,
-			branch:   "main",
-			wantPath: filepath.Join("/home", "user", "worktrees", "nexus", "pr-1-main"),
-		},
-		{
-			name:     "different repo does not collide with nexus",
-			repoPath: filepath.Join("/home", "user", "nova"),
-			prNumber: 42,
-			branch:   "feat-my-feature",
-			wantPath: filepath.Join("/home", "user", "worktrees", "nova", "pr-42-feat-my-feature"),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := prReviewWorktreePath(tt.repoPath, tt.prNumber, tt.branch)
-			assert.Equal(t, tt.wantPath, got)
-		})
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Issue #90: jump to existing session on Enter
 // ---------------------------------------------------------------------------
@@ -3961,114 +2886,6 @@ func TestModel_Enter_Issue_JumpsToExistingSession(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestModel_CtrlR_InPRView_WithNoSelectedPR_ShowsError verifies that Ctrl+R with
-// no PRs available surfaces a friendly error rather than panicking.
-func TestModel_CtrlR_InPRView_WithNoSelectedPR_ShowsError(t *testing.T) {
-	m := NewModel()
-	m.view = viewPRs
-	m.prs = []domain.PullRequest{} // empty PR list
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	result := updated.(*Model)
-
-	assert.NotEmpty(t, result.statusErr, "should show an error when no PR is selected")
-	assert.NotNil(t, cmd, "should return clearErrorCmd")
-}
-
-// TestModel_CtrlR_InWorktreesView_ShowsError verifies that Ctrl+R outside the PR view
-// shows a helpful error message directing the user to switch views.
-func TestModel_CtrlR_InWorktreesView_ShowsError(t *testing.T) {
-	m := NewModel()
-	m.view = viewWorktrees
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	result := updated.(*Model)
-
-	assert.NotEmpty(t, result.statusErr, "should show an error when not in PR view")
-	assert.NotNil(t, cmd)
-}
-
-// TestModel_CtrlR_InPRView_WithValidPR_DispatchesProvisionCmd verifies that Ctrl+R
-// with a selected PR dispatches the provisioning command and sets a loading status.
-func TestModel_CtrlR_InPRView_WithValidPR_DispatchesProvisionCmd(t *testing.T) {
-	m := NewModel()
-	m.view = viewPRs
-	m.prs = []domain.PullRequest{{Number: 42, Branch: "feat/my-feature", Title: "My Feature"}}
-	m.selectedPRIdx = 0
-	// Pre-populate Worktrees so the reuse path fires synchronously (no git I/O).
-	m.Worktrees = []domain.Worktree{
-		{Path: "/home/user/worktrees/feat-my-feature", Branch: "feat/my-feature"},
-	}
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	result := updated.(*Model)
-
-	require.NotNil(t, cmd, "should return provisionPRReviewWorktreeCmd")
-	assert.Empty(t, result.statusErr, "should not set an error on valid dispatch")
-	assert.NotEmpty(t, result.statusMsg, "should set a loading status message")
-
-	// Verify the cmd resolves to a prReviewWorktreeDoneMsg for the correct worktree.
-	msg := cmd()
-	doneMsg, ok := msg.(prReviewWorktreeDoneMsg)
-	require.True(t, ok, "cmd should resolve to prReviewWorktreeDoneMsg")
-	assert.Nil(t, doneMsg.err)
-	assert.Equal(t, "/home/user/worktrees/feat-my-feature", doneMsg.worktreePath)
-}
-
-// TestModel_PRReviewWorktreeDoneMsg_OpensAgentModal verifies that a successful
-// prReviewWorktreeDoneMsg opens the AgentLauncherModal with the review prompt.
-func TestModel_PRReviewWorktreeDoneMsg_OpensAgentModal(t *testing.T) {
-	m := NewModel()
-	m.statusMsg = "Provisioning review worktree…"
-
-	updated, _ := m.Update(prReviewWorktreeDoneMsg{
-		worktreePath: "/home/user/worktrees/pr-42-feat-test",
-	})
-	result := updated.(*Model)
-
-	require.NotNil(t, result.activeModal, "AgentLauncherModal should be open")
-	assert.Equal(t, "SPAWN AGENT", result.activeModal.Title())
-	assert.Empty(t, result.statusMsg, "loading status should be cleared on success")
-}
-
-// TestModel_PRReviewWorktreeDoneMsg_WithError_ShowsStatusError verifies that a failed
-// prReviewWorktreeDoneMsg shows an error and does not open the agent modal.
-func TestModel_PRReviewWorktreeDoneMsg_WithError_ShowsStatusError(t *testing.T) {
-	m := NewModel()
-	m.statusMsg = "Provisioning review worktree…"
-
-	updated, cmd := m.Update(prReviewWorktreeDoneMsg{
-		err: errors.New("git: branch not found"),
-	})
-	result := updated.(*Model)
-
-	assert.Nil(t, result.activeModal, "modal should not open on error")
-	assert.Contains(t, result.statusErr, "PR review setup failed")
-	assert.Empty(t, result.statusMsg, "loading status should be cleared on error")
-	assert.NotNil(t, cmd)
-}
-
-// TestModel_ProvisionPRReviewWorktreeCmd_ReusesExistingWorktree verifies that when
-// a worktree for the PR branch already exists, the provisioning command reuses that
-// path without attempting a new git checkout.
-func TestModel_ProvisionPRReviewWorktreeCmd_ReusesExistingWorktree(t *testing.T) {
-	m := NewModel()
-	m.RepoPath = "/home/user/nexus"
-	m.Worktrees = []domain.Worktree{
-		{Path: "/home/user/worktrees/feat-existing", Branch: "feat/existing"},
-	}
-	pr := domain.PullRequest{Number: 99, Branch: "feat/existing"}
-
-	cmd := m.provisionPRReviewWorktreeCmd(pr)
-	require.NotNil(t, cmd)
-
-	msg := cmd()
-	doneMsg, ok := msg.(prReviewWorktreeDoneMsg)
-	require.True(t, ok)
-	assert.Nil(t, doneMsg.err, "should not error when reusing existing worktree")
-	assert.Equal(t, "/home/user/worktrees/feat-existing", doneMsg.worktreePath)
 }
 
 // TestModel_Enter_PR_JumpsToExistingSession verifies that pressing Enter on a

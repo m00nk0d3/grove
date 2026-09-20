@@ -44,29 +44,12 @@ var keybindingGroups = []bindingGroup{
 		},
 	},
 	{
-		title: "WORKTREE OPERATIONS",
+		title: "CONTEXT ACTIONS",
 		bindings: [][2]string{
-			{"Enter (Issues view)", "Create worktree from selected issue"},
-			{"Ctrl+D", "Delete selected worktree"},
-			{"Ctrl+B", "Cleanup stale worktrees & merged branches"},
-			{"s", "Open shell in worktree"},
-			{"x", "Close session and terminal tab"},
-		},
-	},
-	{
-		title: "WORKFLOWS",
-		bindings: [][2]string{
-			{"o (Issues view)", "Run imp for selected issue"},
-			{"o (PRs view)", "Run review, CI repair, or conflict resolution"},
-			{"o (Dashboard)", "Run merged-worktree cleanup"},
-		},
-	},
-	{
-		title: "AI AGENTS",
-		bindings: [][2]string{
-			{"a", "Spawn Claude Code"},
-			{"c", "Spawn GitHub Copilot"},
-			{"Space", "Unified agent launcher"},
+			{"Tab", "Focus the visible Actions panel"},
+			{"a", "Jump directly to the Actions panel"},
+			{"j / k", "Select an action while focused"},
+			{"Enter", "Run the selected action"},
 		},
 	},
 	{
@@ -75,7 +58,7 @@ var keybindingGroups = []bindingGroup{
 			{"w / W", "Worktrees view"},
 			{"i / I", "Issues view"},
 			{"p / P", "PRs view"},
-			{"t", "Open settings (theme, GitHub, AI agents, worktrees)"},
+			{"t", "Open settings"},
 		},
 	},
 	{
@@ -83,8 +66,6 @@ var keybindingGroups = []bindingGroup{
 		bindings: [][2]string{
 			{"f1 / ?", "Open this help modal"},
 			{"/ / Ctrl+F", "Open fuzzy finder"},
-			{"Ctrl+R", "AI-assisted PR review (PRs view)"},
-			{"g", "Open selected item in GitHub"},
 			{"r", "Force-refresh GitHub data"},
 			{"PgDown / n", "Next page"},
 			{"PgUp", "Previous page"},
@@ -352,34 +333,32 @@ const tipsContent = `COMMON WORKFLOWS
 1. Create a worktree from a GitHub issue
    Open the Issues view, select an issue, then press Enter.
    Choose the branch type and confirm.
-   Nexus creates the branch and worktree automatically.
+   Grove creates the branch and worktree automatically.
 
 2. Switch to a worktree and start coding
-   Navigate to the worktree with ↑/↓, then press Enter or s.
-   Your shell opens directly in the worktree directory.
+   Navigate to the worktree with ↑/↓, then press Enter.
+   Grove focuses its existing session or opens the worktree.
 
-3. Spawn an AI agent in the right context
-   Select a worktree, then press a (Claude), c (Copilot),
-   or Space to open the unified launcher. Nexus suspends
-   itself and resumes when the agent exits.
+3. Run a contextual action
+   Select an issue, PR, or worktree. The right-hand Actions
+   panel shows available operations and Sandcastle workflows.
+   Press a to focus it, j/k to select, and Enter to run.
 
 4. Search everything with the fuzzy finder
    Press / or Ctrl+F to open the fuzzy finder overlay.
    Start typing to instantly filter worktrees, issues, PRs,
    files, branches, and agent history.
 
-5. AI-assisted PR review
-   In the PRs view, select a PR and press Ctrl+R.
-   Nexus provisions a review worktree and pre-seeds your
-   agent with a structured code-review prompt.
+5. Review or repair a PR
+   In the PRs view, select a PR and focus the Actions panel.
+   Choose review, CI repair, or conflict resolution.
 
 6. Keep GitHub data fresh
-   Nexus auto-syncs on startup and at the configured interval
+   Grove auto-syncs on startup and at the configured interval
    (~5 min default). Press r to force an immediate refresh.
 
 7. Open an issue or PR in the browser
-   While in the Issues or PRs view, press g to open the
-   selected item in your default browser via gh CLI.
+   Select the item, focus Actions, then choose Open on GitHub.
 
 8. Switch themes on the fly
    Press t → open Settings → Appearance to cycle through
@@ -393,15 +372,8 @@ GitHub authentication failure
   Fix: Run  gh auth login  in your terminal and follow the
   prompts to authenticate with your GitHub account.
 
-Agent not found (Claude / Copilot / Aider)
-  Symptom: "binary not found" error when spawning an agent.
-  Fix: Install the missing tool, or disable it in config:
-    ~/.grove/config.toml  →  ai_agents.claude_enabled = false
-  For Claude: https://docs.anthropic.com/en/docs/claude-code
-  For Copilot: gh extension install github/gh-copilot
-
 git not in PATH
-  Symptom: Nexus starts but shows no worktrees.
+  Symptom: Grove starts but shows no worktrees.
   Fix: Ensure git is installed and accessible in your PATH.
   Run  git --version  to verify.
 

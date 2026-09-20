@@ -15,7 +15,8 @@ Grove currently acts as a terminal UI for managing Git worktrees, syncing GitHub
 - A Bubble Tea/Lip Gloss terminal UI with worktree, issue, pull request, settings, fuzzy finder, help, and active-session surfaces.
 - Git worktree operations owned directly by Grove through local Git integration.
 - GitHub pull request and issue synchronization through the GitHub CLI.
-- Existing direct agent launchers for Claude Code, GitHub Copilot CLI, and Aider. These describe current functionality, but the target architecture moves agent launching and orchestration to Sandcastle, with Pi Agent as Sandcastle's primary/default coding agent.
+- Historical direct launchers for Claude Code, GitHub Copilot CLI, and Aider
+  were removed after workflow launching moved to Sandcastle.
 - Local persistence for configuration, GitHub metadata, agent history, and active sessions.
 - Active sessions tracked primarily through process IDs and worktree paths.
 
@@ -72,7 +73,9 @@ Ownership and observation are distinct: Grove may display an agent, and Herdr ma
 
 Developers running many concurrent AI-assisted development streams need one place to understand what is happening. They need to see worktrees, agents, issues, pull requests, terminal panes, and workflow progress together instead of switching between Git commands, GitHub, terminal tabs, Herdr, and Sandcastle.
 
-The current Grove experience already reduces context switching for Git worktrees, GitHub metadata, and direct agent launchers. However, as Herdr and Sandcastle enter the workflow, Grove needs a stronger control-center model and a cleaner ownership boundary. Without one, users would have to mentally connect:
+The Grove experience reduces context switching for Git worktrees, GitHub
+metadata, and Sandcastle workflows. Grove needs a clear control-center model
+and ownership boundary so users do not have to mentally connect:
 
 - A Git worktree in Grove.
 - A Herdr pane or workspace where the terminal is running.
@@ -213,9 +216,11 @@ In standalone mode:
 - Active sessions should evolve from PID-first tracking to runtime-reference tracking.
 - PID-based session health remains valid for local runtime sessions.
 - Herdr-backed session health should use Herdr pane or agent state rather than launcher process IDs.
-- Existing direct agent launchers should be treated as legacy/current behavior, not the target architecture.
+- Historical direct agent launchers have been removed.
 - Pi Agent is the main/default agent for Sandcastle-orchestrated coding workflows.
-- Claude Code, GitHub Copilot CLI, Aider, and other agents may remain useful as specialist Sandcastle agent kinds, but Grove should not own their process launch path.
+- Claude Code, GitHub Copilot CLI, Aider, and other agents may remain useful as
+  specialist Sandcastle agent kinds, but Grove does not own their process
+  launch path.
 - Agent-related configuration should move toward Sandcastle workflow defaults rather than per-agent Grove launcher toggles.
 - Herdr-backed agent visibility should come from Herdr and Sandcastle state, not from Grove launching the agent itself.
 - Grove should show externally launched Herdr or Sandcastle agents read-only when it can discover them.
@@ -280,8 +285,7 @@ This is not intended as final code. It captures the architectural decision that 
 - Sandcastle-unavailable tests should verify that Grove still works while marking workflow status unavailable.
 - Sandcastle workflow-start tests should verify that Grove requests Pi Agent by default when no alternate agent kind is selected.
 - Sandcastle status parsing tests should verify that Pi-backed workflow runs render as native Grove workflow and agent status, not as raw command output.
-- Legacy direct agent launcher tests should remain only as long as the legacy launchers remain in the codebase.
-- New tests should prefer Sandcastle workflow-start behavior over direct agent process-launch behavior.
+- Sandcastle workflow-start behavior replaces direct agent process-launch tests.
 - Existing modal and app update tests are good prior art for testing UI behavior at a high seam.
 - Existing config tests are good prior art for testing TOML defaults and persistence.
 - Existing session tests are good prior art for extending persistence from PID-only sessions to runtime references.

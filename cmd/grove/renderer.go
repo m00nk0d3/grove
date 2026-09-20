@@ -19,11 +19,11 @@ import (
 )
 
 const (
-	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Select | [Spc] Agents | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
-	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
-	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [Ctrl+R] Review | [t] Settings | [g] GH | [/] Fuzzy | [q/esc]"
+	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Open | [a] Actions | [t] Settings | [/] Fuzzy | [q/esc]"
+	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [a] Actions | [t] Settings | [/] Fuzzy | [q/esc]"
+	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [a] Actions | [t] Settings | [/] Fuzzy | [q/esc]"
 	footerHintsDefault   = footerHintsWorktrees
-	actionBarHints       = "[enter] Open  [c-d] Delete  [c-l] Lock | [f1] Help"
+	actionBarHints       = "[enter] Open  [a] Focus actions | [f1] Help"
 	defaultTermWidth     = 120
 	navPanelInner        = 18
 	// ctxPanelInner is no longer a constant — use computeCtxInner(termWidth) instead.
@@ -121,7 +121,7 @@ func renderSessionBlock(s *domain.Session) string {
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, actionSelection ...int) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
@@ -258,7 +258,12 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 		list = renderWorktreePanel(worktrees, selectedIdx, theme, listInner, panelHeight, focused == panelList, sessions)
 	}
 
-	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState)
+	actionIdx := 0
+	if len(actionSelection) > 0 {
+		actionIdx = actionSelection[0]
+	}
+	actions := contextActionsFor(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, sessions)
+	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState, actions, actionIdx)
 	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, nav, list, ctx)
 	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, prs, currentPage)
 	actionBar := renderActionBar(theme, termWidth)
@@ -625,7 +630,7 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 	return st.Render(t.Render())
 }
 
-func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session, missionState *domain.MissionControlState) string {
+func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session, missionState *domain.MissionControlState, actions []contextActionOption, actionIdx int) string {
 	var content string
 	switch view {
 	case viewDashboard:
@@ -651,7 +656,7 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 			}
 			assigneesStr := formatAssignees(iss.Assignees)
 			hierarchyStr := buildIssueHierarchyStr(iss, issues, ctxInner)
-			content = fmt.Sprintf("Context: Issue #%d\n%s\n\nStatus: %s %s\nAssigned: %s\nLabels: %s%s\n\n%s\n\n[g] Open in GitHub", iss.Number, title, statusDot, statusText, assigneesStr, labels, hierarchyStr, body)
+			content = fmt.Sprintf("Context: Issue #%d\n%s\n\nStatus: %s %s\nAssigned: %s\nLabels: %s%s\n\n%s", iss.Number, title, statusDot, statusText, assigneesStr, labels, hierarchyStr, body)
 		}
 	case viewPRs:
 		if len(prs) == 0 || prIdx < 0 || prIdx >= len(prs) {
@@ -672,7 +677,7 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 			author := truncateStr(pr.Author, ctxInner-9) // "Author: @" prefix = 9 chars
 			// "Labels: " prefix = 8 chars; wrap to remaining width to avoid re-wrap.
 			labels := wrapText(labelsStr, ctxInner-8)
-			content = fmt.Sprintf("Context: PR #%d\n%s\n\nBranch: %s\nAuthor: @%s\nStatus: %s\nLabels: %s\n\n%s\n\n[g] Open in GitHub", pr.Number, title, branch, author, state, labels, body)
+			content = fmt.Sprintf("Context: PR #%d\n%s\n\nBranch: %s\nAuthor: @%s\nStatus: %s\nLabels: %s\n\n%s", pr.Number, title, branch, author, state, labels, body)
 		}
 	default: // viewWorktrees
 		if len(worktrees) == 0 || worktreeIdx < 0 || worktreeIdx >= len(worktrees) {
@@ -692,7 +697,7 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 					body = "(no description)"
 				}
 				content = fmt.Sprintf(
-					"Context: PR #%d\n%s\n\nGH Title: %s\nAuthor: @%s\nStatus: %s %s\nLabels: %s\n\n%s\n\nAGENT COMMANDS:\n[a] Spawn Claude Code\n[c] Spawn Copilot\n[f] Spawn Aider\n[s] Open Shell in WT",
+					"Context: PR #%d\n%s\n\nGH Title: %s\nAuthor: @%s\nStatus: %s %s\nLabels: %s\n\n%s",
 					pr.Number, titleTrunc, pr.Title, pr.Author, statusDot, pr.State, labels, body,
 				)
 			} else {
@@ -700,12 +705,37 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 				pathTrunc := truncateStr(wt.Path, ctxInner-len(pathLabel))
 				prHint := buildPRHint(wt.Branch, issues, worktrees)
 				content = fmt.Sprintf(
-					"Context: %s\nBranch: %s\nPath: %s%s\n\nAGENT COMMANDS:\n[a] Spawn Claude Code\n[c] Spawn Copilot\n[f] Spawn Aider\n[s] Open Shell in WT",
+					"Context: %s\nBranch: %s\nPath: %s%s",
 					filepath.Base(wt.Path), wt.Branch, pathTrunc, prHint,
 				)
 			}
 			content += renderSessionBlock(sess)
 		}
+	}
+	if len(actions) > 0 {
+		var actionBlock strings.Builder
+		actionBlock.WriteString("ACTIONS  [a] focus\n")
+		if focused {
+			for i, action := range actions {
+				cursor := "  "
+				if i == actionIdx {
+					cursor = "> "
+				}
+				actionBlock.WriteString(cursor)
+				actionBlock.WriteString(action.label)
+				actionBlock.WriteByte('\n')
+			}
+			actionBlock.WriteString("  Enter run")
+		} else {
+			labels := make([]string, 0, len(actions))
+			for _, action := range actions {
+				labels = append(labels, action.label)
+			}
+			actionBlock.WriteString("  ")
+			actionBlock.WriteString(strings.Join(labels, "  •  "))
+		}
+		actionBlock.WriteString("\n")
+		content = actionBlock.String() + content
 	}
 	st := theme.GetStyle("context-panel").Width(ctxInner + panelPaddingOverhead)
 	if !focused {

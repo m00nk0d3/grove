@@ -75,31 +75,8 @@ type lazyLoadContextMsg struct {
 // (browser, editor, gh CLI, etc.).
 type browserOpenErrMsg struct{ err error }
 
-// agentDoneMsg is dispatched when an AI agent process exits.
-// It carries enough information to log the run and update UI state.
-type agentDoneMsg struct {
-	agentName string
-	prompt    string
-	exitCode  int
-	startedAt time.Time
-	session   domain.Session // non-zero WorktreePath means a session was recorded
-}
-
-// aiderFilesFetchedMsg carries the result of listing modified files for the Aider file picker.
-type aiderFilesFetchedMsg struct {
-	worktreePath string
-	files        []string
-	err          error
-}
-
 // clearErrorMsg is dispatched after the 5-second auto-dismiss timer fires.
 type clearErrorMsg struct{}
-
-// prReviewWorktreeDoneMsg is dispatched after the PR review worktree is provisioned.
-type prReviewWorktreeDoneMsg struct {
-	worktreePath string
-	err          error
-}
 
 // updateCheckedMsg carries the result of the startup version check.
 type updateCheckedMsg struct {
@@ -272,19 +249,6 @@ type herdrWorktreeOpenedMsg struct {
 // being cleared by clearMsgCmd.
 const msgAutoDismissDuration = 3 * time.Second
 
-// prReviewAgentPrompt is the pre-seeded prompt for the AI-assisted PR review flow.
-// It instructs the agent on what to review and how to report findings.
-const prReviewAgentPrompt = `You are performing a pull request code review. If you have a skill specifically for reviewing pull requests, using it is MANDATORY — invoke it before doing anything else.
-
-Your review must cover:
-- Correctness: logic errors, off-by-ones, unhandled edge cases
-- Security: injection, auth issues, exposed secrets, unsafe operations
-- Performance: unnecessary allocations, N+1 queries, blocking calls
-- Maintainability: unclear naming, missing/wrong tests, dead code
-- Breaking changes: API contracts, backward compatibility
-
-Be direct and actionable. Skip formatting/style nitpicks unless they materially harm readability. For each finding, state the file + line, the problem, and a concrete suggestion to fix it.`
-
 // clearMsgMsg is dispatched after the success-notification timer fires.
 type clearMsgMsg struct{}
 
@@ -344,6 +308,12 @@ const (
 
 const pageSize = 50
 
+type contextActionOption struct {
+	label        string
+	action       string
+	workflowKind string
+}
+
 // Model represents the root Bubbletea model for the Nexus TUI application.
 // It manages the list of git worktrees, user interactions, and active modals.
 type Model struct {
@@ -367,6 +337,7 @@ type Model struct {
 	selectedPRIdx    int                  // Currently selected PR index
 	focused          focusedPanel         // Which panel currently has keyboard focus
 	ctxScrollOffset  int                  // Scroll position within the context panel
+	contextActionIdx int                  // Selected action in the context panel
 
 	// Pagination state
 	currentPage int // 0-based current page index for issues/PRs lists
@@ -388,14 +359,6 @@ type Model struct {
 	// issueTree caches the depth-first-ordered tree built from m.issues.
 	// Rebuilt whenever m.issues is updated (debouncedRenderMsg handler).
 	issueTree []issueTreeRow
-
-	// Copilot prompt state
-	copilotPromptActive bool            // true while the inline Copilot prompt is open
-	copilotPromptInput  textinput.Model // text input for entering the Copilot prompt
-
-	// Claude prompt state
-	claudePromptActive bool            // true while the inline Claude prompt is open
-	claudePromptInput  textinput.Model // text input for entering the Claude prompt
 
 	// Fuzzy finder state
 	fuzzyAllItems []domain.SearchResult // full unfiltered search index
@@ -514,27 +477,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modal.CleanupConfirmedMsg:
 			m.activeModal = nil
 			return m, m.performCleanupCmd(msg.Worktrees, msg.Branches)
-		case modal.AiderLaunchMsg:
-			m.activeModal = nil
-			if selected, ok := m.selectedWorktree(); ok {
-				return m, m.spawnAiderCmd(selected.Path, msg.Files)
-			}
-			return m, nil
 		case modal.UpdateConfirmedMsg:
 			m.activeModal = nil
 			m.selfUpdating = true
 			return m, selfUpdateCmd(m.latestVersion)
-		case modal.SpawnAgentMsg:
-			m.activeModal = nil
-			switch msg.AgentName {
-			case modal.AgentNameCopilot:
-				return m, m.spawnCopilotCmd(msg.WorktreePath, msg.Prompt)
-			case modal.AgentNameClaude:
-				return m, m.spawnClaudeCmd(msg.WorktreePath, msg.Prompt)
-			case modal.AgentNameAider:
-				return m, m.fetchAiderFilesCmd(msg.WorktreePath)
-			}
-			return m, nil
 		case modal.WorkflowLaunchMsg:
 			m.activeModal = nil
 			m.statusMsg = fmt.Sprintf("Starting %s workflow…", msg.Kind)
@@ -570,59 +516,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
-	}
-
-	// While the Copilot inline prompt is open, route key events to the textinput.
-	// Non-key messages (e.g. agentDoneMsg, tea.WindowSizeMsg) fall through to
-	// the main switch below so they are still handled correctly.
-	if m.copilotPromptActive {
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.Type {
-			case tea.KeyEnter:
-				prompt := strings.TrimSpace(m.copilotPromptInput.Value())
-				m.copilotPromptActive = false
-				if selected, ok := m.selectedWorktree(); ok {
-					return m, m.spawnCopilotCmd(selected.Path, prompt)
-				}
-				m.copilotPromptInput.SetValue("")
-				return m, nil
-			case tea.KeyEsc:
-				m.copilotPromptActive = false
-				m.copilotPromptInput.SetValue("")
-				return m, nil
-			default:
-				var cmd tea.Cmd
-				m.copilotPromptInput, cmd = m.copilotPromptInput.Update(keyMsg)
-				return m, cmd
-			}
-		}
-		// Non-key message: fall through to the main switch to handle it normally.
-	}
-
-	// While the Claude inline prompt is open, route key events to the textinput.
-	// Non-key messages fall through to the main switch below.
-	if m.claudePromptActive {
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.Type {
-			case tea.KeyEnter:
-				prompt := strings.TrimSpace(m.claudePromptInput.Value())
-				m.claudePromptActive = false
-				if selected, ok := m.selectedWorktree(); ok {
-					return m, m.spawnClaudeCmd(selected.Path, prompt)
-				}
-				m.claudePromptInput.SetValue("")
-				return m, nil
-			case tea.KeyEsc:
-				m.claudePromptActive = false
-				m.claudePromptInput.SetValue("")
-				return m, nil
-			default:
-				var cmd tea.Cmd
-				m.claudePromptInput, cmd = m.claudePromptInput.Update(keyMsg)
-				return m, cmd
-			}
-		}
-		// Non-key message: fall through to the main switch to handle it normally.
 	}
 
 	// While the fuzzy finder overlay is open, route key events here.
@@ -673,67 +566,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyTab:
 			m.focused = (m.focused + 1) % panelCount
+			if m.focused == panelCtx {
+				m.contextActionIdx = 0
+			}
 			return m, nil
 		case tea.KeyEnter:
-			switch m.view {
-			case viewIssues:
-				issue, ok := m.selectedIssue()
-				if !ok {
-					return m, nil
-				}
-				// If an active session already exists for this issue's worktree, jump to it.
-				if s := m.sessionForIssue(issue); s != nil {
-					return m, m.focusSessionCmd(*s)
-				}
-				m.activeModal = modal.NewCreateModalForIssue(issue, m.RepoPath, computeParentBranches(m.issues, m.Worktrees)...)
-				return m, nil
-			case viewPRs:
-				if len(m.prs) == 0 || m.selectedPRIdx >= len(m.prs) {
-					return m, nil
-				}
-				pr := m.prs[m.selectedPRIdx]
-				path := prWorktreePath(m.RepoPath, pr.Branch)
-				// If an active session already exists for this PR's worktree, jump to it.
-				if s := m.sessionForPR(pr); s != nil {
-					return m, m.focusSessionCmd(*s)
-				}
-				// Guard: if any existing worktree already uses this branch, show an error.
-				for _, wt := range m.Worktrees {
-					if wt.Branch == pr.Branch {
-						m.statusErr = fmt.Sprintf("Worktree for branch %q already exists at %s", pr.Branch, wt.Path)
-						return m, clearErrorCmd()
-					}
-				}
-				m.activeModal = modal.NewPRCheckoutModal(pr, path)
-				return m, nil
-			default:
-				if selected, ok := m.selectedWorktree(); ok {
-					useHerdr := m.insideHerdr && m.Config.Herdr.Enabled && m.Config.Herdr.PreferWorktreeAPI
-					// If a live session already exists for this worktree, focus it
-					// instead of spawning a new one. Skip any stale entry whose
-					// shell PID is confirmed dead so that closed terminals don't
-					// block re-spawning. We no longer track AgentPID, so we accept
-					// the small risk of a duplicate spawn if the agent outlived its
-					// terminal window.
-					for _, s := range m.sessions {
-						if !pathsEqual(s.WorktreePath, selected.Path) {
-							continue
-						}
-						if useHerdr && s.Runtime != domain.RuntimeHerdr {
-							continue
-						}
-						if s.ShellPID != nil && !pidAlive(*s.ShellPID) {
-							break // stale — fall through to spawn
-						}
-						return m, m.focusSessionCmd(s)
-					}
-					if useHerdr {
-						return m, m.openHerdrWorktreeCmd(selected.Path)
-					}
-					return m, m.spawnSessionCmd(selected.Path)
-				}
-				return m, nil
+			if m.focused == panelCtx {
+				return m.runSelectedContextAction()
 			}
+			return m.activateSelectedItem()
 		case tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyCtrlC:
@@ -741,29 +582,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF1:
 			m.activeModal = modal.NewHelpModal()
 			return m, nil
-		case tea.KeyCtrlD:
-			if selected, ok := m.selectedWorktree(); ok {
-				m.activeModal = modal.NewDeleteModal(selected)
-			}
-		case tea.KeyCtrlB:
-			if m.view != viewWorktrees {
-				m.statusErr = "Cleanup (Ctrl+B) is only available in the Worktrees view — press w to switch"
-				return m, clearErrorCmd()
-			}
-			return m, m.loadCleanupDataCmd()
 		case tea.KeyCtrlF:
 			return m, m.openFuzzyCmd()
-		case tea.KeyCtrlR:
-			if m.view != viewPRs {
-				m.statusErr = "PR Review (Ctrl+R) is only available in the PRs view — press P to switch"
-				return m, clearErrorCmd()
-			}
-			if len(m.prs) == 0 || m.selectedPRIdx >= len(m.prs) {
-				m.statusErr = "No PR selected — select one first"
-				return m, clearErrorCmd()
-			}
-			m.statusMsg = "Provisioning review worktree…"
-			return m, m.provisionPRReviewWorktreeCmd(m.prs[m.selectedPRIdx])
 		case tea.KeyUp:
 			m.moveUp()
 			return m, m.maybeLazyLoadCmd()
@@ -776,34 +596,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyPgUp:
 			m.prevPage()
 			return m, nil
-		case tea.KeySpace:
-			if m.view != viewWorktrees {
-				m.statusErr = "Agent launcher is only available in the Worktrees view — press w to switch"
-				return m, clearErrorCmd()
-			}
-			if selected, ok := m.selectedWorktree(); ok {
-				m.activeModal = modal.NewAgentLauncherModal(m.Config, selected.Path)
-				return m, nil
-			}
-			m.statusErr = "No worktree selected — select one first"
-			return m, clearErrorCmd()
 		case tea.KeyRunes:
 			switch msg.String() {
 			case "q":
 				return m, tea.Quit
-			case " ":
-				// Spacebar can arrive as KeyRunes " " on some terminals (e.g. Windows).
-				// Mirror the KeySpace handler above.
-				if m.view != viewWorktrees {
-					m.statusErr = "Agent launcher is only available in the Worktrees view — press w to switch"
-					return m, clearErrorCmd()
-				}
-				if selected, ok := m.selectedWorktree(); ok {
-					m.activeModal = modal.NewAgentLauncherModal(m.Config, selected.Path)
-					return m, nil
-				}
-				m.statusErr = "No worktree selected — select one first"
-				return m, clearErrorCmd()
 			case "?":
 				m.activeModal = modal.NewHelpModal()
 				return m, nil
@@ -815,47 +611,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.maybeLazyLoadCmd()
 			case "t":
 				m.activeModal = modal.NewSettingsModal(m.Config, data.DefaultConfigPath())
-			case "o", "O":
-				if !m.Config.Sandcastle.Enabled {
-					m.statusErr = "Sandcastle workflows are disabled in settings"
-					return m, clearErrorCmd()
-				}
-				if m.workflowStarter == nil {
-					m.statusErr = "Grove Sandcastle runtime is unavailable"
-					return m, clearErrorCmd()
-				}
-				switch m.view {
-				case viewIssues:
-					issue, ok := m.selectedIssue()
-					if !ok {
-						m.statusErr = "No issue selected — select one first"
-						return m, clearErrorCmd()
-					}
-					m.activeModal = modal.NewIssueWorkflowLauncherModal(issue)
-				case viewPRs:
-					if len(m.prs) == 0 || m.selectedPRIdx >= len(m.prs) {
-						m.statusErr = "No PR selected — select one first"
-						return m, clearErrorCmd()
-					}
-					m.activeModal = modal.NewPRWorkflowLauncherModal(m.prs[m.selectedPRIdx])
-				default:
-					m.activeModal = modal.NewMaintenanceWorkflowLauncherModal()
-				}
+			case "a", "A":
+				m.focused = panelCtx
+				m.contextActionIdx = 0
 				return m, nil
 			case "d", "D":
 				m.view = viewDashboard
 				m.ctxScrollOffset = 0
+				m.contextActionIdx = 0
 			case "w", "W":
 				m.view = viewWorktrees
 				m.ctxScrollOffset = 0
+				m.contextActionIdx = 0
 				m.currentPage = 0
 			case "i", "I":
 				m.view = viewIssues
 				m.ctxScrollOffset = 0
+				m.contextActionIdx = 0
 				m.currentPage = 0
 			case "p", "P":
 				m.view = viewPRs
 				m.ctxScrollOffset = 0
+				m.contextActionIdx = 0
 				m.currentPage = 0
 			case "r", "R":
 				if m.syncing {
@@ -875,108 +652,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "n":
 				m.nextPage()
 				return m, nil
-			case "g", "G":
-				return m, m.openInBrowserCmd()
-			case "s", "S":
-				if m.view == viewWorktrees {
-					if selected, ok := m.selectedWorktree(); ok {
-						return m, m.spawnSessionCmd(selected.Path)
-					}
-					m.statusErr = "No worktree selected — select one first"
-					return m, clearErrorCmd()
-				}
-			case "c", "C":
-				if m.view != viewWorktrees {
-					m.statusErr = "Copilot (c) is only available in the Worktrees view — press w to switch"
-					return m, clearErrorCmd()
-				}
-				if !m.Config.AIAgents.CopilotEnabled {
-					m.statusErr = "Copilot is disabled — set copilot_enabled = true in ~/.grove/config.toml"
-					return m, clearErrorCmd()
-				}
-				if _, ok := m.selectedWorktree(); !ok {
-					m.statusErr = "No worktree selected — select one first"
-					return m, clearErrorCmd()
-				}
-				if _, err := exec.LookPath("gh"); err != nil {
-					m.statusErr = "gh not found on $PATH — install GitHub CLI to use Copilot"
-					return m, clearErrorCmd()
-				}
-				ti := textinput.New()
-				ti.Placeholder = "Enter Copilot prompt…"
-				focusCmd := ti.Focus()
-				m.copilotPromptInput = ti
-				m.copilotPromptActive = true
-				return m, focusCmd
-			case "a", "A":
-				if m.view != viewWorktrees {
-					m.statusErr = "Claude (a) is only available in the Worktrees view — press w to switch"
-					return m, clearErrorCmd()
-				}
-				if !m.Config.AIAgents.ClaudeEnabled {
-					m.statusErr = "Claude is disabled — set claude_enabled = true in ~/.grove/config.toml"
-					return m, clearErrorCmd()
-				}
-				if _, ok := m.selectedWorktree(); !ok {
-					m.statusErr = "No worktree selected — select one first"
-					return m, clearErrorCmd()
-				}
-				if _, err := resolveClaudeBinary(m.Config); err != nil {
-					m.statusErr = fmt.Sprintf("claude binary not found: %v", err)
-					return m, clearErrorCmd()
-				}
-				ti := textinput.New()
-				ti.Placeholder = "Enter Claude prompt…"
-				focusCmd := ti.Focus()
-				m.claudePromptInput = ti
-				m.claudePromptActive = true
-				return m, focusCmd
-			case "f", "F":
-				if m.view != viewWorktrees {
-					m.statusErr = "Aider (f) is only available in the Worktrees view — press w to switch"
-					return m, clearErrorCmd()
-				}
-				if !m.Config.AIAgents.AiderEnabled {
-					m.statusErr = "Aider is disabled — set aider_enabled = true in ~/.grove/config.toml"
-					return m, clearErrorCmd()
-				}
-				selected, ok := m.selectedWorktree()
-				if !ok {
-					m.statusErr = "No worktree selected — select one first"
-					return m, clearErrorCmd()
-				}
-				if _, err := resolveAiderBinary(m.Config); err != nil {
-					m.statusErr = "aider not found on $PATH — install Aider to use this feature"
-					return m, clearErrorCmd()
-				}
-				return m, m.fetchAiderFilesCmd(selected.Path)
-			case "x", "X":
-				if m.view != viewWorktrees {
-					return m, nil
-				}
-				selected, ok := m.selectedWorktree()
-				if !ok {
-					return m, nil
-				}
-				for _, s := range m.sessions {
-					if pathsEqual(s.WorktreePath, selected.Path) {
-						return m, m.killSessionCmd(s)
-					}
-				}
-				m.statusErr = "No active session for this worktree"
-				return m, clearErrorCmd()
+
 			case "/":
 				return m, m.openFuzzyCmd()
 			}
 		}
-
-	case aiderFilesFetchedMsg:
-		if msg.err != nil {
-			m.statusErr = fmt.Sprintf("Failed to list files: %v", msg.err)
-			return m, clearErrorCmd()
-		}
-		m.activeModal = modal.NewAiderFilePicker(msg.files)
-		return m, nil
 
 	case worktreeOpDoneMsg:
 		// Refresh the worktree list after an add/remove operation.
@@ -985,15 +665,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusErr = fmt.Sprintf("Git operation failed: %v", msg.err)
 			return m, tea.Batch(m.refreshWorktreesCmd(), clearErrorCmd())
 		}
-		return m, m.refreshWorktreesCmd()
-
-	case prReviewWorktreeDoneMsg:
-		m.statusMsg = ""
-		if msg.err != nil {
-			m.statusErr = fmt.Sprintf("PR review setup failed: %v", msg.err)
-			return m, tea.Batch(clearErrorCmd(), m.refreshWorktreesCmd())
-		}
-		m.activeModal = modal.NewAgentLauncherModalWithPrompt(m.Config, msg.worktreePath, prReviewAgentPrompt)
 		return m, m.refreshWorktreesCmd()
 
 	case worktreeSwitchedMsg:
@@ -1054,50 +725,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusErr = fmt.Sprintf("Failed to open in browser: %v", msg.err)
 			return m, clearErrorCmd()
 		}
-
-	case agentDoneMsg:
-		m.copilotPromptActive = false
-		m.copilotPromptInput.SetValue("")
-		m.claudePromptActive = false
-		m.claudePromptInput.SetValue("")
-		if m.db != nil {
-			entry := data.AgentHistoryEntry{
-				AgentName: msg.agentName,
-				Prompt:    msg.prompt,
-				ExitCode:  msg.exitCode,
-				StartedAt: msg.startedAt,
-				EndedAt:   time.Now(),
-			}
-			if err := data.LogAgentRun(m.db, entry); err != nil {
-				m.statusErr = fmt.Sprintf("failed to log agent run: %v", err)
-			}
-		}
-		// Sync the recorded session into m.sessions so the badge appears immediately.
-		if msg.session.WorktreePath != "" {
-			updated := false
-			for i := range m.sessions {
-				if pathsEqual(m.sessions[i].WorktreePath, msg.session.WorktreePath) {
-					m.sessions[i] = msg.session
-					updated = true
-					break
-				}
-			}
-			if !updated {
-				m.sessions = append(m.sessions, msg.session)
-			}
-		}
-		if msg.exitCode > 1 {
-			exitMsg := fmt.Sprintf("⚠ Agent exited with code %d", msg.exitCode)
-			if m.statusErr != "" {
-				m.statusErr = m.statusErr + "; " + exitMsg
-			} else {
-				m.statusErr = exitMsg
-			}
-		}
-		if m.statusErr != "" {
-			return m, tea.Batch(m.refreshWorktreesCmd(), clearErrorCmd())
-		}
-		return m, m.refreshWorktreesCmd()
 
 	case githubSyncedMsg:
 		// Store pending data and schedule debounce render instead of immediate update.
@@ -1348,6 +975,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View returns a string representation of the model's current state.
 func (m *Model) View() string {
+	actions := m.availableContextActions()
+	actionIdx := m.contextActionIdx
+	if actionIdx >= len(actions) {
+		actionIdx = max(0, len(actions)-1)
+	}
 	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.currentPage, m.sessions, func() *domain.ExternalIntegration {
 		if m.herdrSnapshot != nil {
 			return &m.herdrSnapshot.Integration
@@ -1358,7 +990,7 @@ func (m *Model) View() string {
 			return &m.sandcastleSnapshot.Integration
 		}
 		return nil
-	}(), m.missionState)
+	}(), m.missionState, actionIdx)
 
 	w, h := m.width, m.height
 	if w <= 0 {
@@ -1383,16 +1015,6 @@ func (m *Model) View() string {
 			ta.SetTheme(styles.NewTheme(styles.Themes[m.themeIdx]))
 		}
 		return overlay(m.activeModal.Title(), m.activeModal.View())
-	}
-
-	if m.copilotPromptActive {
-		return overlay("Spawn Copilot",
-			fmt.Sprintf("> %s\n\nEnter confirm (prompt optional)  •  Esc cancel", m.copilotPromptInput.View()))
-	}
-
-	if m.claudePromptActive {
-		return overlay("Spawn Claude Code",
-			fmt.Sprintf("> %s\n\nEnter confirm (prompt optional)  •  Esc cancel", m.claudePromptInput.View()))
 	}
 
 	if m.fuzzyActive {
@@ -1619,36 +1241,6 @@ func prWorktreePath(repoPath, branch string) string {
 	return filepath.Join(filepath.Dir(repoPath), "worktrees", filepath.Base(repoPath), branchSlug(branch))
 }
 
-// prReviewWorktreePath derives the filesystem path for a PR review worktree.
-// Uses naming convention pr-<number>-<branch-slug> as specified in issue #78.
-// The repo name is included to avoid path collisions when multiple projects share the same parent directory.
-func prReviewWorktreePath(repoPath string, prNumber int, branch string) string {
-	name := fmt.Sprintf("pr-%d-%s", prNumber, branchSlug(branch))
-	return filepath.Join(filepath.Dir(repoPath), "worktrees", filepath.Base(repoPath), name)
-}
-
-// provisionPRReviewWorktreeCmd returns a Cmd that provisions a worktree for the given PR.
-// It fetches the remote branch and creates a worktree at the pr-<number>-<branch-slug> path.
-// If a worktree for the branch already exists locally, it reuses that path instead.
-func (m *Model) provisionPRReviewWorktreeCmd(pr domain.PullRequest) tea.Cmd {
-	repoPath := m.RepoPath
-	worktreePath := prReviewWorktreePath(repoPath, pr.Number, pr.Branch)
-	// Check if a worktree for this branch already exists — reuse it if so.
-	for _, wt := range m.Worktrees {
-		if wt.Branch == pr.Branch {
-			worktreePath = wt.Path
-			return func() tea.Msg {
-				return prReviewWorktreeDoneMsg{worktreePath: worktreePath}
-			}
-		}
-	}
-	return func() tea.Msg {
-		cmd := internalexec.NewGitCommand(repoPath)
-		err := cmd.CheckoutPRWorktree(worktreePath, pr.Branch)
-		return prReviewWorktreeDoneMsg{worktreePath: worktreePath, err: err}
-	}
-}
-
 // computeParentBranches returns the branches of any worktrees associated with
 // parent issues (i.e., issues that have sub-issues). Used to populate the base
 // branch picker in the create-worktree modal.
@@ -1686,210 +1278,6 @@ func (m *Model) switchWorktreeCmd(path string) tea.Cmd {
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return worktreeSwitchedMsg{err: err}
 	})
-}
-
-// buildCopilotCmd constructs the exec.Cmd for running gh copilot in interactive
-// mode with the given prompt pre-loaded in the specified worktree directory.
-// When prompt is empty, runs "gh copilot" (interactive mode, no pre-loaded prompt).
-// It is extracted as a top-level function to keep it unit-testable.
-func buildCopilotCmd(worktreePath, prompt string) *exec.Cmd {
-	var args []string
-	if prompt != "" {
-		args = []string{"copilot", "-i", prompt}
-	} else {
-		args = []string{"copilot"}
-	}
-	cmd := exec.Command("gh", args...)
-	cmd.Dir = worktreePath
-	return cmd
-}
-
-// buildSpawnSession constructs a domain.Session for a newly-launched agent
-// terminal and persists it to db when db is non-nil. prompt may be empty
-// (Aider does not take a pre-loaded prompt).
-func buildSpawnSession(db *data.DB, worktreePath, agentName string, pid int, prompt string, startedAt time.Time) domain.Session {
-	agentNameVal := agentName
-	var shellPID *int
-	if pid != 0 {
-		shellPID = &pid
-	}
-	sess := domain.Session{
-		WorktreePath: worktreePath,
-		ShellPID:     shellPID,
-		AgentName:    &agentNameVal,
-		Status:       domain.StatusActive,
-		StartedAt:    startedAt.UTC().Truncate(time.Second),
-	}
-	if prompt != "" {
-		promptVal := prompt
-		sess.Prompt = &promptVal
-	}
-	if db != nil {
-		id, err := data.UpsertSession(db, sess)
-		if err == nil {
-			sess.ID = id
-		}
-	}
-	return sess
-}
-
-// spawnCopilotCmd opens a new terminal tab/window running gh copilot at
-// worktreePath and dispatches agentDoneMsg once the launch completes.
-// The TUI is not suspended — grove keeps running in the current terminal.
-func (m *Model) spawnCopilotCmd(worktreePath, prompt string) tea.Cmd {
-	startedAt := time.Now()
-	db := m.db // capture m.db so the closure does not close over m (data race)
-	var shellCmd string
-	if prompt != "" {
-		shellCmd = "gh copilot -i " + shellQuote(prompt)
-	} else {
-		shellCmd = "gh copilot"
-	}
-	return func() tea.Msg {
-		pid, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
-		exitCode := 0
-		if spawnErr != nil {
-			exitCode = 1
-		}
-		var sess domain.Session
-		if spawnErr == nil {
-			sess = buildSpawnSession(db, worktreePath, "copilot", pid, prompt, startedAt)
-		}
-		return agentDoneMsg{
-			agentName: "copilot",
-			prompt:    prompt,
-			exitCode:  exitCode,
-			startedAt: startedAt,
-			session:   sess,
-		}
-	}
-}
-
-// resolveClaudeBinary returns the resolved path for the Claude binary.
-// It reads cfg.AIAgents.ClaudeBinary, defaulting to "claude", then
-// uses exec.LookPath to verify the binary is on the PATH.
-func resolveClaudeBinary(cfg *domain.Config) (string, error) {
-	bin := cfg.AIAgents.ClaudeBinary
-	if bin == "" {
-		bin = "claude"
-	}
-	return exec.LookPath(bin)
-}
-
-// resolveAiderBinary returns the resolved path for the Aider binary.
-// It reads cfg.AIAgents.AiderBinary, defaulting to "aider", then
-// uses exec.LookPath to verify the binary is on the PATH.
-func resolveAiderBinary(cfg *domain.Config) (string, error) {
-	bin := cfg.AIAgents.AiderBinary
-	if bin == "" {
-		bin = "aider"
-	}
-	return exec.LookPath(bin)
-}
-
-// buildClaudeCmd constructs the exec.Cmd for running the Claude CLI with the
-// given prompt in the specified worktree directory.
-// It is extracted as a top-level function to keep it unit-testable.
-func buildClaudeCmd(worktreePath, prompt, binaryPath string) *exec.Cmd {
-	var cmd *exec.Cmd
-	if prompt != "" {
-		cmd = exec.Command(binaryPath, prompt)
-	} else {
-		cmd = exec.Command(binaryPath)
-	}
-	cmd.Dir = worktreePath
-	return cmd
-}
-
-// spawnClaudeCmd opens a new terminal tab/window running the Claude binary at
-// worktreePath and dispatches agentDoneMsg once the launch completes.
-// The TUI is not suspended — grove keeps running in the current terminal.
-func (m *Model) spawnClaudeCmd(worktreePath, prompt string) tea.Cmd {
-	binaryPath, err := resolveClaudeBinary(m.Config)
-	if err != nil {
-		m.statusErr = fmt.Sprintf("claude binary not found: %v", err)
-		return clearErrorCmd()
-	}
-	startedAt := time.Now()
-	db := m.db // capture m.db so the closure does not close over m (data race)
-	var shellCmd string
-	if prompt != "" {
-		shellCmd = binaryPath + " " + shellQuote(prompt)
-	} else {
-		shellCmd = binaryPath
-	}
-	return func() tea.Msg {
-		pid, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
-		exitCode := 0
-		if spawnErr != nil {
-			exitCode = 1
-		}
-		var sess domain.Session
-		if spawnErr == nil {
-			sess = buildSpawnSession(db, worktreePath, "claude", pid, prompt, startedAt)
-		}
-		return agentDoneMsg{
-			agentName: "claude",
-			prompt:    prompt,
-			exitCode:  exitCode,
-			startedAt: startedAt,
-			session:   sess,
-		}
-	}
-}
-
-// fetchAiderFilesCmd returns a Cmd that lists modified files in the worktree
-// using git ls-files, dispatching aiderFilesFetchedMsg with the result.
-func (m *Model) fetchAiderFilesCmd(worktreePath string) tea.Cmd {
-	return func() tea.Msg {
-		cmd := internalexec.NewGitCommand(worktreePath)
-		files, err := cmd.ListModifiedFiles(worktreePath)
-		return aiderFilesFetchedMsg{worktreePath: worktreePath, files: files, err: err}
-	}
-}
-
-// buildAiderCmd constructs the exec.Cmd for running aider with the given files
-// in the specified worktree directory. Extracted as a top-level function for testability.
-func buildAiderCmd(worktreePath string, files []string, binaryPath string) *exec.Cmd {
-	cmd := exec.Command(binaryPath, files...)
-	cmd.Dir = worktreePath
-	return cmd
-}
-
-// spawnAiderCmd opens a new terminal tab/window running aider with the selected
-// files at worktreePath and dispatches agentDoneMsg once the launch completes.
-// The TUI is not suspended — grove keeps running in the current terminal.
-func (m *Model) spawnAiderCmd(worktreePath string, files []string) tea.Cmd {
-	binaryPath, err := resolveAiderBinary(m.Config)
-	if err != nil {
-		m.statusErr = fmt.Sprintf("aider not found: %v", err)
-		return clearErrorCmd()
-	}
-	startedAt := time.Now()
-	db := m.db // capture m.db so the closure does not close over m (data race)
-	parts := make([]string, 0, len(files)+1)
-	parts = append(parts, binaryPath)
-	for _, f := range files {
-		parts = append(parts, shellQuote(f))
-	}
-	shellCmd := strings.Join(parts, " ")
-	return func() tea.Msg {
-		pid, spawnErr := spawnAgentInTerminalWindow(worktreePath, shellCmd)
-		exitCode := 0
-		if spawnErr != nil {
-			exitCode = 1
-		}
-		var sess domain.Session
-		if spawnErr == nil {
-			sess = buildSpawnSession(db, worktreePath, "aider", pid, "", startedAt)
-		}
-		return agentDoneMsg{
-			agentName: "aider",
-			exitCode:  exitCode,
-			startedAt: startedAt,
-			session:   sess,
-		}
-	}
 }
 
 // buildShellCmd constructs a platform-appropriate shell command for the given directory.
@@ -2780,6 +2168,207 @@ func (m *Model) selectedIssue() (domain.Issue, bool) {
 	return m.issues[m.selectedIssueIdx], true
 }
 
+func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
+	switch m.view {
+	case viewIssues:
+		issue, ok := m.selectedIssue()
+		if !ok {
+			return m, nil
+		}
+		if session := m.sessionForIssue(issue); session != nil {
+			return m, m.focusSessionCmd(*session)
+		}
+		m.activeModal = modal.NewCreateModalForIssue(
+			issue,
+			m.RepoPath,
+			computeParentBranches(m.issues, m.Worktrees)...,
+		)
+		return m, nil
+	case viewPRs:
+		if len(m.prs) == 0 || m.selectedPRIdx < 0 || m.selectedPRIdx >= len(m.prs) {
+			return m, nil
+		}
+		pr := m.prs[m.selectedPRIdx]
+		if session := m.sessionForPR(pr); session != nil {
+			return m, m.focusSessionCmd(*session)
+		}
+		for _, worktree := range m.Worktrees {
+			if worktree.Branch == pr.Branch {
+				m.statusErr = fmt.Sprintf("Worktree for branch %q already exists at %s", pr.Branch, worktree.Path)
+				return m, clearErrorCmd()
+			}
+		}
+		m.activeModal = modal.NewPRCheckoutModal(pr, prWorktreePath(m.RepoPath, pr.Branch))
+		return m, nil
+	default:
+		selected, ok := m.selectedWorktree()
+		if !ok {
+			return m, nil
+		}
+		useHerdr := m.insideHerdr && m.Config.Herdr.Enabled && m.Config.Herdr.PreferWorktreeAPI
+		for _, session := range m.sessions {
+			if !pathsEqual(session.WorktreePath, selected.Path) {
+				continue
+			}
+			if useHerdr && session.Runtime != domain.RuntimeHerdr {
+				continue
+			}
+			if session.ShellPID != nil && !pidAlive(*session.ShellPID) {
+				break
+			}
+			return m, m.focusSessionCmd(session)
+		}
+		if useHerdr {
+			return m, m.openHerdrWorktreeCmd(selected.Path)
+		}
+		return m, m.spawnSessionCmd(selected.Path)
+	}
+}
+
+func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
+	switch action {
+	case modal.ContextActionOpen:
+		return m.activateSelectedItem()
+	case modal.ContextActionOpenShell:
+		selected, ok := m.selectedWorktree()
+		if !ok {
+			m.statusErr = "No worktree selected — select one first"
+			return m, clearErrorCmd()
+		}
+		return m, m.spawnSessionCmd(selected.Path)
+	case modal.ContextActionClose:
+		selected, ok := m.selectedWorktree()
+		if !ok {
+			m.statusErr = "No worktree selected — select one first"
+			return m, clearErrorCmd()
+		}
+		for _, session := range m.sessions {
+			if pathsEqual(session.WorktreePath, selected.Path) {
+				return m, m.killSessionCmd(session)
+			}
+		}
+
+		m.statusErr = "No active session for this worktree"
+		return m, clearErrorCmd()
+	case modal.ContextActionDelete:
+		selected, ok := m.selectedWorktree()
+		if !ok {
+			m.statusErr = "No worktree selected — select one first"
+			return m, clearErrorCmd()
+		}
+		m.activeModal = modal.NewDeleteModal(selected)
+		return m, nil
+	case modal.ContextActionOpenGitHub:
+		if cmd := m.openInBrowserCmd(); cmd != nil {
+			return m, cmd
+		}
+		m.statusErr = "No GitHub item selected"
+		return m, clearErrorCmd()
+	default:
+		m.statusErr = fmt.Sprintf("Unknown action: %s", action)
+		return m, clearErrorCmd()
+	}
+}
+
+func (m *Model) availableContextActions() []contextActionOption {
+	return contextActionsFor(
+		m.view,
+		m.Worktrees,
+		m.selectedIdx,
+		m.issues,
+		m.selectedIssueIdx,
+		m.prs,
+		m.selectedPRIdx,
+		m.sessions,
+	)
+}
+
+func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session) []contextActionOption {
+	switch view {
+	case viewIssues:
+		if len(issues) == 0 || issueIdx < 0 || issueIdx >= len(issues) {
+			return nil
+		}
+		return []contextActionOption{
+			{label: "Open or create worktree", action: modal.ContextActionOpen},
+			{label: "Implement issue", workflowKind: modal.WorkflowKindImplement},
+			{label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
+		}
+	case viewPRs:
+		if len(prs) == 0 || prIdx < 0 || prIdx >= len(prs) {
+			return nil
+		}
+		return []contextActionOption{
+			{label: "Open or checkout worktree", action: modal.ContextActionOpen},
+			{label: "Review pull request", workflowKind: modal.WorkflowKindReview},
+			{label: "Repair CI", workflowKind: modal.WorkflowKindCI},
+			{label: "Resolve conflicts", workflowKind: modal.WorkflowKindResolve},
+			{label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
+		}
+	case viewWorktrees:
+		if len(worktrees) == 0 || worktreeIdx < 0 || worktreeIdx >= len(worktrees) {
+			return nil
+		}
+		worktree := worktrees[worktreeIdx]
+		actions := []contextActionOption{
+			{label: "Open or focus worktree", action: modal.ContextActionOpen},
+			{label: "Open separate shell", action: modal.ContextActionOpenShell},
+		}
+		for _, session := range sessions {
+			if pathsEqual(session.WorktreePath, worktree.Path) {
+				actions = append(actions, contextActionOption{
+					label:  "Close session",
+					action: modal.ContextActionClose,
+				})
+				break
+			}
+		}
+		return append(actions,
+			contextActionOption{label: "Delete worktree", action: modal.ContextActionDelete},
+			contextActionOption{label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
+		)
+	default:
+		return []contextActionOption{
+			{label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
+		}
+	}
+}
+
+func (m *Model) runSelectedContextAction() (tea.Model, tea.Cmd) {
+	actions := m.availableContextActions()
+	if len(actions) == 0 {
+		m.statusErr = "No actions available for the current selection"
+		return m, clearErrorCmd()
+	}
+	if m.contextActionIdx < 0 || m.contextActionIdx >= len(actions) {
+		m.contextActionIdx = 0
+	}
+	selected := actions[m.contextActionIdx]
+	if selected.action != "" {
+		return m.handleContextAction(selected.action)
+	}
+	if !m.Config.Sandcastle.Enabled {
+		m.statusErr = "Sandcastle workflows are disabled in settings"
+		return m, clearErrorCmd()
+	}
+	if m.workflowStarter == nil {
+		m.statusErr = "Grove Sandcastle runtime is unavailable"
+		return m, clearErrorCmd()
+	}
+
+	request := modal.WorkflowLaunchMsg{Kind: selected.workflowKind}
+	if issue, ok := m.selectedIssue(); ok && m.view == viewIssues {
+		number := issue.Number
+		request.IssueNumber = &number
+	}
+	if m.view == viewPRs && m.selectedPRIdx >= 0 && m.selectedPRIdx < len(m.prs) {
+		number := m.prs[m.selectedPRIdx].Number
+		request.PRNumber = &number
+	}
+	m.statusMsg = fmt.Sprintf("Starting %s workflow…", selected.workflowKind)
+	return m, m.startSandcastleWorkflowCmd(request)
+}
+
 // sessionForIssue returns the first live session whose worktree branch contains
 // "issue-<N>-" for the given issue. Returns nil when no matching live session
 // is found.
@@ -2891,7 +2480,7 @@ func (m *Model) prevPage() {
 
 // moveDown advances the selection within the currently focused panel.
 // Nav panel: cycles the active view forward.
-// Ctx panel: scrolls the context content down.
+// Ctx panel: advances through visible context actions.
 // List panel (default): moves the item cursor down.
 func (m *Model) moveDown() {
 	switch m.focused {
@@ -2902,7 +2491,9 @@ func (m *Model) moveDown() {
 		}
 		m.view = activeView(n)
 	case panelCtx:
-		m.ctxScrollOffset++
+		if actions := m.availableContextActions(); m.contextActionIdx < len(actions)-1 {
+			m.contextActionIdx++
+		}
 	default: // panelList
 		switch m.view {
 		case viewIssues:
@@ -2935,7 +2526,7 @@ func (m *Model) moveDown() {
 
 // moveUp retreats the selection within the currently focused panel.
 // Nav panel: cycles the active view backward.
-// Ctx panel: scrolls the context content up.
+// Ctx panel: moves backward through visible context actions.
 // List panel (default): moves the item cursor up.
 func (m *Model) moveUp() {
 	switch m.focused {
@@ -2946,8 +2537,8 @@ func (m *Model) moveUp() {
 		}
 		m.view = activeView(n)
 	case panelCtx:
-		if m.ctxScrollOffset > 0 {
-			m.ctxScrollOffset--
+		if m.contextActionIdx > 0 {
+			m.contextActionIdx--
 		}
 	default: // panelList
 		switch m.view {

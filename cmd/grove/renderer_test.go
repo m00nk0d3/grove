@@ -168,11 +168,11 @@ func TestRenderFull_ContainsFooterKeyHints(t *testing.T) {
 	}{
 		{
 			name:   "footer contains navigation and action hints",
-			wantIn: []string{"[Enter] Select", "[t] Settings", "[/] Fuzzy", "[q/esc]"},
+			wantIn: []string{"[Enter] Open", "[a] Actions", "[t] Settings", "[/] Fuzzy", "[q/esc]"},
 		},
 		{
-			name:   "action bar contains worktree commands",
-			wantIn: []string{"[enter] Open", "[c-d] Delete", "[f1] Help"},
+			name:   "action bar contains context command",
+			wantIn: []string{"[enter] Open", "[a] Focus actions", "[f1] Help"},
 		},
 	}
 
@@ -557,7 +557,7 @@ func TestRenderPRList_ContainsPRRows(t *testing.T) {
 
 // TestRenderContextPanel_IssueContext verifies that when the active view is
 // viewIssues, the context panel shows the selected issue's number, title, labels,
-// and an "[g] Open in GitHub" hint.
+// and a visible GitHub action.
 func TestRenderContextPanel_IssueContext(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -582,12 +582,12 @@ func TestRenderContextPanel_IssueContext(t *testing.T) {
 			wantIn:      []string{"[bug]", "[critical]"},
 		},
 		{
-			name: "shows [g] Open in GitHub hint",
+			name: "shows Open on GitHub action",
 			issues: []domain.Issue{
 				{Number: 1, Title: "Some Issue", Labels: nil},
 			},
 			selectedIdx: 0,
-			wantIn:      []string{"[g] Open in GitHub"},
+			wantIn:      []string{"Open on GitHub"},
 		},
 	}
 
@@ -610,7 +610,7 @@ func TestRenderContextPanel_IssueContext(t *testing.T) {
 
 // TestRenderContextPanel_PRContext verifies that when the active view is
 // viewPRs, the context panel shows the selected PR's number, title, branch,
-// author, state, and an "[g] Open in GitHub" hint.
+// author, state, and a visible GitHub action.
 func TestRenderContextPanel_PRContext(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -643,12 +643,12 @@ func TestRenderContextPanel_PRContext(t *testing.T) {
 			wantIn: []string{"OPEN"},
 		},
 		{
-			name: "shows [g] Open in GitHub hint",
+			name: "shows Open on GitHub action",
 			prs: []domain.PullRequest{
 				{Number: 1, Title: "Some PR", Branch: "main", Author: "dev", State: "OPEN"},
 			},
 			prIdx:  0,
-			wantIn: []string{"[g] Open in GitHub"},
+			wantIn: []string{"Open on GitHub"},
 		},
 	}
 
@@ -884,7 +884,7 @@ func TestRenderer_ContextPanel_WithLinkedPR(t *testing.T) {
 			wantIn: []string{"Labels: [enhancement][backend]"},
 		},
 		{
-			name: "shows agent commands section",
+			name: "shows contextual actions",
 			worktree: domain.Worktree{
 				Path:    "/tmp/feat-login",
 				Branch:  "feat/login",
@@ -897,7 +897,7 @@ func TestRenderer_ContextPanel_WithLinkedPR(t *testing.T) {
 					Labels: []string{},
 				},
 			},
-			wantIn: []string{"AGENT COMMANDS:"},
+			wantIn: []string{"ACTIONS", "[a] focus"},
 		},
 	}
 
@@ -988,13 +988,13 @@ func TestRenderer_ContextPanel_NoLinkedPR(t *testing.T) {
 // TestRenderer_ContextPanel_AgentCommandsAlwaysVisible verifies that the agent
 // commands [a], [c], and [s] are always shown in the worktree context panel,
 // regardless of whether a LinkedPR is present.
-func TestRenderer_ContextPanel_AgentCommandsAlwaysVisible(t *testing.T) {
+func TestRenderer_ContextPanel_ActionsAlwaysVisible(t *testing.T) {
 	tests := []struct {
 		name     string
 		worktree domain.Worktree
 	}{
 		{
-			name: "agent commands present with LinkedPR",
+			name: "contextual actions present with LinkedPR",
 			worktree: domain.Worktree{
 				Path:    "/tmp/feat-auth",
 				Branch:  "feat/auth",
@@ -1008,7 +1008,7 @@ func TestRenderer_ContextPanel_AgentCommandsAlwaysVisible(t *testing.T) {
 			},
 		},
 		{
-			name: "agent commands present without LinkedPR",
+			name: "contextual actions present without LinkedPR",
 			worktree: domain.Worktree{
 				Path:    "/tmp/feat-search",
 				Branch:  "feat/search",
@@ -1027,9 +1027,7 @@ func TestRenderer_ContextPanel_AgentCommandsAlwaysVisible(t *testing.T) {
 
 			view := model.View()
 
-			assert.Contains(t, view, "[a] Spawn Claude Code")
-			assert.Contains(t, view, "[c] Spawn Copilot")
-			assert.Contains(t, view, "[s] Open Shell in WT")
+			assert.Contains(t, view, "ACTIONS")
 		})
 	}
 }
@@ -1204,8 +1202,8 @@ func TestRenderFull_FooterContainsTabAndJKHints(t *testing.T) {
 
 	assert.Contains(t, view, "[Tab]")
 	assert.Contains(t, view, "[j/k]")
-	// Old hints must still be present
-	assert.Contains(t, view, "[Enter] Select")
+	assert.Contains(t, view, "[Enter] Open")
+	assert.Contains(t, view, "[a] Actions")
 	assert.Contains(t, view, "[q/esc]")
 	assert.Contains(t, view, "[/] Fuzzy")
 }
@@ -1497,7 +1495,7 @@ func TestRenderer_IssueContextPanel_ShowsBody(t *testing.T) {
 				"Status: ● Open",
 				"Labels: [bug]",
 				"Details about the issue.",
-				"[g] Open in GitHub",
+				"Open on GitHub",
 			},
 		},
 	}
