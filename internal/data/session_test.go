@@ -324,3 +324,66 @@ func TestDeleteDeadSessions_ClosedDB(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "delete dead sessions")
 }
+
+// TestUpsertSession_RuntimeFields verifies that a session with all runtime
+// fields populated can be written and read back with correct values.
+func TestUpsertSession_RuntimeFields(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	s := domain.Session{
+		WorktreePath:   "/repo/herdr",
+		Runtime:        domain.RuntimeHerdr,
+		RuntimeID:      "r-123",
+		WorkspaceID:    strPtr("ws-1"),
+		TabID:          strPtr("tab-1"),
+		PaneID:         strPtr("pane-1"),
+		WorkflowRunID:  strPtr("wf-1"),
+		DegradedReason: strPtr("timeout"),
+		Status:         domain.StatusActive,
+		StartedAt:      time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, s)
+	require.NoError(t, err)
+
+	got, err := data.GetSessionByWorktree(db, "/repo/herdr")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, domain.RuntimeHerdr, got.Runtime)
+	assert.Equal(t, "r-123", got.RuntimeID)
+	require.NotNil(t, got.WorkspaceID)
+	assert.Equal(t, "ws-1", *got.WorkspaceID)
+	require.NotNil(t, got.TabID)
+	assert.Equal(t, "tab-1", *got.TabID)
+	require.NotNil(t, got.PaneID)
+	assert.Equal(t, "pane-1", *got.PaneID)
+	require.NotNil(t, got.WorkflowRunID)
+	assert.Equal(t, "wf-1", *got.WorkflowRunID)
+	require.NotNil(t, got.DegradedReason)
+	assert.Equal(t, "timeout", *got.DegradedReason)
+}
+
+// TestUpsertSession_LegacySessionDefaults verifies that a session written
+// without runtime fields (legacy caller) reads back with Runtime == "local"
+// and all other new fields nil.
+func TestUpsertSession_LegacySessionDefaults(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	s := newSession("/repo/legacy")
+	_, err = data.UpsertSession(db, s)
+	require.NoError(t, err)
+
+	got, err := data.GetSessionByWorktree(db, "/repo/legacy")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, domain.RuntimeLocal, got.Runtime)
+	assert.Equal(t, "", got.RuntimeID)
+	assert.Nil(t, got.WorkspaceID)
+	assert.Nil(t, got.TabID)
+	assert.Nil(t, got.PaneID)
+	assert.Nil(t, got.WorkflowRunID)
+	assert.Nil(t, got.DegradedReason)
+}

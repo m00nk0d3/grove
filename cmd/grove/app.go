@@ -1975,7 +1975,15 @@ func filterAliveSessions(sessions []domain.Session) []domain.Session {
 			continue
 		}
 		if s.ShellPID == nil {
-			// No PID — keep alive up to 24 hours.
+			// Herdr sessions are always kept — their liveness is determined
+			// by the Herdr runtime, not a local PID. Full snapshot-based
+			// health checks are deferred to a future phase.
+			if s.Runtime == domain.RuntimeHerdr {
+				alive = append(alive, s)
+				continue
+			}
+			// Local sessions (or legacy with empty Runtime) use the
+			// existing 24-hour heuristic.
 			if time.Since(s.StartedAt) <= 24*time.Hour {
 				alive = append(alive, s)
 			}
