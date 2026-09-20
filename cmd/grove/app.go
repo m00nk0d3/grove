@@ -22,6 +22,7 @@ import (
 	internalexec "github.com/m00nk0d3/grove/internal/exec"
 	"github.com/m00nk0d3/grove/internal/fuzzy"
 	"github.com/m00nk0d3/grove/internal/herdr"
+	"github.com/m00nk0d3/grove/internal/mission"
 	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
@@ -129,6 +130,26 @@ type fuzzyResultsReadyMsg struct {
 	results []domain.SearchResult
 }
 
+// integrationsTickMsg triggers the next periodic Herdr/Sandcastle refresh.
+type integrationsTickMsg struct{}
+
+// sandcastleSyncedMsg carries the result of a background Sandcastle snapshot.
+type sandcastleSyncedMsg struct {
+	snapshot sandcastle.Snapshot
+	err      error
+}
+
+// herdrSyncedMsg carries the result of a background Herdr snapshot.
+type herdrSyncedMsg struct {
+	snapshot herdr.Snapshot
+	err      error
+}
+
+// missionControlUpdatedMsg carries a freshly-built mission-control state.
+type missionControlUpdatedMsg struct {
+	state domain.MissionControlState
+}
+
 // clearErrorCmd returns a Cmd that fires clearErrorMsg after 5 seconds.
 func clearErrorCmd() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
@@ -161,6 +182,35 @@ func sessionTickCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		return sessionTickMsg{}
 	})
+}
+
+// integrationTickCmd fires an integrationsTickMsg after the configured interval.
+func integrationTickCmd(cfg *domain.Config) tea.Cmd {
+	interval := time.Duration(cfg.Herdr.PollIntervalSeconds) * time.Second
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
+		return integrationsTickMsg{}
+	})
+}
+
+// herdrSnapshotCmd fetches a Herdr snapshot asynchronously.
+func herdrSnapshotCmd(hc sessionHealthChecker) tea.Cmd {
+	return func() tea.Msg {
+		snap, err := hc.HerdrSnapshot()
+		return herdrSyncedMsg{snapshot: snap, err: err}
+	}
+}
+
+// sandcastleSnapshotCmd fetches a Sandcastle snapshot asynchronously.
+func sandcastleSnapshotCmd(hc sessionHealthChecker) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		snap, err := hc.SandcastleSnapshot(ctx)
+		return sandcastleSyncedMsg{snapshot: snap, err: err}
+	}
 }
 
 // pollPIDFile waits up to timeout for a file at path to appear and contain a
@@ -346,6 +396,13 @@ type Model struct {
 	// healthChecker fetches runtime snapshots for Herdr/Sandcastle session
 	// health checks. nil when not initialised (tests, standalone mode).
 	healthChecker sessionHealthChecker
+
+	// herdrSnapshot holds the last successful Herdr snapshot.
+	herdrSnapshot *herdr.Snapshot
+	// sandcastleSnapshot holds the last successful Sandcastle snapshot.
+	sandcastleSnapshot *sandcastle.Snapshot
+	// missionState holds the latest mission-control state.
+	missionState *domain.MissionControlState
 }
 
 // NewModel creates and returns a new Model instance with all required fields initialized.
@@ -384,7 +441,7 @@ func (m *Model) Init() tea.Cmd {
 	m.syncing = true
 	// Always start the session tick — it handles both grove-spawned shell sessions
 	// (requires m.db) and externally-started Copilot CLI sessions (no DB needed).
-	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(false), sessionTickCmd(), checkForUpdateCmd())
+	return tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(false), sessionTickCmd(), checkForUpdateCmd(), integrationTickCmd(m.Config))
 }
 
 // Update handles incoming messages and returns an updated model and command.
@@ -723,7 +780,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.syncing = true
-				return m, tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(true))
+				cmds := tea.Batch(m.refreshWorktreesCmd(), m.syncGitHubCmd(true))
+				if m.healthChecker != nil {
+					if m.Config.Herdr.Enabled {
+						cmds = tea.Batch(cmds, herdrSnapshotCmd(m.healthChecker))
+					}
+					if m.Config.Sandcastle.Enabled {
+						cmds = tea.Batch(cmds, sandcastleSnapshotCmd(m.healthChecker))
+					}
+				}
+				return m, cmds
 			case "n":
 				m.nextPage()
 				return m, nil
@@ -1022,6 +1088,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessions = live
 		return m, sessionTickCmd()
 
+	case integrationsTickMsg:
+		var cmds []tea.Cmd
+		if m.Config.Herdr.Enabled && m.healthChecker != nil {
+			cmds = append(cmds, herdrSnapshotCmd(m.healthChecker))
+		}
+		if m.Config.Sandcastle.Enabled && m.healthChecker != nil {
+			cmds = append(cmds, sandcastleSnapshotCmd(m.healthChecker))
+		}
+		cmds = append(cmds, integrationTickCmd(m.Config))
+		return m, tea.Batch(cmds...)
+
+	case herdrSyncedMsg:
+		if msg.err == nil {
+			m.herdrSnapshot = &msg.snapshot
+		}
+		return m, m.rebuildMissionStateCmd()
+
+	case sandcastleSyncedMsg:
+		if msg.err == nil {
+			m.sandcastleSnapshot = &msg.snapshot
+		}
+		return m, m.rebuildMissionStateCmd()
+
+	case missionControlUpdatedMsg:
+		m.missionState = &msg.state
+
 	case sessionFocusedMsg:
 		// Focus is best-effort; show a friendly toast regardless of outcome.
 		if msg.err != nil {
@@ -1284,6 +1376,48 @@ func (m *Model) syncGitHubCmd(force bool) tea.Cmd {
 		}
 
 		return githubSyncedMsg{prs: prs, issues: issues, err: errors.Join(issErr, prErr), syncedAt: time.Now()}
+	}
+}
+
+// rebuildMissionStateCmd returns a Cmd that rebuilds mission-control state
+// from the current model snapshots. Model fields are captured by value to
+// avoid data races in the goroutine.
+func (m *Model) rebuildMissionStateCmd() tea.Cmd {
+	worktrees := append([]domain.Worktree(nil), m.Worktrees...)
+	issues := append([]domain.Issue(nil), m.issues...)
+	prs := append([]domain.PullRequest(nil), m.prs...)
+	sessions := append([]domain.Session(nil), m.sessions...)
+
+	var herdrSnap *herdr.Snapshot
+	if m.herdrSnapshot != nil {
+		hs := *m.herdrSnapshot
+		herdrSnap = &hs
+	}
+	var scSnap *sandcastle.Snapshot
+	if m.sandcastleSnapshot != nil {
+		ss := *m.sandcastleSnapshot
+		scSnap = &ss
+	}
+	var prev *domain.MissionControlState
+	if m.missionState != nil {
+		ps := *m.missionState
+		prev = &ps
+	}
+
+	repoPath := m.RepoPath
+	return func() tea.Msg {
+		state := mission.BuildState(mission.BuildInput{
+			RepoPath:           repoPath,
+			Worktrees:          worktrees,
+			Issues:             issues,
+			PullRequests:       prs,
+			Sessions:           sessions,
+			HerdrSnapshot:      herdrSnap,
+			SandcastleSnapshot: scSnap,
+			PreviousState:      prev,
+			Now:                time.Now(),
+		})
+		return missionControlUpdatedMsg{state: state}
 	}
 }
 
