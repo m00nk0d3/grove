@@ -1,18 +1,34 @@
 ﻿package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/m00nk0d3/grove/internal/data"
+	"github.com/m00nk0d3/grove/internal/herdr"
 	"github.com/m00nk0d3/grove/internal/logging"
+	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/updater"
 	"github.com/m00nk0d3/grove/internal/version"
 )
+
+// herdrExecRunner implements herdr.CommandRunner backed by os/exec.
+type herdrExecRunner struct{}
+
+func (herdrExecRunner) Run(name string, args ...string) ([]byte, []byte, error) {
+	cmd := exec.Command(name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
+}
 
 func run() error {
 	// Clean up any leftover .old binary from a previous Windows self-update.
@@ -35,6 +51,11 @@ func run() error {
 
 	m := NewModel()
 	m.RepoPath = cwd
+	m.healthChecker = &defaultHealthChecker{
+		herdr:      herdr.NewClient(herdrExecRunner{}),
+		sandcastle: sandcastle.NewClient(sandcastle.ClientConfig{}, sandcastle.NewExecCommandRunner()),
+		repoPath:   cwd,
+	}
 
 	// Open DB best-effort: non-fatal if it fails (e.g. no write permission).
 	// When db is nil, agent runs are not logged but everything else works.

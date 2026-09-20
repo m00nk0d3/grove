@@ -2336,3 +2336,63 @@ func TestRenderFuzzyOverlay_KindBadges(t *testing.T) {
 	}
 }
 
+// TestRenderSessionBlock_DegradedReason verifies that renderSessionBlock displays
+// the DegradedReason when present on the session.
+func TestRenderSessionBlock_DegradedReason(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name            string
+		session         *domain.Session
+		wantDegraded    bool
+		wantDegradedStr string
+	}{
+		{
+			name:         "nil session returns empty",
+			session:      nil,
+			wantDegraded: false,
+		},
+		{
+			name:            "session with DegradedReason renders it",
+			session:         &domain.Session{ID: 1, Status: domain.StatusActive, StartedAt: now, DegradedReason: strPtr("herdr pane not found")},
+			wantDegraded:    true,
+			wantDegradedStr: "herdr pane not found",
+		},
+		{
+			name:            "session with empty DegradedReason does not render",
+			session:         &domain.Session{ID: 2, Status: domain.StatusActive, StartedAt: now, DegradedReason: strPtr("")},
+			wantDegraded:    false,
+		},
+		{
+			name:         "session without DegradedReason does not render degraded line",
+			session:      &domain.Session{ID: 3, Status: domain.StatusActive, StartedAt: now},
+			wantDegraded: false,
+		},
+		{
+			name:            "session with herdr snapshot unavailable reason",
+			session:         &domain.Session{ID: 4, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now, DegradedReason: strPtr("herdr snapshot unavailable")},
+			wantDegraded:    true,
+			wantDegradedStr: "herdr snapshot unavailable",
+		},
+		{
+			name:            "session with sandcastle workflow blocked reason",
+			session:         &domain.Session{ID: 5, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now, DegradedReason: strPtr("sandcastle workflow blocked")},
+			wantDegraded:    true,
+			wantDegradedStr: "sandcastle workflow blocked",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderSessionBlock(tt.session)
+
+			if tt.wantDegraded {
+				assert.Contains(t, got, "Degraded:", "output should contain Degraded: label")
+				assert.Contains(t, got, tt.wantDegradedStr, "output should contain the degraded reason text")
+			} else {
+				assert.NotContains(t, got, "Degraded:", "output should not contain Degraded: label")
+			}
+		})
+	}
+}
+

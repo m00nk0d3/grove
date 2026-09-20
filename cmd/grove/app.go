@@ -21,6 +21,8 @@ import (
 	"github.com/m00nk0d3/grove/internal/domain"
 	internalexec "github.com/m00nk0d3/grove/internal/exec"
 	"github.com/m00nk0d3/grove/internal/fuzzy"
+	"github.com/m00nk0d3/grove/internal/herdr"
+	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
 	"github.com/m00nk0d3/grove/internal/updater"
@@ -340,6 +342,10 @@ type Model struct {
 	fuzzyResults []domain.SearchResult // filtered+ranked results for the current query
 	fuzzySelIdx  int                   // selected result index
 	fuzzyLoading bool                  // true while the search index is being built
+
+	// healthChecker fetches runtime snapshots for Herdr/Sandcastle session
+	// health checks. nil when not initialised (tests, standalone mode).
+	healthChecker sessionHealthChecker
 }
 
 // NewModel creates and returns a new Model instance with all required fields initialized.
@@ -1963,6 +1969,110 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 	}
 }
 
+// sessionHealthChecker fetches runtime snapshots for session health checks.
+// Production implementation wraps real herdr/sandcastle clients.
+// Tests inject a fake or leave it nil.
+type sessionHealthChecker interface {
+	HerdrSnapshot() (herdr.Snapshot, error)
+	SandcastleSnapshot(ctx context.Context) (sandcastle.Snapshot, error)
+}
+
+// defaultHealthChecker is the production sessionHealthChecker backed by real
+// herdr and sandcastle clients.
+type defaultHealthChecker struct {
+	herdr      herdr.Client
+	sandcastle sandcastle.Client
+	repoPath   string
+}
+
+func (c *defaultHealthChecker) HerdrSnapshot() (herdr.Snapshot, error) {
+	return c.herdr.Snapshot()
+}
+
+func (c *defaultHealthChecker) SandcastleSnapshot(ctx context.Context) (sandcastle.Snapshot, error) {
+	return c.sandcastle.Snapshot(ctx, c.repoPath)
+}
+
+// strPtr returns a pointer to the given string value.
+func strPtr(s string) *string { return &s }
+
+// enrichHerdrSessions applies snapshot-based liveness checks to Herdr-backed
+// sessions. Non-Herdr sessions are passed through unchanged. When the Herdr
+// snapshot is unavailable, sessions are marked degraded rather than deleted.
+// Sessions whose Sandcastle workflow has terminated (failed/succeeded) are
+// removed from the returned list.
+func enrichHerdrSessions(
+	sessions []domain.Session,
+	herdrSnap *herdr.Snapshot,
+	herdrErr error,
+	scSnap *sandcastle.Snapshot,
+	scErr error,
+) []domain.Session {
+	var alive []domain.Session
+	for _, s := range sessions {
+		if s.Runtime != domain.RuntimeHerdr {
+			alive = append(alive, s)
+			continue
+		}
+		session := s
+		session.DegradedReason = nil // Reset before health checks so stale reasons are cleared.
+
+		// Herdr snapshot-based liveness.
+		switch {
+		case herdrErr != nil:
+			session.DegradedReason = strPtr("herdr snapshot unavailable")
+		case herdrSnap != nil:
+			if session.PaneID != nil {
+				found := false
+				for _, p := range herdrSnap.Panes {
+					if p.PaneID == *session.PaneID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					session.DegradedReason = strPtr("herdr pane not found")
+				}
+			} else {
+				session.DegradedReason = strPtr("herdr pane not found")
+			}
+		default:
+			// Standalone mode: no snapshot, no error — mark degraded.
+			session.DegradedReason = strPtr("herdr snapshot unavailable")
+		}
+
+		// Sandcastle workflow check (supplementary).
+		dead := false
+		if session.WorkflowRunID != nil {
+			switch {
+			case scErr != nil:
+				if session.DegradedReason == nil {
+					session.DegradedReason = strPtr("sandcastle status unavailable")
+				}
+			case scSnap != nil:
+				for _, wf := range scSnap.Workflows {
+					if wf.RunID == *session.WorkflowRunID {
+						switch wf.Status {
+						case domain.WorkflowFailed, domain.WorkflowSucceeded:
+							dead = true
+						case domain.WorkflowBlocked:
+							if session.DegradedReason == nil {
+								session.DegradedReason = strPtr("sandcastle workflow blocked")
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+
+		if !dead {
+			alive = append(alive, session)
+		}
+	}
+	return alive
+}
+
 // filterAliveSessions returns only sessions that should be considered live:
 //   - StatusDead sessions are always excluded.
 //   - Sessions with no ShellPID are kept for up to 24 hours (e.g. Windows
@@ -2003,6 +2113,7 @@ func filterAliveSessions(sessions []domain.Session) []domain.Session {
 func (m *Model) checkSessionsCmd() tea.Cmd {
 	db := m.db
 	current := m.sessions
+	hc := m.healthChecker
 	return func() tea.Msg {
 		var alive []domain.Session
 
@@ -2032,6 +2143,29 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 					}
 					if err := data.DeleteSession(db, s.ID); err != nil {
 						slog.Warn(logKey, "id", s.ID, "err", err)
+					}
+				}
+			}
+		}
+
+		// Enrich Herdr-backed sessions with snapshot-based liveness.
+		if hc != nil {
+			var herdrSnap *herdr.Snapshot
+			var herdrErr error
+			snap, err := hc.HerdrSnapshot()
+			herdrSnap, herdrErr = &snap, err
+			ctx := context.Background()
+			scSnap, scErr := hc.SandcastleSnapshot(ctx)
+			alive = enrichHerdrSessions(alive, herdrSnap, herdrErr, &scSnap, scErr)
+			// Persist Herdr session state so degraded reasons and recoveries
+			// are saved to the DB. Only Herdr sessions are enriched, so
+			// only those need persistence.
+			if db != nil {
+				for i := range alive {
+					if alive[i].Runtime == domain.RuntimeHerdr {
+						if _, err := data.UpsertSession(db, alive[i]); err != nil {
+							slog.Warn("session health check: failed to persist session state", "id", alive[i].ID, "err", err)
+						}
 					}
 				}
 			}

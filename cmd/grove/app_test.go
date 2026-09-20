@@ -12,6 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
+	"github.com/m00nk0d3/grove/internal/herdr"
+	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -4170,5 +4172,173 @@ func TestFuzzyConfirmSelection_CommitSelection_ReturnsCmd(t *testing.T) {
 
 	assert.NotNil(t, cmd, "commit selection should return a gh browse Cmd")
 	assert.Empty(t, m.statusMsg, "commit selection should not set statusMsg")
+}
+
+// intPtr is a test helper that returns a pointer to the given int.
+func intPtr(i int) *int { return &i }
+
+// TestEnrichHerdrSessions verifies that enrichHerdrSessions applies snapshot-based
+// liveness checks to Herdr-backed sessions and marks uncertain sessions as degraded.
+func TestEnrichHerdrSessions(t *testing.T) {
+	now := time.Now()
+
+	paneFound := domain.PaneRef{PaneID: "pane-1", AgentID: "agent-1", Status: "open"}
+	paneOther := domain.PaneRef{PaneID: "pane-2", AgentID: "agent-2", Status: "open"}
+
+	herdrSnap := &herdr.Snapshot{
+		Panes: []domain.PaneRef{paneFound, paneOther},
+	}
+	herdrErr := fmt.Errorf("herdr snapshot unavailable")
+
+	scSnap := &sandcastle.Snapshot{
+		Workflows: []domain.WorkflowRunRef{
+			{WorkflowID: "wf-running", RunID: "wf-running", Status: domain.WorkflowRunning},
+			{WorkflowID: "wf-failed", RunID: "wf-failed", Status: domain.WorkflowFailed},
+			{WorkflowID: "wf-succeeded", RunID: "wf-succeeded", Status: domain.WorkflowSucceeded},
+			{WorkflowID: "wf-blocked", RunID: "wf-blocked", Status: domain.WorkflowBlocked},
+		},
+	}
+	scErr := fmt.Errorf("sandcastle status unavailable")
+
+	tests := []struct {
+		name         string
+		sessions     []domain.Session
+		herdrSnap    *herdr.Snapshot
+		herdrErr     error
+		scSnap       *sandcastle.Snapshot
+		scErr        error
+		wantAlive    int
+		wantDegraded []int64 // IDs of sessions that should be degraded
+		wantDead     []int64 // IDs of sessions that should be removed
+	}{
+		{
+			name:         "nil herdr snapshot with nil error marks degraded (standalone mode)",
+			sessions:     []domain.Session{{ID: 1, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now}},
+			herdrSnap:    nil, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name:      "herdr error marks herdr sessions degraded",
+			sessions:  []domain.Session{{ID: 1, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now}},
+			herdrSnap: nil, herdrErr: herdrErr, scSnap: nil, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "herdr pane found keeps session alive",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, PaneID: strPtr("pane-1"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: herdrSnap, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive: 1,
+		},
+		{
+			name: "herdr pane not found marks session degraded",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, PaneID: strPtr("pane-missing"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: herdrSnap, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "herdr session with nil PaneID and no snapshot marks degraded",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "sandcastle workflow running keeps session alive",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-running"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: scSnap, scErr: nil,
+			wantAlive: 1,
+		},
+		{
+			name: "sandcastle workflow failed removes session",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-failed"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: scSnap, scErr: nil,
+			wantAlive: 0,
+			wantDead:  []int64{1},
+		},
+		{
+			name: "sandcastle workflow succeeded removes session",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-succeeded"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: scSnap, scErr: nil,
+			wantAlive: 0,
+			wantDead:  []int64{1},
+		},
+		{
+			name: "sandcastle workflow blocked marks session degraded",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-blocked"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: scSnap, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "sandcastle error marks session degraded",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-unknown"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: nil, scErr: scErr,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "local sessions pass through unchanged",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeLocal, Status: domain.StatusActive, StartedAt: now},
+				{ID: 2, Runtime: "", Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: herdrSnap, herdrErr: herdrErr, scSnap: scSnap, scErr: scErr,
+			wantAlive: 2,
+		},
+		{
+			name: "mixed herdr and local sessions",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, PaneID: strPtr("pane-1"), Status: domain.StatusActive, StartedAt: now},
+				{ID: 2, Runtime: domain.RuntimeLocal, ShellPID: intPtr(os.Getpid()), Status: domain.StatusActive, StartedAt: now},
+				{ID: 3, Runtime: domain.RuntimeHerdr, PaneID: strPtr("pane-missing"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: herdrSnap, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive:    3, // local(2) + herdr pane found(1) + herdr pane missing(3) degraded but kept
+			wantDegraded: []int64{3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := enrichHerdrSessions(tt.sessions, tt.herdrSnap, tt.herdrErr, tt.scSnap, tt.scErr)
+			assert.Len(t, got, tt.wantAlive, "alive session count")
+
+			gotIDs := make(map[int64]domain.Session)
+			for _, s := range got {
+				gotIDs[s.ID] = s
+			}
+
+			for _, id := range tt.wantDegraded {
+				s, ok := gotIDs[id]
+				require.True(t, ok, "session %d should be in alive list", id)
+				assert.NotNil(t, s.DegradedReason, "session %d should have DegradedReason set", id)
+				assert.NotEmpty(t, *s.DegradedReason, "session %d DegradedReason should be non-empty", id)
+			}
+
+			for _, id := range tt.wantDead {
+				_, ok := gotIDs[id]
+				assert.False(t, ok, "session %d should be removed from alive list", id)
+			}
+		})
+	}
 }
 
