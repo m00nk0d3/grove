@@ -1,6 +1,7 @@
 package herdr
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -337,4 +338,164 @@ func TestSnapshot_AgentNameFallsBackToStrippedTitle(t *testing.T) {
 	require.Len(t, snap.Agents, 1)
 	assert.Equal(t, "pi - phase-5", snap.Agents[0].Name)
 	assert.Equal(t, "w6:p9", snap.Agents[0].AgentID)
+}
+
+var (
+	openWorktreeFixture   = `{"id":"cli:worktree:open","result":{"type":"worktree_open","open_status":{"is_open":true,"pane_id":"w6:p30"},"path":"/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open","branch":"test-branch","label":"grove"}}`
+	createWorktreeFixture = `{"id":"cli:worktree:create","result":{"type":"worktree_create","create_status":{"created":true},"path":"/tmp/test-worktree-123","branch":"test-branch","label":"grove"}}`
+)
+
+func TestOpenWorktree_Success(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["worktree"] = stubResponse{stdout: []byte(openWorktreeFixture)}
+	testEnv(t, true, "")
+
+	result, err := NewClient(r).OpenWorktree(
+		context.Background(),
+		OpenWorktreeRequest{Path: "/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open"},
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "w6:p30", result.PaneID)
+	assert.Equal(t, "/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open", result.CWD)
+}
+
+func TestOpenWorktree_NilRunner(t *testing.T) {
+	testEnv(t, true, "")
+
+	_, err := NewClient(nil).OpenWorktree(
+		context.Background(),
+		OpenWorktreeRequest{Path: "/some/path"},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no command runner available")
+}
+
+func TestOpenWorktree_CommandFailure(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["worktree"] = stubResponse{stderr: []byte("herdr: worktree not found\n"), err: fmt.Errorf("exit status 1")}
+	testEnv(t, true, "")
+
+	_, err := NewClient(r).OpenWorktree(
+		context.Background(),
+		OpenWorktreeRequest{Path: "/nonexistent/path"},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "herdr worktree open")
+	assert.Contains(t, err.Error(), "exit status 1")
+	assert.Contains(t, err.Error(), "worktree not found")
+}
+
+func TestOpenWorktree_ExactCommandArgs(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["worktree"] = stubResponse{stdout: []byte(openWorktreeFixture)}
+	testEnv(t, true, "")
+
+	_, err := NewClient(r).OpenWorktree(
+		context.Background(),
+		OpenWorktreeRequest{Path: "/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open"},
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"worktree", "open", "--path", "/home/m00nk0d3/dev/grove/.sandcastle/worktrees/test-open", "--no-focus", "--json"}, r.lastArgs("worktree"))
+}
+
+func TestCreateWorktree_Success(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["worktree"] = stubResponse{stdout: []byte(createWorktreeFixture)}
+	testEnv(t, true, "")
+
+	result, err := NewClient(r).CreateWorktree(
+		context.Background(),
+		CreateWorktreeRequest{Branch: "test-branch", Base: "main", Path: "/tmp/test-worktree-123"},
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "/tmp/test-worktree-123", result.Path)
+	assert.Equal(t, "test-branch", result.Branch)
+}
+
+func TestCreateWorktree_NilRunner(t *testing.T) {
+	testEnv(t, true, "")
+
+	_, err := NewClient(nil).CreateWorktree(
+		context.Background(),
+		CreateWorktreeRequest{Branch: "test-branch", Base: "main", Path: "/some/path"},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no command runner available")
+}
+
+func TestCreateWorktree_CommandFailure(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["worktree"] = stubResponse{stderr: []byte("herdr: branch already exists\n"), err: fmt.Errorf("exit status 1")}
+	testEnv(t, true, "")
+
+	_, err := NewClient(r).CreateWorktree(
+		context.Background(),
+		CreateWorktreeRequest{Branch: "main", Base: "main", Path: "/tmp/already-exists"},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "herdr worktree create")
+	assert.Contains(t, err.Error(), "exit status 1")
+	assert.Contains(t, err.Error(), "branch already exists")
+}
+
+func TestCreateWorktree_ExactCommandArgs(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["worktree"] = stubResponse{stdout: []byte(createWorktreeFixture)}
+	testEnv(t, true, "")
+
+	_, err := NewClient(r).CreateWorktree(
+		context.Background(),
+		CreateWorktreeRequest{Branch: "test-branch", Base: "main", Path: "/tmp/test-worktree-123"},
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"worktree", "create", "--branch", "test-branch", "--base", "main", "--path", "/tmp/test-worktree-123", "--no-focus", "--json"}, r.lastArgs("worktree"))
+}
+
+func TestFocusPane_Success(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["focus-pane"] = stubResponse{}
+	testEnv(t, true, "")
+
+	err := NewClient(r).FocusPane(context.Background(), "w6:p3F")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"focus-pane", "w6:p3F"}, r.lastArgs("focus-pane"))
+	assert.False(t, r.ran("pane"))
+}
+
+func TestFocusPane_NilRunner(t *testing.T) {
+	testEnv(t, true, "")
+
+	err := NewClient(nil).FocusPane(context.Background(), "w6:p3F")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no command runner available")
+}
+
+func TestFocusPane_CommandFailure(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["focus-pane"] = stubResponse{stderr: []byte("unsupported command\n"), err: fmt.Errorf("exit status 1")}
+	r.responses["pane"] = stubResponse{stderr: []byte("herdr: no such pane\n"), err: fmt.Errorf("exit status 1")}
+	testEnv(t, true, "")
+
+	err := NewClient(r).FocusPane(context.Background(), "w6:p3F")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "herdr pane focus")
+	assert.Contains(t, err.Error(), "exit status 1")
+	assert.Contains(t, err.Error(), "no such pane")
+}
+
+func TestFocusPane_ExactCommandArgs(t *testing.T) {
+	r := newFakeRunner()
+	r.responses["focus-pane"] = stubResponse{stderr: []byte("unsupported command\n"), err: fmt.Errorf("exit status 1")}
+	r.responses["pane"] = stubResponse{}
+	testEnv(t, true, "")
+
+	err := NewClient(r).FocusPane(context.Background(), "w6:p3F")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"pane", "focus", "w6:p3F"}, r.lastArgs("pane"))
 }

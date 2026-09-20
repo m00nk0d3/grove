@@ -1,6 +1,7 @@
 package herdr
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -210,6 +211,100 @@ func (c Client) listWorktrees(workspaceID string) ([]Worktree, error) {
 	return out, nil
 }
 
+// OpenWorktree opens an existing worktree in Herdr without focusing the pane.
+// Returns a PaneRef if the worktree was already open; returns an error with
+// empty snapshot if the worktree does not exist or cannot be opened.
+func (c Client) OpenWorktree(ctx context.Context, req OpenWorktreeRequest) (*domain.PaneRef, error) {
+	if err := c.checkHerdrAvailable(); err != nil {
+		return nil, fmt.Errorf("open worktree: %w", err)
+	}
+
+	args := []string{"worktree", "open", "--path", req.Path, "--no-focus", "--json"}
+	stdout, stderr, err := c.run(args)
+	if err != nil {
+		return nil, fmt.Errorf("herdr worktree open: %w; %s", err, string(stderr))
+	}
+
+	var env openWorktreeEnvelope
+	if err := json.Unmarshal(stdout, &env); err != nil {
+		return nil, fmt.Errorf("parse herdr worktree open: %w", err)
+	}
+
+	// If the worktree is not already open, return nil (user must create it first).
+	if !env.Result.OpenStatus.IsOpen {
+		return nil, fmt.Errorf("worktree %q does not exist or is not open", req.Path)
+	}
+
+	return &domain.PaneRef{
+		PaneID: env.Result.OpenStatus.PaneID,
+		CWD:    env.Result.Path,
+		Status: "open",
+	}, nil
+}
+
+func (c Client) checkHerdrAvailable() error {
+	if c.runner == nil {
+		return fmt.Errorf("no command runner available")
+	}
+	return nil
+}
+
+// CreateWorktree creates a new worktree in Herdr without focusing the pane.
+// Returns a WorktreeRef with the created path and branch.
+func (c Client) CreateWorktree(ctx context.Context, req CreateWorktreeRequest) (*domain.Worktree, error) {
+	if err := c.checkHerdrAvailable(); err != nil {
+		return nil, fmt.Errorf("create worktree: %w", err)
+	}
+
+	args := []string{"worktree", "create", "--branch", req.Branch, "--base", req.Base, "--path", req.Path, "--no-focus", "--json"}
+	stdout, stderr, err := c.run(args)
+	if err != nil {
+		return nil, fmt.Errorf("herdr worktree create: %w; %s", err, string(stderr))
+	}
+
+	var env createWorktreeEnvelope
+	if err := json.Unmarshal(stdout, &env); err != nil {
+		return nil, fmt.Errorf("parse herdr worktree create: %w", err)
+	}
+
+	if !env.Result.CreateStatus.Created {
+		return nil, fmt.Errorf("worktree creation failed: %s", env.Result.CreateStatus.Error)
+	}
+
+	return &domain.Worktree{
+		Path:        env.Result.Path,
+		Branch:      env.Result.Branch,
+		CommitSHA:   "",
+		IsClean:     false,
+		IsLocked:    false,
+		LinkedPR:    nil,
+		LinkedIssue: nil,
+	}, nil
+}
+
+// FocusPane focuses the given Herdr pane. Uses `herdr focus-pane` for 0.9.x
+// or `herdr focus-pane` if available (future-proofing). The focus command
+// does not return JSON; it returns success on exit code 0 and failure on non-zero.
+func (c Client) FocusPane(ctx context.Context, paneID string) error {
+	if err := c.checkHerdrAvailable(); err != nil {
+		return fmt.Errorf("focus pane: %w", err)
+	}
+
+	// Try the v1 focus command first (if available), fall back to v0.9.x command.
+	_, stderr, err := c.run([]string{"focus-pane", paneID})
+	if err == nil {
+		return nil
+	}
+
+	// Fall back to the older focus command
+	_, stderr, err = c.run([]string{"pane", "focus", paneID})
+	if err != nil {
+		return fmt.Errorf("herdr pane focus: %w; %s", err, string(stderr))
+	}
+
+	return nil
+}
+
 // run executes a single herdr command via the CommandRunner.
 func (c Client) run(args []string) ([]byte, []byte, error) {
 	return c.runner.Run(herdrBinary, args...)
@@ -294,7 +389,7 @@ type rawPane struct {
 
 // agentEnvelope is the "herdr agent list" JSON output.
 type agentEnvelope struct {
-	ID     string     `json:"id"`
+	ID     string      `json:"id"`
 	Result agentResult `json:"result"`
 }
 
@@ -313,7 +408,7 @@ type rawAgent struct {
 
 // worktreeEnvelope is the "herdr worktree list" JSON output.
 type worktreeEnvelope struct {
-	ID     string        `json:"id"`
+	ID     string         `json:"id"`
 	Result worktreeResult `json:"result"`
 }
 
@@ -327,4 +422,60 @@ type rawWorktree struct {
 	Branch          string `json:"branch"`
 	Label           string `json:"label"`
 	OpenWorkspaceID string `json:"open_workspace_id"`
+}
+
+// --- request types for worktree open/create -------------------------------
+
+// OpenWorktreeRequest describes a worktree open request to Herdr.
+type OpenWorktreeRequest struct {
+	Path string // Worktree path relative to repo root
+}
+
+// CreateWorktreeRequest describes a worktree create request to Herdr.
+type CreateWorktreeRequest struct {
+	Branch  string // Branch name for the new worktree
+	Base    string // Base branch (usually main)
+	Path    string // Worktree path relative to repo root
+}
+
+// --- response envelopes for worktree open/create --------------------------
+
+// openWorktreeEnvelope is the "herdr worktree open" JSON output.
+type openWorktreeEnvelope struct {
+	ID     string             `json:"id"`
+	Result openWorktreeResult `json:"result"`
+}
+
+type openWorktreeResult struct {
+	Type       string             `json:"type"`
+	OpenStatus openWorktreeStatus `json:"open_status"`
+	Path       string             `json:"path"`
+	Branch     string             `json:"branch"`
+	Label      string             `json:"label"`
+}
+
+// openWorktreeStatus describes whether the worktree was already open.
+type openWorktreeStatus struct {
+	IsOpen bool   `json:"is_open"`
+	PaneID string `json:"pane_id"`
+}
+
+// createWorktreeEnvelope is the "herdr worktree create" JSON output.
+type createWorktreeEnvelope struct {
+	ID     string               `json:"id"`
+	Result createWorktreeResult `json:"result"`
+}
+
+type createWorktreeResult struct {
+	Type         string               `json:"type"`
+	CreateStatus createWorktreeStatus `json:"create_status"`
+	Path         string               `json:"path"`
+	Branch       string               `json:"branch"`
+	Label        string               `json:"label"`
+}
+
+// createWorktreeStatus describes whether the worktree was created successfully.
+type createWorktreeStatus struct {
+	Created bool   `json:"created"`
+	Error   string `json:"error"`
 }
