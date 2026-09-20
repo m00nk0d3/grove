@@ -2150,6 +2150,15 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 
 		// Enrich Herdr-backed sessions with snapshot-based liveness.
 		if hc != nil {
+			// Snapshot IDs before enrichment so we can delete sessions that
+			// enrichHerdrSessions removes (e.g. workflows that failed/succeeded).
+			preEnrichIDs := make(map[int64]bool, len(alive))
+			if db != nil {
+				for _, s := range alive {
+					preEnrichIDs[s.ID] = true
+				}
+			}
+
 			var herdrSnap *herdr.Snapshot
 			var herdrErr error
 			snap, err := hc.HerdrSnapshot()
@@ -2157,10 +2166,24 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 			ctx := context.Background()
 			scSnap, scErr := hc.SandcastleSnapshot(ctx)
 			alive = enrichHerdrSessions(alive, herdrSnap, herdrErr, &scSnap, scErr)
-			// Persist Herdr session state so degraded reasons and recoveries
-			// are saved to the DB. Only Herdr sessions are enriched, so
-			// only those need persistence.
+
+			// Delete sessions removed by enrichment from the DB.
 			if db != nil {
+				postEnrichIDs := make(map[int64]bool, len(alive))
+				for _, s := range alive {
+					postEnrichIDs[s.ID] = true
+				}
+				for id := range preEnrichIDs {
+					if !postEnrichIDs[id] {
+						if err := data.DeleteSession(db, id); err != nil {
+							slog.Warn("session health check: failed to delete enrichment-pruned session", "id", id, "err", err)
+						}
+					}
+				}
+
+				// Persist Herdr session state so degraded reasons and recoveries
+				// are saved to the DB. Only Herdr sessions are enriched, so
+				// only those need persistence.
 				for i := range alive {
 					if alive[i].Runtime == domain.RuntimeHerdr {
 						if _, err := data.UpsertSession(db, alive[i]); err != nil {

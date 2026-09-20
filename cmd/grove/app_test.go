@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -3374,6 +3375,185 @@ func TestCheckSessionsCmd_DB_DeadShellPruned(t *testing.T) {
 	got, err := data.GetSessionByWorktree(db, "/repo/dead-shell")
 	require.NoError(t, err)
 	assert.Nil(t, got, "session with dead shell PID must be deleted from the DB")
+}
+
+// fakeHealthChecker is a test sessionHealthChecker that returns canned snapshots.
+type fakeHealthChecker struct {
+	herdrSnap  herdr.Snapshot
+	herdrErr   error
+	scSnap     sandcastle.Snapshot
+	scErr      error
+}
+
+func (f *fakeHealthChecker) HerdrSnapshot() (herdr.Snapshot, error) {
+	return f.herdrSnap, f.herdrErr
+}
+
+func (f *fakeHealthChecker) SandcastleSnapshot(_ context.Context) (sandcastle.Snapshot, error) {
+	return f.scSnap, f.scErr
+}
+
+// TestCheckSessionsCmd_EnrichPrunesDB verifies that sessions removed by
+// enrichHerdrSessions (e.g. Herdr sessions whose Sandcastle workflow has
+// succeeded) are deleted from the database. This is the fix for the blocker
+// where enrichment-pruned sessions persisted indefinitely in the DB.
+func TestCheckSessionsCmd_EnrichPrunesDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Insert a Herdr session with a succeeded workflow.
+	sess := domain.Session{
+		WorktreePath:  "/repo/herdr-succeeded",
+		Runtime:       domain.RuntimeHerdr,
+		WorkflowRunID: strPtr("wf-done"),
+		PaneID:        strPtr("pane-1"),
+		Status:        domain.StatusActive,
+		StartedAt:     time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	// Health checker returns snapshots where the workflow succeeded.
+	hc := &fakeHealthChecker{
+		herdrSnap: herdr.Snapshot{
+			Panes: []domain.PaneRef{{PaneID: "pane-1"}},
+		},
+		scSnap: sandcastle.Snapshot{
+			Workflows: []domain.WorkflowRunRef{
+				{WorkflowID: "wf-done", RunID: "wf-done", Status: domain.WorkflowSucceeded},
+			},
+		},
+	}
+
+	m := NewModel()
+	m.db = db
+	m.healthChecker = hc
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "Herdr session with succeeded workflow must be removed")
+
+	// Verify the session was deleted from the DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/herdr-succeeded")
+	require.NoError(t, err)
+	assert.Nil(t, got, "enrichment-pruned session must be deleted from the database")
+}
+
+// TestCheckSessionsCmd_EnrichKeepsAlive verifies that sessions kept by
+// enrichHerdrSessions are persisted (upserted) to the DB with refreshed state.
+func TestCheckSessionsCmd_EnrichKeepsAlive(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	sess := domain.Session{
+		WorktreePath:  "/repo/herdr-alive",
+		Runtime:       domain.RuntimeHerdr,
+		PaneID:        strPtr("pane-2"),
+		Status:        domain.StatusActive,
+		StartedAt:     time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	// Herdr snapshot has the pane, workflow is still running.
+	hc := &fakeHealthChecker{
+		herdrSnap: herdr.Snapshot{
+			Panes: []domain.PaneRef{{PaneID: "pane-2"}},
+		},
+		scSnap: sandcastle.Snapshot{
+			Workflows: []domain.WorkflowRunRef{
+				{WorkflowID: "wf-running", RunID: "wf-running", Status: domain.WorkflowRunning},
+			},
+		},
+	}
+
+	m := NewModel()
+	m.db = db
+	m.healthChecker = hc
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	require.Len(t, result.sessions, 1)
+	assert.Equal(t, "/repo/herdr-alive", result.sessions[0].WorktreePath)
+
+	// Session still exists in the DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/herdr-alive")
+	require.NoError(t, err)
+	require.NotNil(t, got, "kept session must remain in the DB")
+	assert.Equal(t, domain.RuntimeHerdr, got.Runtime)
+}
+
+// TestCheckSessionsCmd_EnrichMixedDB verifies the fix for unbounded DB growth
+// when a mix of alive and dead Herdr sessions coexist. The dead ones must be
+// deleted from the DB while alive ones are persisted.
+func TestCheckSessionsCmd_EnrichMixedDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	sessAlive := domain.Session{
+		WorktreePath:  "/repo/herdr-alive",
+		Runtime:       domain.RuntimeHerdr,
+		PaneID:        strPtr("pane-alive"),
+		Status:        domain.StatusActive,
+		StartedAt:     time.Now().UTC().Truncate(time.Second),
+	}
+	sessDead := domain.Session{
+		WorktreePath:  "/repo/herdr-dead",
+		Runtime:       domain.RuntimeHerdr,
+		WorkflowRunID: strPtr("wf-dead"),
+		PaneID:        strPtr("pane-dead"),
+		Status:        domain.StatusActive,
+		StartedAt:     time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sessAlive)
+	require.NoError(t, err)
+	_, err = data.UpsertSession(db, sessDead)
+	require.NoError(t, err)
+
+	hc := &fakeHealthChecker{
+		herdrSnap: herdr.Snapshot{
+			Panes: []domain.PaneRef{
+				{PaneID: "pane-alive"},
+				{PaneID: "pane-dead"},
+			},
+		},
+		scSnap: sandcastle.Snapshot{
+			Workflows: []domain.WorkflowRunRef{
+				{WorkflowID: "wf-dead", RunID: "wf-dead", Status: domain.WorkflowFailed},
+			},
+		},
+	}
+
+	m := NewModel()
+	m.db = db
+	m.healthChecker = hc
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	require.Len(t, result.sessions, 1, "only the alive session should remain")
+	assert.Equal(t, "/repo/herdr-alive", result.sessions[0].WorktreePath)
+
+	// Dead session deleted from DB.
+	gotDead, err := data.GetSessionByWorktree(db, "/repo/herdr-dead")
+	require.NoError(t, err)
+	assert.Nil(t, gotDead, "enrichment-pruned session must be deleted from the DB")
+
+	// Alive session still in DB.
+	gotAlive, err := data.GetSessionByWorktree(db, "/repo/herdr-alive")
+	require.NoError(t, err)
+	assert.NotNil(t, gotAlive, "alive session must remain in the DB")
 }
 
 // TestPollPIDFile_HappyPath verifies that pollPIDFile returns the PID when
