@@ -1063,9 +1063,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return syncTickMsg{}
 			})
 			if pending.err != nil {
-				return m, tea.Batch(nextTick, clearErrorCmd())
+				return m, tea.Batch(nextTick, clearErrorCmd(), m.rebuildMissionStateCmd())
 			}
-			return m, nextTick
+			return m, tea.Batch(nextTick, m.rebuildMissionStateCmd())
 		}
 
 	case lazyLoadContextMsg:
@@ -1420,6 +1420,11 @@ func (m *Model) rebuildMissionStateCmd() tea.Cmd {
 
 	repoPath := m.RepoPath
 	insideHerdr := m.insideHerdr
+	githubLastSync := m.lastSynced
+	githubSyncError := ""
+	if m.syncErr != nil {
+		githubSyncError = m.syncErr.Error()
+	}
 	return func() tea.Msg {
 		state := mission.BuildState(mission.BuildInput{
 			RepoPath:           repoPath,
@@ -1427,6 +1432,8 @@ func (m *Model) rebuildMissionStateCmd() tea.Cmd {
 			Issues:             issues,
 			PullRequests:       prs,
 			Sessions:           sessions,
+			GitHubLastSync:     githubLastSync,
+			GitHubSyncError:    githubSyncError,
 			HerdrSnapshot:      herdrSnap,
 			SandcastleSnapshot: scSnap,
 			PreviousState:      prev,

@@ -249,7 +249,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	var list string
 	switch view {
 	case viewDashboard:
-		list = renderDashboard(missionState, issues, prs, theme, listInner, panelHeight, focused == panelList, ctxInner, sessions)
+		list = renderDashboard(missionState, worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, sessions)
 	case viewIssues:
 		list = renderIssueList(visibleIssues, visibleSelectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList)
 	case viewPRs:
@@ -258,7 +258,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 		list = renderWorktreePanel(worktrees, selectedIdx, theme, listInner, panelHeight, focused == panelList, sessions)
 	}
 
-	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions)
+	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState)
 	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, nav, list, ctx)
 	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, prs, currentPage)
 	actionBar := renderActionBar(theme, termWidth)
@@ -266,145 +266,104 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer, actionBar)
 }
 
-// renderDashboard renders the global dashboard view showing a grid of work items,
-// AI agents, and workflow runs from mission-control state.
-func renderDashboard(missionState *domain.MissionControlState, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, ctxInner int, sessions []domain.Session) string {
-	// Use nil-safe WorkItems for backward compatibility (when missionState is not populated)
+// renderDashboard renders aggregate operations telemetry. Detailed issue, PR,
+// and worktree records remain in their dedicated views.
+func renderDashboard(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, sessions []domain.Session) string {
 	var workItems []domain.WorkItem
+	var workflows []domain.WorkflowRunRef
+	var agents []domain.AgentRef
+	status := domain.UnknownState
 	if missionState != nil {
 		workItems = missionState.WorkItems
-	}
-
-	const (
-		cursor   = 2
-		dashW    = 20
-		itemNameW = 18
-		itemStateW = 10
-		fixedTotal = cursor + itemNameW + itemStateW // 40
-	)
-	nameW := listInner - fixedTotal
-	if nameW < 10 {
-		nameW = 10
-	}
-
-	type gridItem struct {
-		cursor string
-		label  string
-		status string
-	}
-	var items []gridItem
-
-	// Work items (primary display from mission state)
-	for _, wi := range workItems {
-		items = append(items, gridItem{
-			cursor: "  ",
-			label:  fmt.Sprintf("%s", truncateStr(wi.ID, nameW)),
-			status: wi.Status,
-		})
-	}
-
-	// Work items: issues and PRs (fallback for back-compat)
-	for _, pr := range prs {
-		items = append(items, gridItem{
-			cursor: "  ",
-			label:  fmt.Sprintf("#%d %s", pr.Number, truncateStr(pr.Title, nameW)),
-			status: prDisplayStatus(pr),
-		})
-	}
-	for _, iss := range issues {
-		items = append(items, gridItem{
-			cursor: "  ",
-			label:  fmt.Sprintf("#%d %s", iss.Number, truncateStr(iss.Title, nameW)),
-			status:  "Open",
-		})
-	}
-
-	// Agents
-	for _, s := range sessions {
-		if s.Status != domain.StatusDead && s.AgentName != nil {
-			items = append(items, gridItem{
-				cursor: "  ",
-				label:  fmt.Sprintf("%s", truncateStr(*s.AgentName, nameW)),
-				status: string(s.Status),
-			})
+		workflows = missionState.WorkflowRuns
+		agents = missionState.Agents
+		if missionState.Status != "" {
+			status = missionState.Status
 		}
 	}
 
-	// Workflows (placeholder until mission-control builder added)
-	for _, wt := range workItems {
-		if wt.LinkedPR != nil {
-			items = append(items, gridItem{
-				cursor: "  ",
-				label:  fmt.Sprintf("WFT %s", truncateStr(wt.LinkedPR.Title, nameW)),
-				status: wt.LinkedPR.State,
-			})
+	activeSessions := countActiveSessions(sessions)
+	activeAgents := countStatuses(agentStatuses(agents), domain.AgentWorking)
+	if activeAgents == 0 {
+		for _, session := range sessions {
+			if session.Status != domain.StatusDead && session.AgentName != nil {
+				activeAgents++
+			}
 		}
 	}
+	activeWorkflows := countStatuses(workflowStatuses(workflows), domain.WorkflowRunning, domain.WorkflowQueued)
+	blocked := countStatuses(workflowStatuses(workflows), domain.WorkflowBlocked, domain.WorkflowFailed) +
+		countStatuses(agentStatuses(agents), domain.AgentBlocked, domain.AgentFailed)
+
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent())).Bold(true)
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
+	success := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success())).Bold(true)
+	warning := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Warning())).Bold(true)
 
 	var b strings.Builder
-	for i, item := range items {
-		cursor := "  "
-		if focused && i == 0 {
-			cursor = "> "
+	b.WriteString(accent.Render("◈ MISSION CONTROL // LIVE OPERATIONS"))
+	b.WriteString("\n")
+	b.WriteString(muted.Render(fmt.Sprintf("SYSTEM %-10s  %d open issues  •  %d sessions online", strings.ToUpper(status), len(issues), activeSessions)))
+	b.WriteString("\n\n")
+
+	cardWidth := listInner / 4
+	if cardWidth < 12 {
+		cardWidth = 12
+	}
+	cards := []string{
+		renderDashboardCard(theme, "WORKTREES", len(worktrees), cardWidth),
+		renderDashboardCard(theme, "AGENTS", activeAgents, cardWidth),
+		renderDashboardCard(theme, "WORKFLOWS", activeWorkflows, cardWidth),
+		renderDashboardCard(theme, "OPEN PRs", len(prs), cardWidth),
+	}
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, cards...))
+	b.WriteString("\n\n")
+
+	b.WriteString(accent.Render("◫ OPERATIONAL PULSE"))
+	b.WriteString("\n")
+	pulseWidth := listInner - 25
+	if pulseWidth < 8 {
+		pulseWidth = 8
+	}
+	b.WriteString(renderPulseRow(theme, "RUNNING", activeWorkflows+activeAgents, maxInt(len(workflows)+len(agents), 1), pulseWidth))
+	b.WriteString("\n")
+	b.WriteString(renderPulseRow(theme, "BLOCKED", blocked, maxInt(len(workflows)+len(agents), 1), pulseWidth))
+	b.WriteString("\n")
+	b.WriteString(renderPulseRow(theme, "WORKTREES", activeSessions, maxInt(len(worktrees), 1), pulseWidth))
+	b.WriteString("\n\n")
+
+	b.WriteString(accent.Render("⌁ ACTIVE MISSIONS"))
+	b.WriteString("\n")
+	activeItems := 0
+	for _, item := range workItems {
+		if !isActiveMission(item) {
+			continue
 		}
-		b.WriteString(fmt.Sprintf("%s %-18s %s\n", cursor, item.label, item.status))
-	}
-
-	selSt := theme.GetStyle("selected-row")
-	normalSt := theme.GetStyle("_")
-	surfaceBg := normalSt.GetBackground()
-	normalFg := normalSt.GetForeground()
-
-	type rowEntry struct {
-		cursor string
-		label  string
-		status string
-	}
-	entries := make([]rowEntry, len(items))
-	for i, item := range items {
-		entries[i] = rowEntry{
-			cursor: item.cursor,
-			label:  item.label,
-			status: item.status,
+		stateStyle := success
+		if item.Degraded || strings.EqualFold(item.Status, string(domain.StatusBlocked)) || strings.EqualFold(item.Status, string(domain.StatusFailed)) {
+			stateStyle = warning
+		}
+		detail := fmt.Sprintf("%d agent  %d flow", len(item.LinkedAgents), len(item.LinkedWorkflows))
+		nameWidth := listInner - len(detail) - 16
+		if nameWidth < 12 {
+			nameWidth = 12
+		}
+		b.WriteString(fmt.Sprintf("  %s  %-*s  %s\n",
+			stateStyle.Render("●"),
+			nameWidth,
+			truncateStr(item.ID, nameWidth),
+			stateStyle.Render(strings.ToUpper(defaultStatus(item.Status))),
+		))
+		b.WriteString(muted.Render(fmt.Sprintf("     %s", detail)))
+		b.WriteString("\n")
+		activeItems++
+		if activeItems == 5 {
+			break
 		}
 	}
-
-	t := libtable.New().
-		Headers("", "ITEM", "STATUS").
-		BorderTop(false).BorderBottom(false).
-		BorderLeft(false).BorderRight(false).
-		BorderHeader(false).BorderColumn(false).BorderRow(false).
-		Wrap(false).
-		Width(listInner).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			var base lipgloss.Style
-			switch col {
-			case 0:
-				base = lipgloss.NewStyle().Width(2).AlignHorizontal(lipgloss.Left)
-			case 1:
-				base = base.Width(itemNameW).AlignHorizontal(lipgloss.Left)
-			case 2:
-				base = base.Width(itemStateW).AlignHorizontal(lipgloss.Right)
-			default:
-				return lipgloss.NewStyle()
-			}
-			switch row {
-			case libtable.HeaderRow:
-				return base.
-					Foreground(lipgloss.Color(theme.Muted())).
-					Bold(true)
-			case 0:
-				return base.
-					Background(selSt.GetBackground()).
-					Foreground(selSt.GetForeground()).
-					Bold(true)
-			default:
-				return base.Background(surfaceBg).Foreground(normalFg)
-			}
-		})
-
-	for _, entry := range entries {
-		t.Row(entry.cursor, entry.label, entry.status)
+	if activeItems == 0 {
+		b.WriteString(muted.Render("  ◌ No active missions. Start from Issues or PRs."))
+		b.WriteString("\n")
 	}
 
 	st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
@@ -415,8 +374,90 @@ func renderDashboard(missionState *domain.MissionControlState, issues []domain.I
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
 
-	const footerText = " j/k select • d dashboard • w worktrees • i issues • p PRs • q quit"
-	return st.Render(strings.TrimRight(t.Render(), "\n") + "\n\n" + truncateStr(footerText, listInner))
+	return st.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+func renderDashboardCard(theme styles.Theme, label string, value, width int) string {
+	if width < 8 {
+		width = 8
+	}
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent())).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
+	return lipgloss.NewStyle().
+		Width(width-2).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(theme.Muted())).
+		Padding(0, 1).
+		Render(labelStyle.Render(label) + "\n" + valueStyle.Render(fmt.Sprintf("%02d", value)))
+}
+
+func renderPulseRow(theme styles.Theme, label string, value, total, width int) string {
+	filled := value * width / total
+	if value > 0 && filled == 0 {
+		filled = 1
+	}
+	if filled > width {
+		filled = width
+	}
+	barColor := theme.Success()
+	if label == "BLOCKED" && value > 0 {
+		barColor = theme.Warning()
+	}
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(barColor)).Render(strings.Repeat("━", filled))
+	track := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted())).Render(strings.Repeat("─", width-filled))
+	return fmt.Sprintf("  %-9s %s%s %02d", label, bar, track, value)
+}
+
+func workflowStatuses(workflows []domain.WorkflowRunRef) []string {
+	statuses := make([]string, 0, len(workflows))
+	for _, workflow := range workflows {
+		statuses = append(statuses, workflow.Status)
+	}
+	return statuses
+}
+
+func agentStatuses(agents []domain.AgentRef) []string {
+	statuses := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		statuses = append(statuses, agent.Status)
+	}
+	return statuses
+}
+
+func countStatuses(statuses []string, wanted ...string) int {
+	count := 0
+	for _, status := range statuses {
+		for _, candidate := range wanted {
+			if strings.EqualFold(status, candidate) {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
+func isActiveMission(item domain.WorkItem) bool {
+	return item.Degraded ||
+		strings.EqualFold(item.Status, string(domain.StatusRunning)) ||
+		strings.EqualFold(item.Status, string(domain.StatusBlocked)) ||
+		strings.EqualFold(item.Status, string(domain.StatusFailed)) ||
+		len(item.LinkedAgents) > 0 ||
+		len(item.LinkedWorkflows) > 0
+}
+
+func defaultStatus(status string) string {
+	if status == "" {
+		return domain.UnknownState
+	}
+	return status
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSessions int, herdrStatus, sandcastleStatus, githubStatus string) string {
@@ -584,9 +625,11 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 	return st.Render(t.Render())
 }
 
-func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session) string {
+func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session, missionState *domain.MissionControlState) string {
 	var content string
 	switch view {
+	case viewDashboard:
+		content = renderDashboardTelemetry(missionState, worktrees, issues, prs, sessions, ctxInner, theme)
 	case viewIssues:
 		if len(issues) == 0 || issueIdx < 0 || issueIdx >= len(issues) {
 			content = "No issue selected.\nPress I to view issues."
@@ -676,6 +719,107 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
 	return st.Render(content)
+}
+
+func renderDashboardTelemetry(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, sessions []domain.Session, width int, theme styles.Theme) string {
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent())).Bold(true)
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
+
+	var integrations domain.IntegrationStatus
+	var warnings []domain.Warning
+	var workflows []domain.WorkflowRunRef
+	var agents []domain.AgentRef
+	var panes []domain.PaneRef
+	var updatedAt time.Time
+	if missionState != nil {
+		integrations = missionState.Integrations
+		warnings = missionState.Warnings
+		workflows = missionState.WorkflowRuns
+		agents = missionState.Agents
+		panes = missionState.Panes
+		updatedAt = missionState.UpdatedAt
+	}
+
+	var b strings.Builder
+	b.WriteString(accent.Render("◈ SYSTEM TELEMETRY"))
+	b.WriteString("\n\n")
+	b.WriteString(muted.Render("NETWORK STATUS"))
+	b.WriteString("\n")
+	b.WriteString(renderIntegrationLine(theme, "HERDR", integrations.Herdr))
+	b.WriteString("\n")
+	b.WriteString(renderIntegrationLine(theme, "SANDCASTLE", integrations.Sandcastle))
+	b.WriteString("\n")
+	b.WriteString(renderIntegrationLine(theme, "GITHUB", integrations.GitHub))
+	b.WriteString("\n\n")
+
+	b.WriteString(muted.Render("RUNTIME TOPOLOGY"))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("  Worktrees   %02d\n", len(worktrees)))
+	b.WriteString(fmt.Sprintf("  Sessions    %02d\n", countActiveSessions(sessions)))
+	b.WriteString(fmt.Sprintf("  Agents      %02d\n", len(agents)))
+	b.WriteString(fmt.Sprintf("  Workflows   %02d\n", len(workflows)))
+	b.WriteString(fmt.Sprintf("  Panes       %02d\n", len(panes)))
+	b.WriteString(fmt.Sprintf("  GitHub      %02d issues / %02d PRs\n", len(issues), len(prs)))
+
+	b.WriteString("\n")
+	b.WriteString(muted.Render("SIGNAL"))
+	b.WriteString("\n")
+	if updatedAt.IsZero() {
+		b.WriteString("  Awaiting first telemetry frame\n")
+	} else {
+		b.WriteString(fmt.Sprintf("  Frame age   %s\n", compactAge(updatedAt)))
+	}
+	if len(warnings) == 0 {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success())).Render("  ● All monitored systems nominal"))
+		b.WriteString("\n")
+	} else {
+		for i, warning := range warnings {
+			if i == 3 {
+				b.WriteString(fmt.Sprintf("  +%d more alerts\n", len(warnings)-i))
+				break
+			}
+			message := truncateStr(warning.Message, maxInt(width-4, 10))
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Warning())).Render("  ▲ " + message))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(muted.Render("QUICK ACCESS"))
+	b.WriteString("\n  [w] Worktrees\n  [i] Issues\n  [p] Pull requests\n  [/] Global search")
+	return b.String()
+}
+
+func renderIntegrationLine(theme styles.Theme, label string, integration domain.ExternalIntegration) string {
+	state := integration.Mode
+	color := theme.Warning()
+	symbol := "◌"
+	if integration.Available && integration.Enabled {
+		color = theme.Success()
+		symbol = "●"
+	} else if state == "" {
+		state = "offline"
+	}
+	if integration.Error != "" {
+		color = theme.Warning()
+		symbol = "▲"
+	}
+	if state == "" {
+		state = "connected"
+	}
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+	return fmt.Sprintf("  %s %-11s %s", statusStyle.Render(symbol), label, statusStyle.Render(strings.ToUpper(state)))
+}
+
+func compactAge(t time.Time) string {
+	age := time.Since(t)
+	if age < time.Minute {
+		return "just now"
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("%dm ago", int(age.Minutes()))
+	}
+	return fmt.Sprintf("%dh ago", int(age.Hours()))
 }
 
 // issueTreeRow represents a single row in the tree-ordered issue list.

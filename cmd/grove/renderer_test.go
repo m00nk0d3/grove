@@ -116,14 +116,14 @@ func TestRenderFull_ContainsWorktreeTableHeaders(t *testing.T) {
 	}
 }
 
-func TestRenderFull_ContainsContextPanelPlaceholder(t *testing.T) {
+func TestRenderFull_DashboardShowsTelemetry(t *testing.T) {
 	tests := []struct {
 		name   string
-		wantIn string
+		wantIn []string
 	}{
 		{
-			name:   "shows placeholder when no worktrees",
-			wantIn: "No worktree selected",
+			name:   "shows operational overview instead of worktree context",
+			wantIn: []string{"MISSION CONTROL", "OPERATIONAL PULSE", "ACTIVE MISSIONS", "SYSTEM TELEMETRY", "NETWORK STATUS"},
 		},
 	}
 
@@ -134,9 +134,31 @@ func TestRenderFull_ContainsContextPanelPlaceholder(t *testing.T) {
 
 			view := model.View()
 
-			assert.Contains(t, view, tt.wantIn)
+			for _, want := range tt.wantIn {
+				assert.Contains(t, view, want)
+			}
 		})
 	}
+}
+
+func TestRenderDashboard_DoesNotDuplicateIssueList(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.issues = []domain.Issue{{Number: 201, Title: "Documentation issue"}}
+	model.prs = []domain.PullRequest{{Number: 202, Title: "Feature PR", State: "OPEN"}}
+	model.Worktrees = []domain.Worktree{{Path: "/tmp/grove", Branch: "main", IsClean: true}}
+	model.missionState = &domain.MissionControlState{
+		Status:    "running",
+		UpdatedAt: time.Now(),
+		WorkItems: []domain.WorkItem{{ID: "feat-dashboard", Status: "running"}},
+	}
+
+	view := model.View()
+
+	assert.Contains(t, view, "01")
+	assert.Contains(t, view, "feat-dashboard")
+	assert.NotContains(t, view, "Documentation issue")
+	assert.NotContains(t, view, "Feature PR")
 }
 
 func TestRenderFull_ContainsFooterKeyHints(t *testing.T) {
@@ -2363,9 +2385,9 @@ func TestRenderSessionBlock_DegradedReason(t *testing.T) {
 			wantDegradedStr: "herdr pane not found",
 		},
 		{
-			name:            "session with empty DegradedReason does not render",
-			session:         &domain.Session{ID: 2, Status: domain.StatusActive, StartedAt: now, DegradedReason: strPtr("")},
-			wantDegraded:    false,
+			name:         "session with empty DegradedReason does not render",
+			session:      &domain.Session{ID: 2, Status: domain.StatusActive, StartedAt: now, DegradedReason: strPtr("")},
+			wantDegraded: false,
 		},
 		{
 			name:         "session without DegradedReason does not render degraded line",
@@ -2399,4 +2421,3 @@ func TestRenderSessionBlock_DegradedReason(t *testing.T) {
 		})
 	}
 }
-

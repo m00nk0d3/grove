@@ -19,6 +19,8 @@ type BuildInput struct {
 	Issues             []domain.Issue
 	PullRequests       []domain.PullRequest
 	Sessions           []domain.Session
+	GitHubLastSync     time.Time
+	GitHubSyncError    string
 	HerdrSnapshot      *herdr.Snapshot
 	SandcastleSnapshot *sandcastle.Snapshot
 	PreviousState      *domain.MissionControlState
@@ -48,7 +50,7 @@ func BuildState(input BuildInput) domain.MissionControlState {
 		Integrations: domain.IntegrationStatus{
 			Herdr:      herdrIntegration(input.HerdrSnapshot, input.InsideHerdr),
 			Sandcastle: sandcastleIntegration(input.SandcastleSnapshot),
-			GitHub:     missingIntegration(), // GitHub not connected to this implementation
+			GitHub:     githubIntegration(input.GitHubLastSync, input.GitHubSyncError),
 		},
 		Warnings:  []domain.Warning{},
 		UpdatedAt: input.Now,
@@ -142,6 +144,27 @@ func BuildState(input BuildInput) domain.MissionControlState {
 	}
 
 	return state
+}
+
+func githubIntegration(lastSync time.Time, syncError string) domain.ExternalIntegration {
+	if lastSync.IsZero() {
+		integration := missingIntegration()
+		integration.Error = syncError
+		return integration
+	}
+
+	mode := "connected"
+	if syncError != "" {
+		mode = domain.DegradedState
+	}
+	return domain.ExternalIntegration{
+		Name:      "GitHub",
+		Available: true,
+		Enabled:   true,
+		Mode:      mode,
+		Error:     syncError,
+		LastSync:  lastSync,
+	}
 }
 
 // herdrIntegration evaluates Herdr integration status.
