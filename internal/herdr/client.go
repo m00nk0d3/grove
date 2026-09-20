@@ -281,24 +281,22 @@ func (c Client) CreateWorktree(ctx context.Context, req CreateWorktreeRequest) (
 	}, nil
 }
 
-// FocusPane focuses the given Herdr pane. Uses `herdr focus-pane` for 0.9.x
-// or `herdr focus-pane` if available (future-proofing). The focus command
-// does not return JSON; it returns success on exit code 0 and failure on non-zero.
+// FocusPane focuses the agent hosted in the given Herdr pane. Current Herdr
+// accepts pane IDs through `agent focus`; older versions used `focus-pane`.
 func (c Client) FocusPane(ctx context.Context, paneID string) error {
 	if err := c.checkHerdrAvailable(); err != nil {
 		return fmt.Errorf("focus pane: %w", err)
 	}
 
-	// Try the v1 focus command first (if available), fall back to v0.9.x command.
+	// Keep the legacy command first so existing installations remain compatible.
 	_, stderr, err := c.run([]string{"focus-pane", paneID})
 	if err == nil {
 		return nil
 	}
 
-	// Fall back to the older focus command
-	_, stderr, err = c.run([]string{"pane", "focus", paneID})
+	_, stderr, err = c.run([]string{"agent", "focus", paneID})
 	if err != nil {
-		return fmt.Errorf("herdr pane focus: %w; %s", err, string(stderr))
+		return fmt.Errorf("herdr agent focus: %w; %s", err, string(stderr))
 	}
 
 	return nil

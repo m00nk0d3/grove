@@ -151,6 +151,7 @@ func TestSnapshot_SuccessfulStatus(t *testing.T) {
 func TestNormalizeWorkflow_WithIssueAndPR(t *testing.T) {
 	raw := workflowRunRaw{
 		ID:           "run_456",
+		Kind:         "review",
 		Title:        "Fix bug",
 		Status:       "succeeded",
 		Repo:         "/repo",
@@ -166,6 +167,7 @@ func TestNormalizeWorkflow_WithIssueAndPR(t *testing.T) {
 	wf, agents := normalizeWorkflow(raw)
 
 	assert.Equal(t, "run_456", wf.WorkflowID)
+	assert.Equal(t, "review", wf.Kind)
 	assert.Equal(t, "succeeded", wf.Status)
 	assert.Equal(t, "fix-bug", wf.Branch)
 	require.NotNil(t, wf.IssueNumber)

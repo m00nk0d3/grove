@@ -1343,6 +1343,79 @@ func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 	assert.NotNil(t, cmd, "should return a spawnSessionCmd")
 }
 
+func TestModel_WorktreeEnterFocusesExistingWorkflowPane(t *testing.T) {
+	navigator := &fakeHerdrNavigator{}
+	m := NewModel()
+	m.view = viewWorktrees
+	m.herdrNavigator = navigator
+	m.Worktrees = []domain.Worktree{
+		{Path: "/repos/grove-52", Branch: "agent/define-ipc-protocol-52"},
+	}
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{{
+			WorkflowID:   "run-52",
+			RunID:        "run-52",
+			Title:        "Implement #52",
+			Status:       domain.WorkflowFailed,
+			WorktreePath: "/repos/grove-52",
+			Branch:       "agent/define-ipc-protocol-52",
+		}},
+		Agents: []domain.AgentRef{{
+			AgentID:       "agent-52",
+			Name:          "opencode",
+			WorkflowRunID: "run-52",
+			Status:        domain.AgentFailed,
+			PaneID:        "window-1:pane-5",
+		}},
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(paneFocusedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "window-1:pane-5", navigator.focusedPane)
+	assert.Empty(t, navigator.openedPath)
+}
+
+func TestModel_WorktreeEnterIgnoresCompletedWorkflowPane(t *testing.T) {
+	navigator := &fakeHerdrNavigator{
+		pane: &domain.PaneRef{PaneID: "window-1:pane-6", CWD: "/repos/grove-52"},
+	}
+	m := NewModel()
+	m.view = viewWorktrees
+	m.insideHerdr = true
+	m.Config.Herdr.Enabled = true
+	m.Config.Herdr.PreferWorktreeAPI = true
+	m.herdrNavigator = navigator
+	m.Worktrees = []domain.Worktree{
+		{Path: "/repos/grove-52", Branch: "agent/define-ipc-protocol-52"},
+	}
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{{
+			WorkflowID:   "run-52",
+			RunID:        "run-52",
+			Status:       domain.WorkflowSucceeded,
+			WorktreePath: "/repos/grove-52",
+		}},
+		Agents: []domain.AgentRef{{
+			AgentID:       "agent-52",
+			WorkflowRunID: "run-52",
+			PaneID:        "window-1:pane-5",
+		}},
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(herdrWorktreeOpenedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Empty(t, navigator.focusedPane)
+	assert.Equal(t, "/repos/grove-52", navigator.openedPath)
+}
+
 type fakeHerdrNavigator struct {
 	openedPath  string
 	focusedPane string
@@ -1421,6 +1494,41 @@ func TestModel_DashboardEnterFocusesCorrelatedHerdrPane(t *testing.T) {
 	require.True(t, ok)
 	require.NoError(t, msg.err)
 	assert.Equal(t, "window-1:pane-2", navigator.focusedPane)
+}
+
+func TestModel_DashboardEnterFocusesWorkflowAgentPane(t *testing.T) {
+	navigator := &fakeHerdrNavigator{}
+	m := NewModel()
+	m.view = viewDashboard
+	m.herdrNavigator = navigator
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{
+				WorkflowID:   "implement-52",
+				RunID:        "run-52",
+				Status:       domain.WorkflowFailed,
+				WorktreePath: "/repos/grove-52",
+			},
+		},
+		Agents: []domain.AgentRef{
+			{
+				AgentID:       "agent-52",
+				Name:          "opencode",
+				WorkflowRunID: "run-52",
+				Status:        domain.AgentFailed,
+				PaneID:        "window-1:pane-5",
+			},
+		},
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(paneFocusedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "window-1:pane-5", navigator.focusedPane)
+	assert.Empty(t, navigator.openedPath)
 }
 
 func TestModel_DashboardEnterFallsBackToTrackedHerdrSession(t *testing.T) {
@@ -1759,6 +1867,65 @@ func TestModel_WorkflowLaunchMsgStartsOpenCodeWorkflow(t *testing.T) {
 	assert.Equal(t, "opencode", starter.request.AgentKind)
 	require.NotNil(t, starter.request.IssueNumber)
 	assert.Equal(t, issueNumber, *starter.request.IssueNumber)
+}
+
+func TestModel_FailedDashboardWorkflowCanBeRetried(t *testing.T) {
+	issueNumber := 52
+	starter := &fakeSandcastleWorkflowStarter{
+		workflow: domain.WorkflowRunRef{WorkflowID: "run_retry", Status: domain.WorkflowQueued},
+	}
+	m := NewModel()
+	m.RepoPath = "/repos/current"
+	m.workflowStarter = starter
+	m.view = viewDashboard
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{{
+			WorkflowID:   "run-failed",
+			RunID:        "run-failed",
+			Kind:         modal.WorkflowKindImplement,
+			Repo:         "/repos/spectre",
+			Status:       domain.WorkflowFailed,
+			DefaultAgent: "pi",
+			IssueNumber:  &issueNumber,
+		}},
+	}
+	m.focused = panelCtx
+	m.contextActionIdx = 1
+
+	actions := m.availableContextActions()
+	require.Len(t, actions, 4)
+	assert.Equal(t, modal.ContextActionRetryRun, actions[1].action)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	assert.Equal(t, "Retrying imp workflow…", updated.(*Model).statusMsg)
+
+	msg, ok := cmd().(sandcastleWorkflowStartedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, modal.WorkflowKindImplement, starter.request.Kind)
+	assert.Equal(t, "/repos/spectre", starter.request.RepoPath)
+	assert.Equal(t, "pi", starter.request.AgentKind)
+	require.NotNil(t, starter.request.IssueNumber)
+	assert.Equal(t, issueNumber, *starter.request.IssueNumber)
+}
+
+func TestModel_NonFailedDashboardWorkflowHasNoRetryAction(t *testing.T) {
+	m := NewModel()
+	m.view = viewDashboard
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{{
+			WorkflowID: "run-running",
+			RunID:      "run-running",
+			Kind:       modal.WorkflowKindImplement,
+			Status:     domain.WorkflowRunning,
+		}},
+	}
+
+	actions := m.availableContextActions()
+	for _, action := range actions {
+		assert.NotEqual(t, modal.ContextActionRetryRun, action.action)
+	}
 }
 
 func TestModel_Enter_InHerdr_OpensAndFocusesHerdrWorktree(t *testing.T) {

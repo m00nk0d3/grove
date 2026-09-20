@@ -54,6 +54,7 @@ const (
 type WorkflowRunRef struct {
 	WorkflowID   string
 	RunID        string
+	Kind         string
 	Title        string
 	Repo         string
 	WorktreePath string

@@ -95,6 +95,27 @@ func TestMissionModal_XRequestsWorkflowRemoval(t *testing.T) {
 	assert.Equal(t, "run-42", msg.RunID)
 }
 
+func TestMissionModal_FailedWorkflowCanBeRetried(t *testing.T) {
+	workflow := missionTestWorkflow()
+	workflow.Status = domain.WorkflowFailed
+	m := NewMissionModal(workflow, nil)
+
+	assert.Contains(t, m.View(), "retry")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(MissionRetryRequestedMsg)
+	require.True(t, ok)
+	assert.Equal(t, "run-42", msg.RunID)
+}
+
+func TestMissionModal_RunningWorkflowCannotBeRetried(t *testing.T) {
+	m := NewMissionModal(missionTestWorkflow(), nil)
+
+	assert.NotContains(t, m.View(), "retry")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	assert.Nil(t, cmd)
+}
+
 func TestMissionModal_SetWorkflowRefreshesTelemetry(t *testing.T) {
 	m := NewMissionModal(missionTestWorkflow(), nil)
 	updated := missionTestWorkflow()

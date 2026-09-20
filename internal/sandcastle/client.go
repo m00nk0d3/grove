@@ -245,6 +245,7 @@ type startWorkflowResponse struct {
 
 type workflowRunRaw struct {
 	ID           string      `json:"id"`
+	Kind         string      `json:"kind"`
 	Title        string      `json:"title"`
 	Status       string      `json:"status"`
 	Repo         string      `json:"repo"`
@@ -303,6 +304,7 @@ func normalizeWorkflow(w workflowRunRaw) (domain.WorkflowRunRef, []domain.AgentR
 	wf := domain.WorkflowRunRef{
 		WorkflowID:   w.ID,
 		RunID:        w.ID,
+		Kind:         w.Kind,
 		Title:        w.Title,
 		Repo:         w.Repo,
 		WorktreePath: w.WorktreePath,

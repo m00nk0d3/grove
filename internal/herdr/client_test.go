@@ -494,24 +494,24 @@ func TestFocusPane_NilRunner(t *testing.T) {
 func TestFocusPane_CommandFailure(t *testing.T) {
 	r := newFakeRunner()
 	r.responses["focus-pane"] = stubResponse{stderr: []byte("unsupported command\n"), err: fmt.Errorf("exit status 1")}
-	r.responses["pane"] = stubResponse{stderr: []byte("herdr: no such pane\n"), err: fmt.Errorf("exit status 1")}
+	r.responses["agent"] = stubResponse{stderr: []byte("herdr: no such agent or pane\n"), err: fmt.Errorf("exit status 1")}
 	testEnv(t, true, "")
 
 	err := NewClient(r).FocusPane(context.Background(), "w6:p3F")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "herdr pane focus")
+	assert.Contains(t, err.Error(), "herdr agent focus")
 	assert.Contains(t, err.Error(), "exit status 1")
-	assert.Contains(t, err.Error(), "no such pane")
+	assert.Contains(t, err.Error(), "no such agent or pane")
 }
 
 func TestFocusPane_ExactCommandArgs(t *testing.T) {
 	r := newFakeRunner()
 	r.responses["focus-pane"] = stubResponse{stderr: []byte("unsupported command\n"), err: fmt.Errorf("exit status 1")}
-	r.responses["pane"] = stubResponse{}
+	r.responses["agent"] = stubResponse{}
 	testEnv(t, true, "")
 
 	err := NewClient(r).FocusPane(context.Background(), "w6:p3F")
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"pane", "focus", "w6:p3F"}, r.lastArgs("pane"))
+	assert.Equal(t, []string{"agent", "focus", "w6:p3F"}, r.lastArgs("agent"))
 }

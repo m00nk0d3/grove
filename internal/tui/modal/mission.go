@@ -119,6 +119,10 @@ func (m *MissionModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveUp()
 		case "r", "R":
 			return m, func() tea.Msg { return MissionRefreshMsg{} }
+		case "t", "T":
+			if strings.EqualFold(m.workflow.Status, domain.WorkflowFailed) {
+				return m, func() tea.Msg { return MissionRetryRequestedMsg{RunID: m.RunID()} }
+			}
 		case "x", "X":
 			return m, func() tea.Msg { return MissionRemoveRequestedMsg{RunID: m.RunID()} }
 		case "1", "2", "3", "4":
@@ -242,6 +246,10 @@ func (m *MissionModal) View() string {
 	b.WriteString(m.mutedStyle().Render(" jump  ·  "))
 	b.WriteString(m.keyStyle().Render("r"))
 	b.WriteString(m.mutedStyle().Render(" refresh  ·  "))
+	if strings.EqualFold(m.workflow.Status, domain.WorkflowFailed) {
+		b.WriteString(m.keyStyle().Render("t"))
+		b.WriteString(m.mutedStyle().Render(" retry  ·  "))
+	}
 	b.WriteString(m.keyStyle().Render("x"))
 	b.WriteString(m.mutedStyle().Render(" remove  ·  "))
 	b.WriteString(m.keyStyle().Render("Esc"))

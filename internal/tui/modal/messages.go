@@ -46,6 +46,11 @@ type MissionJumpMsg struct {
 // MissionRefreshMsg requests an immediate refresh of integration telemetry.
 type MissionRefreshMsg struct{}
 
+// MissionRetryRequestedMsg asks Grove to retry a failed inspected run.
+type MissionRetryRequestedMsg struct {
+	RunID string
+}
+
 // MissionRemoveRequestedMsg asks Grove to confirm removal of an inspected run.
 type MissionRemoveRequestedMsg struct {
 	RunID string
@@ -78,6 +83,8 @@ const (
 // WorkflowLaunchMsg requests a Grove-owned Sandcastle workflow.
 type WorkflowLaunchMsg struct {
 	Kind        string
+	RepoPath    string
+	AgentKind   string
 	IssueNumber *int
 	PRNumber    *int
 }
@@ -89,6 +96,7 @@ const (
 	ContextActionDelete     = "delete-worktree"
 	ContextActionOpenGitHub = "open-github"
 	ContextActionInspect    = "inspect-mission"
+	ContextActionRetryRun   = "retry-workflow"
 	ContextActionRemoveRun  = "remove-workflow"
 )
 

@@ -190,6 +190,19 @@ func (m *Model) jumpToMissionRun(runID string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) jumpToMission(mission dashboardMission) (tea.Model, tea.Cmd) {
+	runID := mission.workflow.RunID
+	if runID == "" {
+		runID = mission.workflow.WorkflowID
+	}
+	for _, agent := range agentsForWorkflow(m.missionState, runID) {
+		if agent.PaneID != "" {
+			label := agent.Name
+			if label == "" {
+				label = mission.label
+			}
+			return m, m.focusPaneCmd(agent.PaneID, label)
+		}
+	}
 	if mission.paneID != "" {
 		return m, m.focusPaneCmd(mission.paneID, mission.label)
 	}
@@ -245,6 +258,56 @@ func (m *Model) confirmSelectedWorkflowRemoval() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) retrySelectedWorkflow() (tea.Model, tea.Cmd) {
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+	if len(missions) == 0 {
+		m.statusErr = "No workflow selected"
+		return m, clearErrorCmd()
+	}
+	if m.selectedMissionIdx < 0 || m.selectedMissionIdx >= len(missions) {
+		m.selectedMissionIdx = 0
+	}
+	workflow := missions[m.selectedMissionIdx].workflow
+	return m.retryWorkflow(workflow)
+}
+
+func (m *Model) retryWorkflowByRunID(runID string) (tea.Model, tea.Cmd) {
+	workflow, ok := workflowByRunID(m.missionState, runID)
+	if !ok {
+		m.statusErr = fmt.Sprintf("Workflow %s is no longer available", runID)
+		return m, clearErrorCmd()
+	}
+	return m.retryWorkflow(workflow)
+}
+
+func (m *Model) retryWorkflow(workflow domain.WorkflowRunRef) (tea.Model, tea.Cmd) {
+	if !strings.EqualFold(workflow.Status, domain.WorkflowFailed) {
+		m.statusErr = "Only failed workflows can be retried"
+		return m, clearErrorCmd()
+	}
+	if workflow.Kind == "" {
+		m.statusErr = "Cannot retry workflow: workflow kind is unavailable"
+		return m, clearErrorCmd()
+	}
+	if !m.Config.Sandcastle.Enabled {
+		m.statusErr = "Sandcastle workflows are disabled in settings"
+		return m, clearErrorCmd()
+	}
+	if m.workflowStarter == nil {
+		m.statusErr = "Grove Sandcastle runtime is unavailable"
+		return m, clearErrorCmd()
+	}
+	request := modal.WorkflowLaunchMsg{
+		Kind:        workflow.Kind,
+		RepoPath:    workflow.Repo,
+		AgentKind:   workflow.DefaultAgent,
+		IssueNumber: workflow.IssueNumber,
+		PRNumber:    workflow.PRNumber,
+	}
+	m.statusMsg = fmt.Sprintf("Retrying %s workflow…", workflow.Kind)
+	return m, m.startSandcastleWorkflowCmd(request)
+}
+
 func workflowByRunID(state *domain.MissionControlState, runID string) (domain.WorkflowRunRef, bool) {
 	if state == nil {
 		return domain.WorkflowRunRef{}, false
@@ -289,6 +352,58 @@ func agentsForWorkflow(state *domain.MissionControlState, runID string) []domain
 		}
 	}
 	return agents
+}
+
+func workflowPaneForWorktree(state *domain.MissionControlState, worktree domain.Worktree) (string, string) {
+	if state == nil {
+		return "", ""
+	}
+	bestPane := ""
+	bestLabel := ""
+	bestPriority := 0
+	var bestUpdatedAt time.Time
+	for _, workflow := range state.WorkflowRuns {
+		priority := 0
+		switch strings.ToLower(workflow.Status) {
+		case domain.WorkflowRunning:
+			priority = 4
+		case domain.WorkflowBlocked:
+			priority = 3
+		case domain.WorkflowQueued:
+			priority = 2
+		case domain.WorkflowFailed:
+			priority = 1
+		default:
+			continue
+		}
+		if !pathsEqual(workflow.WorktreePath, worktree.Path) && workflow.Branch != worktree.Branch {
+			continue
+		}
+		if priority < bestPriority || (priority == bestPriority && !workflow.UpdatedAt.After(bestUpdatedAt)) {
+			continue
+		}
+		runID := workflow.RunID
+		if runID == "" {
+			runID = workflow.WorkflowID
+		}
+		for _, agent := range agentsForWorkflow(state, runID) {
+			if agent.PaneID != "" {
+				label := agent.Name
+				if label == "" {
+					label = workflow.Title
+				}
+				if label == "" {
+					label = worktree.Branch
+				}
+				bestPane = agent.PaneID
+				bestLabel = label
+				bestPriority = priority
+				bestUpdatedAt = workflow.UpdatedAt
+				break
+			}
+		}
+	}
+	return bestPane, bestLabel
 }
 
 // selfUpdateCmd runs the self-update in the background.
@@ -887,6 +1002,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
+		case modal.MissionRetryRequestedMsg:
+			m.activeModal = nil
+			return m.retryWorkflowByRunID(msg.RunID)
 		case modal.MissionRemoveRequestedMsg:
 			workflow, ok := workflowByRunID(m.missionState, msg.RunID)
 			if !ok {
@@ -2224,6 +2342,12 @@ func (m *Model) startSandcastleWorkflowCmd(msg modal.WorkflowLaunchMsg) tea.Cmd 
 	starter := m.workflowStarter
 	repoPath := m.RepoPath
 	defaultAgent := m.Config.Sandcastle.DefaultAgent
+	if msg.RepoPath != "" {
+		repoPath = msg.RepoPath
+	}
+	if msg.AgentKind != "" {
+		defaultAgent = msg.AgentKind
+	}
 	return func() tea.Msg {
 		if starter == nil {
 			return sandcastleWorkflowStartedMsg{kind: msg.Kind, err: fmt.Errorf("runtime unavailable")}
@@ -2734,6 +2858,9 @@ func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		if paneID, label := workflowPaneForWorktree(m.missionState, selected); paneID != "" {
+			return m, m.focusPaneCmd(paneID, label)
+		}
 		useHerdr := m.insideHerdr && m.Config.Herdr.Enabled && m.Config.Herdr.PreferWorktreeAPI
 		for _, session := range m.sessions {
 			if !pathsEqual(session.WorktreePath, selected.Path) {
@@ -2758,6 +2885,8 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 	switch action {
 	case modal.ContextActionInspect:
 		return m.openSelectedMissionInspector()
+	case modal.ContextActionRetryRun:
+		return m.retrySelectedWorkflow()
 	case modal.ContextActionRemoveRun:
 		return m.confirmSelectedWorkflowRemoval()
 	case modal.ContextActionOpen:
@@ -2851,7 +2980,7 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 		}
 		worktree := worktrees[worktreeIdx]
 		actions := []contextActionOption{
-			{icon: "↵", label: "Open or focus worktree", action: modal.ContextActionOpen},
+			{icon: "↵", label: "Jump to workflow or focus worktree", action: modal.ContextActionOpen},
 			{icon: "$", label: "Open separate shell", action: modal.ContextActionOpenShell},
 		}
 		for _, session := range sessions {
@@ -2878,6 +3007,9 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 				selected := dashboard[0].selected
 				if selected < 0 || selected >= len(missions) {
 					selected = 0
+				}
+				if strings.EqualFold(missions[selected].workflow.Status, domain.WorkflowFailed) {
+					actions = append(actions, contextActionOption{icon: "↻", label: "Retry workflow", action: modal.ContextActionRetryRun})
 				}
 				label := "Remove workflow"
 				if isWorkflowActive(missions[selected].workflow) {
