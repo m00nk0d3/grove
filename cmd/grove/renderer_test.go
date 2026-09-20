@@ -582,12 +582,12 @@ func TestRenderContextPanel_IssueContext(t *testing.T) {
 			wantIn:      []string{"[bug]", "[critical]"},
 		},
 		{
-			name: "shows Open on GitHub action",
+			name: "shows additional actions indicator",
 			issues: []domain.Issue{
 				{Number: 1, Title: "Some Issue", Labels: nil},
 			},
 			selectedIdx: 0,
-			wantIn:      []string{"Open on GitHub"},
+			wantIn:      []string{"+1 more actions"},
 		},
 	}
 
@@ -643,12 +643,12 @@ func TestRenderContextPanel_PRContext(t *testing.T) {
 			wantIn: []string{"OPEN"},
 		},
 		{
-			name: "shows Open on GitHub action",
+			name: "shows additional actions indicator",
 			prs: []domain.PullRequest{
 				{Number: 1, Title: "Some PR", Branch: "main", Author: "dev", State: "OPEN"},
 			},
 			prIdx:  0,
-			wantIn: []string{"Open on GitHub"},
+			wantIn: []string{"+3 more actions"},
 		},
 	}
 
@@ -1030,6 +1030,29 @@ func TestRenderer_ContextPanel_ActionsAlwaysVisible(t *testing.T) {
 			assert.Contains(t, view, "ACTIONS")
 		})
 	}
+}
+
+func TestRenderer_ContextPanel_FocusedActionsAreExpanded(t *testing.T) {
+	model := NewModel()
+	model.view = viewPRs
+	model.prs = []domain.PullRequest{{
+		Number: 42,
+		Title:  "Improve actions",
+		Branch: "feat/actions",
+		State:  "OPEN",
+	}}
+	model.focused = panelCtx
+	model.contextActionIdx = 2
+	model.width = 160
+
+	view := model.View()
+
+	assert.Contains(t, view, "◆ ACTIONS")
+	assert.Contains(t, view, "ACTIVE")
+	assert.Contains(t, view, "Review pull request")
+	assert.Contains(t, view, "Repair CI")
+	assert.Contains(t, view, "Resolve conflicts")
+	assert.Contains(t, view, "Enter run")
 }
 
 // TestRenderer_GHIDColumn_NoLinkedPR verifies that when a worktree has no
@@ -1495,7 +1518,8 @@ func TestRenderer_IssueContextPanel_ShowsBody(t *testing.T) {
 				"Status: ● Open",
 				"Labels: [bug]",
 				"Details about the issue.",
-				"Open on GitHub",
+				"◆ ACTIONS",
+				"+1 more actions",
 			},
 		},
 	}

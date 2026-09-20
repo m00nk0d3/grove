@@ -713,29 +713,7 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 		}
 	}
 	if len(actions) > 0 {
-		var actionBlock strings.Builder
-		actionBlock.WriteString("ACTIONS  [a] focus\n")
-		if focused {
-			for i, action := range actions {
-				cursor := "  "
-				if i == actionIdx {
-					cursor = "> "
-				}
-				actionBlock.WriteString(cursor)
-				actionBlock.WriteString(action.label)
-				actionBlock.WriteByte('\n')
-			}
-			actionBlock.WriteString("  Enter run")
-		} else {
-			labels := make([]string, 0, len(actions))
-			for _, action := range actions {
-				labels = append(labels, action.label)
-			}
-			actionBlock.WriteString("  ")
-			actionBlock.WriteString(strings.Join(labels, "  •  "))
-		}
-		actionBlock.WriteString("\n")
-		content = actionBlock.String() + content
+		content = renderContextActions(theme, actions, actionIdx, focused, ctxInner) + "\n\n" + content
 	}
 	st := theme.GetStyle("context-panel").Width(ctxInner + panelPaddingOverhead)
 	if !focused {
@@ -749,6 +727,59 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
 	return st.Render(content)
+}
+
+func renderContextActions(theme styles.Theme, actions []contextActionOption, actionIdx int, focused bool, width int) string {
+	accent := lipgloss.Color(theme.Accent())
+	muted := lipgloss.Color(theme.Muted())
+	header := lipgloss.NewStyle().Foreground(accent).Bold(true).Render("◆ ACTIONS")
+	badge := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(theme.Bg())).
+		Background(accent).
+		Bold(true).
+		Padding(0, 1)
+
+	var b strings.Builder
+	b.WriteString(header)
+	if focused {
+		b.WriteString("  ")
+		b.WriteString(badge.Render("ACTIVE"))
+	} else {
+		b.WriteString("  ")
+		b.WriteString(lipgloss.NewStyle().Foreground(muted).Render("[a] focus"))
+	}
+
+	visible := len(actions)
+	if !focused && visible > 2 {
+		visible = 2
+	}
+	rowWidth := max(1, width-2)
+	for i := 0; i < visible; i++ {
+		action := actions[i]
+		icon := action.icon
+		if icon == "" {
+			icon = "•"
+		}
+		label := truncateStr(action.label, max(1, rowWidth-4))
+		row := fmt.Sprintf("%s  %s", icon, label)
+		b.WriteByte('\n')
+		if focused && i == actionIdx {
+			b.WriteString(theme.GetStyle("selected-row").Width(rowWidth).Render("▶ " + row))
+			continue
+		}
+		b.WriteString(lipgloss.NewStyle().Foreground(muted).Render("  " + row))
+	}
+	if !focused && len(actions) > visible {
+		b.WriteByte('\n')
+		b.WriteString(lipgloss.NewStyle().Foreground(muted).Italic(true).
+			Render(fmt.Sprintf("  +%d more actions", len(actions)-visible)))
+	}
+	if focused {
+		b.WriteByte('\n')
+		b.WriteString(lipgloss.NewStyle().Foreground(muted).
+			Render("↑/↓ select  •  Enter run"))
+	}
+	return b.String()
 }
 
 func renderDashboardTelemetry(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, sessions []domain.Session, width int, theme styles.Theme) string {

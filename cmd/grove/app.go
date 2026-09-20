@@ -309,6 +309,7 @@ const (
 const pageSize = 50
 
 type contextActionOption struct {
+	icon         string
 	label        string
 	action       string
 	workflowKind string
@@ -2290,20 +2291,20 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 			return nil
 		}
 		return []contextActionOption{
-			{label: "Open or create worktree", action: modal.ContextActionOpen},
-			{label: "Implement issue", workflowKind: modal.WorkflowKindImplement},
-			{label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
+			{icon: "↵", label: "Open or create worktree", action: modal.ContextActionOpen},
+			{icon: "⚡", label: "Implement issue", workflowKind: modal.WorkflowKindImplement},
+			{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
 		}
 	case viewPRs:
 		if len(prs) == 0 || prIdx < 0 || prIdx >= len(prs) {
 			return nil
 		}
 		return []contextActionOption{
-			{label: "Open or checkout worktree", action: modal.ContextActionOpen},
-			{label: "Review pull request", workflowKind: modal.WorkflowKindReview},
-			{label: "Repair CI", workflowKind: modal.WorkflowKindCI},
-			{label: "Resolve conflicts", workflowKind: modal.WorkflowKindResolve},
-			{label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
+			{icon: "↵", label: "Open or checkout worktree", action: modal.ContextActionOpen},
+			{icon: "✓", label: "Review pull request", workflowKind: modal.WorkflowKindReview},
+			{icon: "◆", label: "Repair CI", workflowKind: modal.WorkflowKindCI},
+			{icon: "⇄", label: "Resolve conflicts", workflowKind: modal.WorkflowKindResolve},
+			{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
 		}
 	case viewWorktrees:
 		if len(worktrees) == 0 || worktreeIdx < 0 || worktreeIdx >= len(worktrees) {
@@ -2311,12 +2312,13 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 		}
 		worktree := worktrees[worktreeIdx]
 		actions := []contextActionOption{
-			{label: "Open or focus worktree", action: modal.ContextActionOpen},
-			{label: "Open separate shell", action: modal.ContextActionOpenShell},
+			{icon: "↵", label: "Open or focus worktree", action: modal.ContextActionOpen},
+			{icon: "$", label: "Open separate shell", action: modal.ContextActionOpenShell},
 		}
 		for _, session := range sessions {
 			if pathsEqual(session.WorktreePath, worktree.Path) {
 				actions = append(actions, contextActionOption{
+					icon:   "×",
 					label:  "Close session",
 					action: modal.ContextActionClose,
 				})
@@ -2324,12 +2326,12 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 			}
 		}
 		return append(actions,
-			contextActionOption{label: "Delete worktree", action: modal.ContextActionDelete},
-			contextActionOption{label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
+			contextActionOption{icon: "!", label: "Delete worktree", action: modal.ContextActionDelete},
+			contextActionOption{icon: "◇", label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
 		)
 	default:
 		return []contextActionOption{
-			{label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
+			{icon: "◇", label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
 		}
 	}
 }
