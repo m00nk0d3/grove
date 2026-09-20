@@ -23,7 +23,7 @@ type MissionControlState struct {
 type WorkItem struct {
 	ID              string
 	CreatedAt       int64
-	UpdatedAt       int64
+	UpdatedAt        int64
 	LinkedPR        *PullRequest     `json:"linked_pr,omitempty"`
 	LinkedIssue     *Issue           `json:"linked_issue,omitempty"`
 	PaneRef         *PaneRef         `json:"pane_ref,omitempty"`
@@ -32,7 +32,24 @@ type WorkItem struct {
 	LinkedWorkflows []WorkflowRunRef `json:"linked_workflows,omitempty"`
 	LinkedAgents    []AgentRef       `json:"linked_agents,omitempty"`
 	LinkedPanes     []PaneRef        `json:"linked_panes,omitempty"`
+	Status          string           `json:"status,omitempty"`
 }
+
+// WorkItemStatus represents the lifecycle state of a work item.
+type WorkItemStatus string
+
+const (
+	// StatusRunning means a workflow or agent is actively running on this work item.
+	StatusRunning WorkItemStatus = "running"
+	// StatusIdle means no active workflow/agent on this work item.
+	StatusIdle WorkItemStatus = "idle"
+	// StatusBlocked means the work item is waiting for external input or blocked by an error.
+	StatusBlocked WorkItemStatus = "blocked"
+	// StatusFailed means a previous workflow run failed.
+	StatusFailed WorkItemStatus = "failed"
+	// StatusSucceeded means all workflows completed successfully.
+	StatusSucceeded WorkItemStatus = "succeeded"
+)
 
 type WorkflowRunRef struct {
 	WorkflowID   string
