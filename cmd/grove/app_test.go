@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
+	"github.com/m00nk0d3/grove/internal/herdr"
+	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -3374,6 +3377,185 @@ func TestCheckSessionsCmd_DB_DeadShellPruned(t *testing.T) {
 	assert.Nil(t, got, "session with dead shell PID must be deleted from the DB")
 }
 
+// fakeHealthChecker is a test sessionHealthChecker that returns canned snapshots.
+type fakeHealthChecker struct {
+	herdrSnap  herdr.Snapshot
+	herdrErr   error
+	scSnap     sandcastle.Snapshot
+	scErr      error
+}
+
+func (f *fakeHealthChecker) HerdrSnapshot() (herdr.Snapshot, error) {
+	return f.herdrSnap, f.herdrErr
+}
+
+func (f *fakeHealthChecker) SandcastleSnapshot(_ context.Context) (sandcastle.Snapshot, error) {
+	return f.scSnap, f.scErr
+}
+
+// TestCheckSessionsCmd_EnrichPrunesDB verifies that sessions removed by
+// enrichHerdrSessions (e.g. Herdr sessions whose Sandcastle workflow has
+// succeeded) are deleted from the database. This is the fix for the blocker
+// where enrichment-pruned sessions persisted indefinitely in the DB.
+func TestCheckSessionsCmd_EnrichPrunesDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Insert a Herdr session with a succeeded workflow.
+	sess := domain.Session{
+		WorktreePath:  "/repo/herdr-succeeded",
+		Runtime:       domain.RuntimeHerdr,
+		WorkflowRunID: strPtr("wf-done"),
+		PaneID:        strPtr("pane-1"),
+		Status:        domain.StatusActive,
+		StartedAt:     time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	// Health checker returns snapshots where the workflow succeeded.
+	hc := &fakeHealthChecker{
+		herdrSnap: herdr.Snapshot{
+			Panes: []domain.PaneRef{{PaneID: "pane-1"}},
+		},
+		scSnap: sandcastle.Snapshot{
+			Workflows: []domain.WorkflowRunRef{
+				{WorkflowID: "wf-done", RunID: "wf-done", Status: domain.WorkflowSucceeded},
+			},
+		},
+	}
+
+	m := NewModel()
+	m.db = db
+	m.healthChecker = hc
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	assert.Empty(t, result.sessions, "Herdr session with succeeded workflow must be removed")
+
+	// Verify the session was deleted from the DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/herdr-succeeded")
+	require.NoError(t, err)
+	assert.Nil(t, got, "enrichment-pruned session must be deleted from the database")
+}
+
+// TestCheckSessionsCmd_EnrichKeepsAlive verifies that sessions kept by
+// enrichHerdrSessions are persisted (upserted) to the DB with refreshed state.
+func TestCheckSessionsCmd_EnrichKeepsAlive(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	sess := domain.Session{
+		WorktreePath:  "/repo/herdr-alive",
+		Runtime:       domain.RuntimeHerdr,
+		PaneID:        strPtr("pane-2"),
+		Status:        domain.StatusActive,
+		StartedAt:     time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sess)
+	require.NoError(t, err)
+
+	// Herdr snapshot has the pane, workflow is still running.
+	hc := &fakeHealthChecker{
+		herdrSnap: herdr.Snapshot{
+			Panes: []domain.PaneRef{{PaneID: "pane-2"}},
+		},
+		scSnap: sandcastle.Snapshot{
+			Workflows: []domain.WorkflowRunRef{
+				{WorkflowID: "wf-running", RunID: "wf-running", Status: domain.WorkflowRunning},
+			},
+		},
+	}
+
+	m := NewModel()
+	m.db = db
+	m.healthChecker = hc
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	require.Len(t, result.sessions, 1)
+	assert.Equal(t, "/repo/herdr-alive", result.sessions[0].WorktreePath)
+
+	// Session still exists in the DB.
+	got, err := data.GetSessionByWorktree(db, "/repo/herdr-alive")
+	require.NoError(t, err)
+	require.NotNil(t, got, "kept session must remain in the DB")
+	assert.Equal(t, domain.RuntimeHerdr, got.Runtime)
+}
+
+// TestCheckSessionsCmd_EnrichMixedDB verifies the fix for unbounded DB growth
+// when a mix of alive and dead Herdr sessions coexist. The dead ones must be
+// deleted from the DB while alive ones are persisted.
+func TestCheckSessionsCmd_EnrichMixedDB(t *testing.T) {
+	db, err := data.NewDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	sessAlive := domain.Session{
+		WorktreePath:  "/repo/herdr-alive",
+		Runtime:       domain.RuntimeHerdr,
+		PaneID:        strPtr("pane-alive"),
+		Status:        domain.StatusActive,
+		StartedAt:     time.Now().UTC().Truncate(time.Second),
+	}
+	sessDead := domain.Session{
+		WorktreePath:  "/repo/herdr-dead",
+		Runtime:       domain.RuntimeHerdr,
+		WorkflowRunID: strPtr("wf-dead"),
+		PaneID:        strPtr("pane-dead"),
+		Status:        domain.StatusActive,
+		StartedAt:     time.Now().UTC().Truncate(time.Second),
+	}
+	_, err = data.UpsertSession(db, sessAlive)
+	require.NoError(t, err)
+	_, err = data.UpsertSession(db, sessDead)
+	require.NoError(t, err)
+
+	hc := &fakeHealthChecker{
+		herdrSnap: herdr.Snapshot{
+			Panes: []domain.PaneRef{
+				{PaneID: "pane-alive"},
+				{PaneID: "pane-dead"},
+			},
+		},
+		scSnap: sandcastle.Snapshot{
+			Workflows: []domain.WorkflowRunRef{
+				{WorkflowID: "wf-dead", RunID: "wf-dead", Status: domain.WorkflowFailed},
+			},
+		},
+	}
+
+	m := NewModel()
+	m.db = db
+	m.healthChecker = hc
+
+	cmd := m.checkSessionsCmd()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	result, ok := msg.(sessionStatusUpdatedMsg)
+	require.True(t, ok)
+	require.Len(t, result.sessions, 1, "only the alive session should remain")
+	assert.Equal(t, "/repo/herdr-alive", result.sessions[0].WorktreePath)
+
+	// Dead session deleted from DB.
+	gotDead, err := data.GetSessionByWorktree(db, "/repo/herdr-dead")
+	require.NoError(t, err)
+	assert.Nil(t, gotDead, "enrichment-pruned session must be deleted from the DB")
+
+	// Alive session still in DB.
+	gotAlive, err := data.GetSessionByWorktree(db, "/repo/herdr-alive")
+	require.NoError(t, err)
+	assert.NotNil(t, gotAlive, "alive session must remain in the DB")
+}
+
 // TestPollPIDFile_HappyPath verifies that pollPIDFile returns the PID when
 // the file already contains a valid integer before the first poll.
 func TestPollPIDFile_HappyPath(t *testing.T) {
@@ -4170,5 +4352,173 @@ func TestFuzzyConfirmSelection_CommitSelection_ReturnsCmd(t *testing.T) {
 
 	assert.NotNil(t, cmd, "commit selection should return a gh browse Cmd")
 	assert.Empty(t, m.statusMsg, "commit selection should not set statusMsg")
+}
+
+// intPtr is a test helper that returns a pointer to the given int.
+func intPtr(i int) *int { return &i }
+
+// TestEnrichHerdrSessions verifies that enrichHerdrSessions applies snapshot-based
+// liveness checks to Herdr-backed sessions and marks uncertain sessions as degraded.
+func TestEnrichHerdrSessions(t *testing.T) {
+	now := time.Now()
+
+	paneFound := domain.PaneRef{PaneID: "pane-1", AgentID: "agent-1", Status: "open"}
+	paneOther := domain.PaneRef{PaneID: "pane-2", AgentID: "agent-2", Status: "open"}
+
+	herdrSnap := &herdr.Snapshot{
+		Panes: []domain.PaneRef{paneFound, paneOther},
+	}
+	herdrErr := fmt.Errorf("herdr snapshot unavailable")
+
+	scSnap := &sandcastle.Snapshot{
+		Workflows: []domain.WorkflowRunRef{
+			{WorkflowID: "wf-running", RunID: "wf-running", Status: domain.WorkflowRunning},
+			{WorkflowID: "wf-failed", RunID: "wf-failed", Status: domain.WorkflowFailed},
+			{WorkflowID: "wf-succeeded", RunID: "wf-succeeded", Status: domain.WorkflowSucceeded},
+			{WorkflowID: "wf-blocked", RunID: "wf-blocked", Status: domain.WorkflowBlocked},
+		},
+	}
+	scErr := fmt.Errorf("sandcastle status unavailable")
+
+	tests := []struct {
+		name         string
+		sessions     []domain.Session
+		herdrSnap    *herdr.Snapshot
+		herdrErr     error
+		scSnap       *sandcastle.Snapshot
+		scErr        error
+		wantAlive    int
+		wantDegraded []int64 // IDs of sessions that should be degraded
+		wantDead     []int64 // IDs of sessions that should be removed
+	}{
+		{
+			name:         "nil herdr snapshot with nil error marks degraded (standalone mode)",
+			sessions:     []domain.Session{{ID: 1, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now}},
+			herdrSnap:    nil, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name:      "herdr error marks herdr sessions degraded",
+			sessions:  []domain.Session{{ID: 1, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now}},
+			herdrSnap: nil, herdrErr: herdrErr, scSnap: nil, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "herdr pane found keeps session alive",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, PaneID: strPtr("pane-1"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: herdrSnap, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive: 1,
+		},
+		{
+			name: "herdr pane not found marks session degraded",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, PaneID: strPtr("pane-missing"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: herdrSnap, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "herdr session with nil PaneID and no snapshot marks degraded",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "sandcastle workflow running keeps session alive",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-running"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: scSnap, scErr: nil,
+			wantAlive: 1,
+		},
+		{
+			name: "sandcastle workflow failed removes session",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-failed"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: scSnap, scErr: nil,
+			wantAlive: 0,
+			wantDead:  []int64{1},
+		},
+		{
+			name: "sandcastle workflow succeeded removes session",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-succeeded"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: scSnap, scErr: nil,
+			wantAlive: 0,
+			wantDead:  []int64{1},
+		},
+		{
+			name: "sandcastle workflow blocked marks session degraded",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-blocked"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: scSnap, scErr: nil,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "sandcastle error marks session degraded",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, WorkflowRunID: strPtr("wf-unknown"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: nil, herdrErr: nil, scSnap: nil, scErr: scErr,
+			wantAlive:    1,
+			wantDegraded: []int64{1},
+		},
+		{
+			name: "local sessions pass through unchanged",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeLocal, Status: domain.StatusActive, StartedAt: now},
+				{ID: 2, Runtime: "", Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: herdrSnap, herdrErr: herdrErr, scSnap: scSnap, scErr: scErr,
+			wantAlive: 2,
+		},
+		{
+			name: "mixed herdr and local sessions",
+			sessions: []domain.Session{
+				{ID: 1, Runtime: domain.RuntimeHerdr, PaneID: strPtr("pane-1"), Status: domain.StatusActive, StartedAt: now},
+				{ID: 2, Runtime: domain.RuntimeLocal, ShellPID: intPtr(os.Getpid()), Status: domain.StatusActive, StartedAt: now},
+				{ID: 3, Runtime: domain.RuntimeHerdr, PaneID: strPtr("pane-missing"), Status: domain.StatusActive, StartedAt: now},
+			},
+			herdrSnap: herdrSnap, herdrErr: nil, scSnap: nil, scErr: nil,
+			wantAlive:    3, // local(2) + herdr pane found(1) + herdr pane missing(3) degraded but kept
+			wantDegraded: []int64{3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := enrichHerdrSessions(tt.sessions, tt.herdrSnap, tt.herdrErr, tt.scSnap, tt.scErr)
+			assert.Len(t, got, tt.wantAlive, "alive session count")
+
+			gotIDs := make(map[int64]domain.Session)
+			for _, s := range got {
+				gotIDs[s.ID] = s
+			}
+
+			for _, id := range tt.wantDegraded {
+				s, ok := gotIDs[id]
+				require.True(t, ok, "session %d should be in alive list", id)
+				assert.NotNil(t, s.DegradedReason, "session %d should have DegradedReason set", id)
+				assert.NotEmpty(t, *s.DegradedReason, "session %d DegradedReason should be non-empty", id)
+			}
+
+			for _, id := range tt.wantDead {
+				_, ok := gotIDs[id]
+				assert.False(t, ok, "session %d should be removed from alive list", id)
+			}
+		})
+	}
 }
 
