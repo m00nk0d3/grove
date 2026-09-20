@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findHerdrID, resolveWorkflowCommand } from "./sandcastle.js";
+import {
+  findHerdrID,
+  herdrWorktreeOpenArgs,
+  resolveWorkflowCommand,
+} from "./sandcastle.js";
 
 test("workflow commands map issues, PRs, and maintenance targets", () => {
   assert.deepEqual(resolveWorkflowCommand("imp", "42", undefined), {
@@ -38,4 +42,16 @@ test("Herdr identifiers are found in worktree and tab responses", () => {
     "w6:p30",
   );
   assert.equal(findHerdrID({ result: {} }, "pane_id"), undefined);
+});
+
+test("workflow worktree opens use the target repository as the Herdr source", () => {
+  assert.deepEqual(herdrWorktreeOpenArgs("/repos/spectre"), [
+    "worktree",
+    "open",
+    "--cwd",
+    "/repos/spectre",
+    "--path",
+    "/repos/spectre",
+    "--focus",
+  ]);
 });

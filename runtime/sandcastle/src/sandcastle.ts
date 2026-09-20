@@ -100,6 +100,10 @@ export function resolveWorkflowCommand(
   };
 }
 
+export function herdrWorktreeOpenArgs(repo: string): string[] {
+  return ["worktree", "open", "--cwd", repo, "--path", repo, "--focus"];
+}
+
 function workflowStart(cwd: string, args: string[]): void {
   const requestedKind = flag(args, "--kind") ?? "imp";
   const issue = flag(args, "--issue");
@@ -122,17 +126,9 @@ function workflowStart(cwd: string, args: string[]): void {
   workflow.default_agent = agent;
   saveWorkflow(repo, workflow);
 
-  const opened = spawnSync(
-    "herdr",
-    [
-      "worktree",
-      "open",
-      "--path",
-      repo,
-      "--focus",
-    ],
-    { encoding: "utf8" },
-  );
+  const opened = spawnSync("herdr", herdrWorktreeOpenArgs(repo), {
+    encoding: "utf8",
+  });
   if (opened.status !== 0) {
     throw new Error(
       (opened.stderr || opened.stdout).trim() ||
