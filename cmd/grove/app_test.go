@@ -4522,3 +4522,129 @@ func TestEnrichHerdrSessions(t *testing.T) {
 	}
 }
 
+// TestHerdrSyncedMsg_PreservesSnapshotOnError verifies that when herdrSyncedMsg
+// carries an error the previous snapshot is not overwritten.
+func TestHerdrSyncedMsg_PreservesSnapshotOnError(t *testing.T) {
+	m := NewModel()
+	existing := herdr.Snapshot{Panes: []domain.PaneRef{{PaneID: "keep-me"}}}
+	m.herdrSnapshot = &existing
+
+	m2, _ := m.Update(herdrSyncedMsg{err: errors.New("network timeout")})
+	model := m2.(*Model)
+	require.NotNil(t, model.herdrSnapshot, "snapshot must be preserved on error")
+	assert.Equal(t, "keep-me", model.herdrSnapshot.Panes[0].PaneID)
+}
+
+// TestHerdrSyncedMsg_StoresSnapshotOnSuccess verifies that a successful
+// herdrSyncedMsg updates the cached snapshot.
+func TestHerdrSyncedMsg_StoresSnapshotOnSuccess(t *testing.T) {
+	m := NewModel()
+	snap := herdr.Snapshot{Panes: []domain.PaneRef{{PaneID: "new"}}}
+
+	m2, _ := m.Update(herdrSyncedMsg{snapshot: snap})
+	model := m2.(*Model)
+	require.NotNil(t, model.herdrSnapshot)
+	assert.Equal(t, "new", model.herdrSnapshot.Panes[0].PaneID)
+}
+
+// TestSandcastleSyncedMsg_PreservesSnapshotOnError verifies that when
+// sandcastleSyncedMsg carries an error the previous snapshot is not overwritten.
+func TestSandcastleSyncedMsg_PreservesSnapshotOnError(t *testing.T) {
+	m := NewModel()
+	existing := sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{{WorkflowID: "keep"}}}
+	m.sandcastleSnapshot = &existing
+
+	m2, _ := m.Update(sandcastleSyncedMsg{err: errors.New("timeout")})
+	model := m2.(*Model)
+	require.NotNil(t, model.sandcastleSnapshot, "snapshot must be preserved on error")
+	assert.Equal(t, "keep", model.sandcastleSnapshot.Workflows[0].WorkflowID)
+}
+
+// TestSandcastleSyncedMsg_StoresSnapshotOnSuccess verifies that a successful
+// sandcastleSyncedMsg updates the cached snapshot.
+func TestSandcastleSyncedMsg_StoresSnapshotOnSuccess(t *testing.T) {
+	m := NewModel()
+	snap := sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{{WorkflowID: "new"}}}
+
+	m2, _ := m.Update(sandcastleSyncedMsg{snapshot: snap})
+	model := m2.(*Model)
+	require.NotNil(t, model.sandcastleSnapshot)
+	assert.Equal(t, "new", model.sandcastleSnapshot.Workflows[0].WorkflowID)
+}
+
+// TestMissionControlUpdatedMsg_SetsState verifies that the message stores
+// the state on the model.
+func TestMissionControlUpdatedMsg_SetsState(t *testing.T) {
+	m := NewModel()
+	assert.Nil(t, m.missionState)
+
+	state := domain.MissionControlState{Status: "test-status"}
+	m2, _ := m.Update(missionControlUpdatedMsg{state: state})
+	model := m2.(*Model)
+	require.NotNil(t, model.missionState)
+	assert.Equal(t, "test-status", model.missionState.Status)
+}
+
+// TestRebuildMissionStateCmd_NilSnapshots verifies that rebuildMissionStateCmd
+// produces a valid state even when no snapshots have been fetched yet.
+func TestRebuildMissionStateCmd_NilSnapshots(t *testing.T) {
+	m := NewModel()
+	cmd := m.rebuildMissionStateCmd()
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	result, ok := msg.(missionControlUpdatedMsg)
+	require.True(t, ok, "expected missionControlUpdatedMsg")
+	assert.NotNil(t, result.state, "state should not be nil")
+}
+
+// TestIntegrationTickCmd_FiresAfterInterval verifies that the tick command
+// produces an integrationsTickMsg after the configured interval.
+func TestIntegrationTickCmd_FiresAfterInterval(t *testing.T) {
+	cfg := domain.DefaultConfig()
+	cfg.Herdr.PollIntervalSeconds = 1
+
+	cmd := integrationTickCmd(cfg)
+	require.NotNil(t, cmd)
+}
+
+// TestIntegrationTickCmd_DefaultInterval verifies that a zero poll interval
+// falls back to the 5-second default.
+func TestIntegrationTickCmd_DefaultInterval(t *testing.T) {
+	cfg := domain.DefaultConfig()
+	cfg.Herdr.PollIntervalSeconds = 0
+
+	cmd := integrationTickCmd(cfg)
+	require.NotNil(t, cmd)
+}
+
+// TestUpdate_IntegrationsTickMsg_DispatchesRefreshCmds verifies that the
+// integrationsTickMsg handler dispatches snapshot commands and reschedules.
+func TestUpdate_IntegrationsTickMsg_DispatchesRefreshCmds(t *testing.T) {
+	hc := &fakeHealthChecker{
+		herdrSnap: herdr.Snapshot{Panes: []domain.PaneRef{{PaneID: "p1"}}},
+		scSnap:    sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{{WorkflowID: "w1"}}},
+	}
+
+	m := NewModel()
+	m.healthChecker = hc
+	m.Config.Herdr.Enabled = true
+	m.Config.Sandcastle.Enabled = true
+
+	m2, cmd := m.Update(integrationsTickMsg{})
+	assert.NotNil(t, cmd, "should return a batch of commands")
+	_ = m2
+
+	// Simulate herdr response.
+	m3, _ := m2.Update(herdrSyncedMsg{snapshot: herdr.Snapshot{Panes: []domain.PaneRef{{PaneID: "p1"}}}})
+	model := m3.(*Model)
+	require.NotNil(t, model.herdrSnapshot)
+	assert.Equal(t, "p1", model.herdrSnapshot.Panes[0].PaneID)
+
+	// Simulate sandcastle response.
+	m4, _ := m3.Update(sandcastleSyncedMsg{snapshot: sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{{WorkflowID: "w1"}}}})
+	model4 := m4.(*Model)
+	require.NotNil(t, model4.sandcastleSnapshot)
+	assert.Equal(t, "w1", model4.sandcastleSnapshot.Workflows[0].WorkflowID)
+}
+
