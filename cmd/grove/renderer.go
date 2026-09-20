@@ -49,6 +49,7 @@ type navItem struct {
 }
 
 var navItems = []navItem{
+	{"D", "DASHBOARD"},
 	{"W", "WORKTREES"},
 	{"I", "ISSUES"},
 	{"P", "PRs"},
@@ -120,7 +121,7 @@ func renderSessionBlock(s *domain.Session) string {
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
@@ -143,7 +144,77 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 		panelHeight = termHeight - fixedChromeRows
 	}
 
-	header := renderHeader(repoPath, theme, headerInner, countActiveSessions(sessions))
+	herdrStatus := "disconnected"
+	if herdrIntegration != nil {
+		var available, enabled bool
+		if herdrIntegration.Available {
+			available = true
+		}
+		if herdrIntegration.Enabled {
+			enabled = true
+		}
+		if available && enabled {
+			herdrStatus = herdrIntegration.Mode
+		} else if !available {
+			herdrStatus = "unavailable"
+		} else if herdrIntegration.Error != "" {
+			n := 20
+			if len(herdrIntegration.Error) < n {
+				n = len(herdrIntegration.Error)
+			}
+			herdrStatus = "error: " + herdrIntegration.Error[:n]
+		} else {
+			herdrStatus = "disabled"
+		}
+	}
+	sandcastleStatus := "disconnected"
+	if sandcastleIntegration != nil {
+		var available, enabled bool
+		if sandcastleIntegration.Available {
+			available = true
+		}
+		if sandcastleIntegration.Enabled {
+			enabled = true
+		}
+		if available && enabled {
+			sandcastleStatus = sandcastleIntegration.Mode
+		} else if !available {
+			sandcastleStatus = "unavailable"
+		} else if sandcastleIntegration.Error != "" {
+			n := 20
+			if len(sandcastleIntegration.Error) < n {
+				n = len(sandcastleIntegration.Error)
+			}
+			sandcastleStatus = "error: " + sandcastleIntegration.Error[:n]
+		} else {
+			sandcastleStatus = "disabled"
+		}
+	}
+	githubStatus := "unknown"
+	if missionState != nil {
+		var available, enabled bool
+		if missionState.Integrations.GitHub.Available {
+			available = true
+		}
+		if missionState.Integrations.GitHub.Enabled {
+			enabled = true
+		}
+		if available && enabled {
+			githubStatus = missionState.Integrations.GitHub.Mode
+		} else if !available {
+			githubStatus = "unavailable"
+		} else if missionState.Integrations.GitHub.Error != "" {
+			n := 20
+			if len(missionState.Integrations.GitHub.Error) < n {
+				n = len(missionState.Integrations.GitHub.Error)
+			}
+			githubStatus = "error: " + missionState.Integrations.GitHub.Error[:n]
+		} else {
+			githubStatus = "disabled"
+		}
+	}
+
+	header := renderHeader(repoPath, theme, headerInner, countActiveSessions(sessions), herdrStatus, sandcastleStatus, githubStatus)
 	nav := renderNavRail(theme, panelHeight, view, focused == panelNav)
 
 	// Apply pagination slicing for issue/PR list panels.
@@ -177,6 +248,8 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 
 	var list string
 	switch view {
+	case viewDashboard:
+		list = renderDashboard(worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, ctxInner, sessions)
 	case viewIssues:
 		list = renderIssueList(visibleIssues, visibleSelectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList)
 	case viewPRs:
@@ -193,17 +266,156 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer, actionBar)
 }
 
-func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSessions int) string {
+// renderDashboard renders the global dashboard view showing a grid of work items,
+// AI agents, and workflow runs from mission-control state.
+func renderDashboard(worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, ctxInner int, sessions []domain.Session) string {
+	const (
+		cursor   = 2
+		dashW    = 20
+		itemNameW = 18
+		itemStateW = 10
+		fixedTotal = cursor + itemNameW + itemStateW // 40
+	)
+	nameW := listInner - fixedTotal
+	if nameW < 10 {
+		nameW = 10
+	}
+
+	type gridItem struct {
+		cursor string
+		label  string
+		status string
+	}
+	var items []gridItem
+
+	// Work items: issues and PRs
+	for _, pr := range prs {
+		items = append(items, gridItem{
+			cursor: "  ",
+			label:  fmt.Sprintf("#%d %s", pr.Number, truncateStr(pr.Title, nameW)),
+			status: prDisplayStatus(pr),
+		})
+	}
+	for _, iss := range issues {
+		items = append(items, gridItem{
+			cursor: "  ",
+			label:  fmt.Sprintf("#%d %s", iss.Number, truncateStr(iss.Title, nameW)),
+			status:  "Open",
+		})
+	}
+
+	// Agents
+	for _, s := range sessions {
+		if s.Status != domain.StatusDead && s.AgentName != nil {
+			items = append(items, gridItem{
+				cursor: "  ",
+				label:  fmt.Sprintf("%s", truncateStr(*s.AgentName, nameW)),
+				status: string(s.Status),
+			})
+		}
+	}
+
+	// Workflows (placeholder until mission-control builder added)
+	for _, wt := range worktrees {
+		if wt.LinkedPR != nil {
+			items = append(items, gridItem{
+				cursor: "  ",
+				label:  fmt.Sprintf("WFT %s", truncateStr(wt.LinkedPR.Title, nameW)),
+				status: wt.LinkedPR.State,
+			})
+		}
+	}
+
+	var b strings.Builder
+	for i, item := range items {
+		cursor := "  "
+		if focused && i == 0 {
+			cursor = "> "
+		}
+		b.WriteString(fmt.Sprintf("%s %-18s %s\n", cursor, item.label, item.status))
+	}
+
+	selSt := theme.GetStyle("selected-row")
+	normalSt := theme.GetStyle("_")
+	surfaceBg := normalSt.GetBackground()
+	normalFg := normalSt.GetForeground()
+
+	type rowEntry struct {
+		cursor string
+		label  string
+		status string
+	}
+	entries := make([]rowEntry, len(items))
+	for i, item := range items {
+		entries[i] = rowEntry{
+			cursor: item.cursor,
+			label:  item.label,
+			status: item.status,
+		}
+	}
+
+	t := libtable.New().
+		Headers("", "ITEM", "STATUS").
+		BorderTop(false).BorderBottom(false).
+		BorderLeft(false).BorderRight(false).
+		BorderHeader(false).BorderColumn(false).BorderRow(false).
+		Wrap(false).
+		Width(listInner).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			var base lipgloss.Style
+			switch col {
+			case 0:
+				base = lipgloss.NewStyle().Width(2).AlignHorizontal(lipgloss.Left)
+			case 1:
+				base = base.Width(itemNameW).AlignHorizontal(lipgloss.Left)
+			case 2:
+				base = base.Width(itemStateW).AlignHorizontal(lipgloss.Right)
+			default:
+				return lipgloss.NewStyle()
+			}
+			switch row {
+			case libtable.HeaderRow:
+				return base.
+					Foreground(lipgloss.Color(theme.Muted())).
+					Bold(true)
+			case 0:
+				return base.
+					Background(selSt.GetBackground()).
+					Foreground(selSt.GetForeground()).
+					Bold(true)
+			default:
+				return base.Background(surfaceBg).Foreground(normalFg)
+			}
+		})
+
+	for _, entry := range entries {
+		t.Row(entry.cursor, entry.label, entry.status)
+	}
+
+	st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
+	if !focused {
+		st = theme.MutedBorder(st)
+	}
+	if panelHeight > 0 {
+		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
+	}
+
+	const footerText = " j/k select • d dashboard • w worktrees • i issues • p PRs • q quit"
+	return st.Render(strings.TrimRight(t.Render(), "\n") + "\n\n" + truncateStr(footerText, listInner))
+}
+
+func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSessions int, herdrStatus, sandcastleStatus, githubStatus string) string {
 	if repoPath == "" {
 		repoPath = "./"
 	}
 	text := fmt.Sprintf(
-		"GROVE %s: GIT WORKTREE ORCHESTRATOR | Repo: %s | Local Path: %s",
-		version.Version, filepath.Base(repoPath), repoPath,
+		"GROVE %s: GIT WORKTREE ORCHESTRATOR | Repo: %s",
+		version.Version, filepath.Base(repoPath),
 	)
 	if activeSessions > 0 {
 		text += fmt.Sprintf(" | %d active session(s)", activeSessions)
 	}
+	text += fmt.Sprintf(" | Herdr: %s | Sandcastle: %s | GitHub: %s", herdrStatus, sandcastleStatus, githubStatus)
 	return theme.GetStyle("header").Width(innerWidth).Render(text)
 }
 
