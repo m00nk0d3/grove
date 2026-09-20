@@ -13,7 +13,7 @@ import (
 type createStep int
 
 const (
-	stepIssues        createStep = iota
+	stepIssues createStep = iota
 	stepType
 	stepParentRequired // only shown when sub-issue has no parent worktree
 	stepBaseBranch     // only shown when len(m.baseBranches) > 0

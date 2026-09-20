@@ -23,7 +23,7 @@ type MissionControlState struct {
 type WorkItem struct {
 	ID              string
 	CreatedAt       int64
-	UpdatedAt        int64
+	UpdatedAt       int64
 	LinkedPR        *PullRequest     `json:"linked_pr,omitempty"`
 	LinkedIssue     *Issue           `json:"linked_issue,omitempty"`
 	PaneRef         *PaneRef         `json:"pane_ref,omitempty"`
@@ -54,19 +54,47 @@ const (
 type WorkflowRunRef struct {
 	WorkflowID   string
 	RunID        string
+	Title        string
+	Repo         string
 	WorktreePath string
 	Branch       string
 	Status       string
+	DefaultAgent string
+	CurrentStep  string
+	Progress     WorkflowProgress
 	IssueNumber  *int
 	PRNumber     *int
+	Steps        []WorkflowStep
+	StartedAt    time.Time
+	UpdatedAt    time.Time
+	Error        string
 	Labels       []string
+}
+
+type WorkflowProgress struct {
+	Completed int
+	Total     int
+	Percent   int
+}
+
+type WorkflowStep struct {
+	ID             string
+	Title          string
+	Status         string
+	Summary        string
+	StartedAt      time.Time
+	CompletedAt    time.Time
+	DurationMillis int64
 }
 
 type AgentRef struct {
 	AgentID       string
+	Kind          string
 	Name          string
 	WorkflowRunID string
 	Status        string
+	Summary       string
+	PaneID        string
 }
 
 type PaneRef struct {
@@ -133,9 +161,9 @@ const (
 
 // Phase 2: Correlations metadata for tracking linkage relationships
 type Correlations struct {
-	WorktreeToPR      map[string]string // worktree path -> linked PR number or ""
-	WorktreeToIssue   map[string]string // worktree path -> linked issue number or ""
+	WorktreeToPR       map[string]string // worktree path -> linked PR number or ""
+	WorktreeToIssue    map[string]string // worktree path -> linked issue number or ""
 	WorkflowToWorktree map[string]string // workflow ID -> linked worktree path
-	AgentToWorkflow   map[string]string // agent ID -> linked workflow ID
-	PaneToAgent       map[string]string // pane ID -> linked agent ID (empty if linked to workitem directly)
+	AgentToWorkflow    map[string]string // agent ID -> linked workflow ID
+	PaneToAgent        map[string]string // pane ID -> linked agent ID (empty if linked to workitem directly)
 }

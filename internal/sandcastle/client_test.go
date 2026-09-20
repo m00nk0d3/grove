@@ -122,6 +122,16 @@ func TestSnapshot_SuccessfulStatus(t *testing.T) {
 	assert.Equal(t, "running", wf.Status)
 	assert.Equal(t, "issue-42", wf.Branch)
 	assert.Equal(t, "/home/user/dev/project-worktrees/issue-42", wf.WorktreePath)
+	assert.Equal(t, "Implement issue #42", wf.Title)
+	assert.Equal(t, "pi", wf.DefaultAgent)
+	assert.Equal(t, "Editing files", wf.CurrentStep)
+	assert.Equal(t, 42, wf.Progress.Percent)
+	assert.Equal(t, 3, wf.Progress.Completed)
+	require.Len(t, wf.Steps, 2)
+	assert.Equal(t, "Inspect repo", wf.Steps[0].Title)
+	assert.Equal(t, "succeeded", wf.Steps[0].Status)
+	assert.False(t, wf.StartedAt.IsZero())
+	assert.False(t, wf.UpdatedAt.IsZero())
 	require.NotNil(t, wf.IssueNumber)
 	assert.Equal(t, 42, *wf.IssueNumber)
 	assert.Nil(t, wf.PRNumber)
@@ -131,6 +141,9 @@ func TestSnapshot_SuccessfulStatus(t *testing.T) {
 	assert.Equal(t, "pi-main", snap.Agents[0].Name)
 	assert.Equal(t, "working", snap.Agents[0].Status)
 	assert.Equal(t, "run_123", snap.Agents[0].WorkflowRunID)
+	assert.Equal(t, "pi", snap.Agents[0].Kind)
+	assert.Equal(t, "Refactoring renderer state model", snap.Agents[0].Summary)
+	assert.Equal(t, "w1:p3", snap.Agents[0].PaneID)
 
 	assert.Equal(t, []string{"status"}, runner.lastCall())
 }
@@ -270,6 +283,7 @@ func TestStartWorkflow_IncludesRequestedKind(t *testing.T) {
 	runner.responses["workflow"] = fakeResponse{
 		stdout: []byte(`{"workflow": {"id": "run_4", "status": "queued"}}`),
 	}
+
 	prNumber := 84
 
 	client := newTestClient(runner)
@@ -285,6 +299,48 @@ func TestStartWorkflow_IncludesRequestedKind(t *testing.T) {
 	kindIdx := indexAfter(call, "--kind")
 	require.GreaterOrEqual(t, kindIdx, 0)
 	assert.Equal(t, "review", call[kindIdx+1])
+}
+
+func TestRemoveWorkflow_RequiresRunID(t *testing.T) {
+	client := newTestClient(newFakeRunner())
+
+	err := client.RemoveWorkflow(context.Background(), "/repo", "", false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "run ID is required")
+}
+
+func TestRemoveWorkflow_SendsStopOnlyWhenConfirmed(t *testing.T) {
+	tests := []struct {
+		name string
+		stop bool
+	}{
+		{name: "remove history", stop: false},
+		{name: "stop active workflow", stop: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := newFakeRunner()
+			runner.responses["workflow"] = fakeResponse{stdout: []byte(`{"removed":"run_42"}`)}
+			client := newTestClient(runner)
+
+			err := client.RemoveWorkflow(context.Background(), "/repo", "run_42", tt.stop)
+
+			require.NoError(t, err)
+			call := runner.lastCall()
+			assert.Equal(t, []string{"workflow", "remove", "run_42", "--json", "--repo", "/repo"}, call[:6])
+			assert.Equal(t, tt.stop, containsString(call, "--stop"))
+		})
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAvailable_MissingBinary(t *testing.T) {

@@ -30,8 +30,12 @@ func (m *DeleteModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch keyMsg.String() {
 	case "y", "Y":
-		path := m.worktree.Path
-		return m, func() tea.Msg { return WorktreeDeleteConfirmedMsg{Path: path} }
+		return m, func() tea.Msg {
+			return WorktreeDeleteConfirmedMsg{
+				Path:   m.worktree.Path,
+				Branch: m.worktree.Branch,
+			}
+		}
 	case "n", "N", "esc":
 		return m, func() tea.Msg { return ModalCancelledMsg{} }
 	}
@@ -46,7 +50,7 @@ func (m *DeleteModal) Title() string { return "Delete Worktree" }
 func (m *DeleteModal) View() string {
 	name := filepath.Base(m.worktree.Path)
 	return fmt.Sprintf(
-		"Delete worktree %q?\n  Branch: %s\n\n[y] confirm  [n / Esc] cancel",
+		"Delete worktree %q and local branch %q?\n\nUncommitted work and the local branch will be permanently removed.\nThe remote branch will be preserved.\n\n[y] delete both  [n / Esc] cancel",
 		name,
 		m.worktree.Branch,
 	)

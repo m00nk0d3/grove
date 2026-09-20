@@ -48,6 +48,16 @@ type navItem struct {
 	label string
 }
 
+type dashboardMission struct {
+	label        string
+	workItemID   string
+	status       string
+	worktreePath string
+	paneID       string
+	agentCount   int
+	workflow     domain.WorkflowRunRef
+}
+
 var navItems = []navItem{
 	{"D", "DASHBOARD"},
 	{"W", "WORKTREES"},
@@ -121,7 +131,7 @@ func renderSessionBlock(s *domain.Session) string {
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, actionSelection ...int) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, selections ...int) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
@@ -247,9 +257,17 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	}
 
 	var list string
+	selectedMissionIdx := 0
+	if len(selections) > 1 {
+		selectedMissionIdx = selections[1]
+	}
+	selectedDashboardTab := dashboardTabActive
+	if len(selections) > 2 {
+		selectedDashboardTab = dashboardTab(selections[2])
+	}
 	switch view {
 	case viewDashboard:
-		list = renderDashboard(missionState, worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, sessions)
+		list = renderDashboard(missionState, worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, sessions, selectedMissionIdx, selectedDashboardTab)
 	case viewIssues:
 		list = renderIssueList(visibleIssues, visibleSelectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList)
 	case viewPRs:
@@ -259,10 +277,20 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	}
 
 	actionIdx := 0
-	if len(actionSelection) > 0 {
-		actionIdx = actionSelection[0]
+	if len(selections) > 0 {
+		actionIdx = selections[0]
 	}
-	actions := contextActionsFor(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, sessions)
+	actions := contextActionsFor(
+		view,
+		worktrees,
+		selectedIdx,
+		issues,
+		selectedIssueIdx,
+		prs,
+		selectedPRIdx,
+		sessions,
+		dashboardActionContext{state: missionState, tab: selectedDashboardTab, selected: selectedMissionIdx},
+	)
 	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState, actions, actionIdx)
 	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, nav, list, ctx)
 	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, prs, currentPage)
@@ -273,13 +301,11 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 
 // renderDashboard renders aggregate operations telemetry. Detailed issue, PR,
 // and worktree records remain in their dedicated views.
-func renderDashboard(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, sessions []domain.Session) string {
-	var workItems []domain.WorkItem
+func renderDashboard(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, sessions []domain.Session, selectedMissionIdx int, selectedTab dashboardTab) string {
 	var workflows []domain.WorkflowRunRef
 	var agents []domain.AgentRef
 	status := domain.UnknownState
 	if missionState != nil {
-		workItems = missionState.WorkItems
 		workflows = missionState.WorkflowRuns
 		agents = missionState.Agents
 		if missionState.Status != "" {
@@ -296,7 +322,9 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 			}
 		}
 	}
-	activeWorkflows := countStatuses(workflowStatuses(workflows), domain.WorkflowRunning, domain.WorkflowQueued)
+	activeMissions := dashboardMissions(missionState)
+	completedMissions := completedDashboardMissions(missionState)
+	activeWorkflows := len(activeMissions)
 	blocked := countStatuses(workflowStatuses(workflows), domain.WorkflowBlocked, domain.WorkflowFailed) +
 		countStatuses(agentStatuses(agents), domain.AgentBlocked, domain.AgentFailed)
 
@@ -337,37 +365,66 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 	b.WriteString(renderPulseRow(theme, "WORKTREES", activeSessions, maxInt(len(worktrees), 1), pulseWidth))
 	b.WriteString("\n\n")
 
-	b.WriteString(accent.Render("⌁ ACTIVE MISSIONS"))
+	activeTabStyle := muted
+	completedTabStyle := muted
+	if selectedTab == dashboardTabCompleted {
+		completedTabStyle = accent
+	} else {
+		activeTabStyle = accent
+	}
+	b.WriteString(accent.Render("⌁ WORKFLOWS"))
+	b.WriteString("  ")
+	b.WriteString(activeTabStyle.Render(fmt.Sprintf("[ ACTIVE / ATTENTION %02d ]", len(activeMissions))))
+	b.WriteString("  ")
+	b.WriteString(completedTabStyle.Render(fmt.Sprintf("[ COMPLETED %02d ]", len(completedMissions))))
+	b.WriteString(muted.Render("   [ / ] switch"))
 	b.WriteString("\n")
-	activeItems := 0
-	for _, item := range workItems {
-		if !isActiveMission(item) {
-			continue
-		}
+	missions := activeMissions
+	if selectedTab == dashboardTabCompleted {
+		missions = completedMissions
+	}
+	if selectedMissionIdx >= len(missions) {
+		selectedMissionIdx = max(0, len(missions)-1)
+	}
+	const visibleMissionRows = 5
+	start := 0
+	if selectedMissionIdx >= visibleMissionRows {
+		start = selectedMissionIdx - visibleMissionRows + 1
+	}
+	end := min(start+visibleMissionRows, len(missions))
+	for i := start; i < end; i++ {
+		mission := missions[i]
 		stateStyle := success
-		if item.Degraded || strings.EqualFold(item.Status, string(domain.StatusBlocked)) || strings.EqualFold(item.Status, string(domain.StatusFailed)) {
+		if strings.EqualFold(mission.status, string(domain.StatusBlocked)) || strings.EqualFold(mission.status, string(domain.StatusFailed)) {
 			stateStyle = warning
 		}
-		detail := fmt.Sprintf("%d agent  %d flow", len(item.LinkedAgents), len(item.LinkedWorkflows))
-		nameWidth := listInner - len(detail) - 16
+		target := "no terminal"
+		if mission.paneID != "" {
+			target = "Herdr " + mission.paneID
+		} else if mission.worktreePath != "" {
+			target = filepath.Base(mission.worktreePath)
+		}
+		detail := fmt.Sprintf("%d agent  •  %s", mission.agentCount, target)
+		nameWidth := listInner - 18
 		if nameWidth < 12 {
 			nameWidth = 12
 		}
-		b.WriteString(fmt.Sprintf("  %s  %-*s  %s\n",
+		cursor := "  "
+		if focused && i == selectedMissionIdx {
+			cursor = "> "
+		}
+		b.WriteString(fmt.Sprintf("%s%s  %-*s  %s\n",
+			cursor,
 			stateStyle.Render("●"),
 			nameWidth,
-			truncateStr(item.ID, nameWidth),
-			stateStyle.Render(strings.ToUpper(defaultStatus(item.Status))),
+			truncateStr(mission.label, nameWidth),
+			stateStyle.Render(strings.ToUpper(defaultStatus(mission.status))),
 		))
 		b.WriteString(muted.Render(fmt.Sprintf("     %s", detail)))
 		b.WriteString("\n")
-		activeItems++
-		if activeItems == 5 {
-			break
-		}
 	}
-	if activeItems == 0 {
-		b.WriteString(muted.Render("  ◌ No active missions. Start from Issues or PRs."))
+	if len(missions) == 0 {
+		b.WriteString(muted.Render("  ◌ No active workflows. Start from Issues or PRs."))
 		b.WriteString("\n")
 	}
 
@@ -380,6 +437,160 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 	}
 
 	return st.Render(strings.TrimRight(b.String(), "\n"))
+}
+
+func dashboardMissions(state *domain.MissionControlState) []dashboardMission {
+	return dashboardMissionsMatching(state, isActionableWorkflow, true)
+}
+
+func completedDashboardMissions(state *domain.MissionControlState) []dashboardMission {
+	return dashboardMissionsMatching(state, func(workflow domain.WorkflowRunRef) bool {
+		return strings.EqualFold(workflow.Status, domain.WorkflowSucceeded)
+	}, false)
+}
+
+func dashboardMissionsForTab(state *domain.MissionControlState, tab dashboardTab) []dashboardMission {
+	if tab == dashboardTabCompleted {
+		return completedDashboardMissions(state)
+	}
+	return dashboardMissions(state)
+}
+
+func dashboardMissionsMatching(state *domain.MissionControlState, includeWorkflow func(domain.WorkflowRunRef) bool, includeWorkItems bool) []dashboardMission {
+	if state == nil {
+		return nil
+	}
+	var missions []dashboardMission
+	seenRuns := make(map[string]struct{})
+	for _, item := range state.WorkItems {
+		if includeWorkItems && !isActiveMission(item) {
+			continue
+		}
+		for _, workflow := range item.LinkedWorkflows {
+			if !includeWorkflow(workflow) {
+				continue
+			}
+			mission := missionFromWorkflow(workflow, item)
+			missions = append(missions, mission)
+			seenRuns[workflowIdentity(workflow)] = struct{}{}
+		}
+		if includeWorkItems && len(item.LinkedWorkflows) == 0 {
+			missions = append(missions, dashboardMission{
+				label:        item.ID,
+				workItemID:   item.ID,
+				status:       item.Status,
+				worktreePath: workItemPath(item),
+				paneID:       workItemPane(item),
+				agentCount:   len(item.LinkedAgents),
+			})
+		}
+	}
+	for _, workflow := range state.WorkflowRuns {
+		if !includeWorkflow(workflow) {
+			continue
+		}
+		if _, ok := seenRuns[workflowIdentity(workflow)]; ok {
+			continue
+		}
+		missions = append(missions, dashboardMission{
+			label:        workflowLabel(workflow),
+			status:       workflow.Status,
+			worktreePath: workflow.WorktreePath,
+			paneID:       paneForWorktree(state.Panes, workflow.WorktreePath),
+			workflow:     workflow,
+		})
+	}
+	return missions
+}
+
+func missionFromWorkflow(workflow domain.WorkflowRunRef, item domain.WorkItem) dashboardMission {
+	paneID := ""
+	agentIDs := make(map[string]struct{})
+	agentCount := 0
+	for _, agent := range item.LinkedAgents {
+		if agent.WorkflowRunID == workflow.RunID {
+			agentIDs[agent.AgentID] = struct{}{}
+			agentCount++
+		}
+	}
+	for _, pane := range item.LinkedPanes {
+		if _, ok := agentIDs[pane.AgentID]; ok {
+			paneID = pane.PaneID
+			break
+		}
+	}
+	if paneID == "" {
+		paneID = workItemPane(item)
+	}
+	path := workflow.WorktreePath
+	if path == "" {
+		path = workItemPath(item)
+	}
+	return dashboardMission{
+		label:        workflowLabel(workflow),
+		workItemID:   item.ID,
+		status:       workflow.Status,
+		worktreePath: path,
+		paneID:       paneID,
+		agentCount:   agentCount,
+		workflow:     workflow,
+	}
+}
+
+func workflowLabel(workflow domain.WorkflowRunRef) string {
+	if workflow.Title != "" {
+		return workflow.Title
+	}
+	if workflow.WorkflowID != "" {
+		return workflow.WorkflowID
+	}
+	if workflow.RunID != "" {
+		return workflow.RunID
+	}
+	return "workflow"
+}
+
+func workflowIdentity(workflow domain.WorkflowRunRef) string {
+	if workflow.RunID != "" {
+		return workflow.RunID
+	}
+	return workflow.WorkflowID
+}
+
+func workItemPath(item domain.WorkItem) string {
+	for _, workflow := range item.LinkedWorkflows {
+		if workflow.WorktreePath != "" {
+			return workflow.WorktreePath
+		}
+	}
+	for _, pane := range item.LinkedPanes {
+		if pane.CWD != "" {
+			return pane.CWD
+		}
+	}
+	return ""
+}
+
+func workItemPane(item domain.WorkItem) string {
+	if item.PaneRef != nil {
+		return item.PaneRef.PaneID
+	}
+	if len(item.LinkedPanes) > 0 {
+		return item.LinkedPanes[0].PaneID
+	}
+	return ""
+}
+
+func paneForWorktree(panes []domain.PaneRef, worktreePath string) string {
+	if worktreePath == "" {
+		return ""
+	}
+	for _, pane := range panes {
+		if pathsEqual(pane.CWD, worktreePath) {
+			return pane.PaneID
+		}
+	}
+	return ""
 }
 
 func renderDashboardCard(theme styles.Theme, label string, value, width int) string {
@@ -447,8 +658,16 @@ func isActiveMission(item domain.WorkItem) bool {
 		strings.EqualFold(item.Status, string(domain.StatusRunning)) ||
 		strings.EqualFold(item.Status, string(domain.StatusBlocked)) ||
 		strings.EqualFold(item.Status, string(domain.StatusFailed)) ||
-		len(item.LinkedAgents) > 0 ||
-		len(item.LinkedWorkflows) > 0
+		len(item.LinkedAgents) > 0
+}
+
+func isActionableWorkflow(workflow domain.WorkflowRunRef) bool {
+	switch strings.ToLower(workflow.Status) {
+	case domain.WorkflowQueued, domain.WorkflowRunning, domain.WorkflowBlocked, domain.WorkflowFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func defaultStatus(status string) string {

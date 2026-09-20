@@ -328,6 +328,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   const targetDir = worktree.worktreePath;
   const workflowSteps =
     state.mode === "lean" ? LEAN_WORKFLOW_STEPS : FULL_WORKFLOW_STEPS;
+  const runtimeSteps = workflowSteps.map((step) => ({
+    id: step,
+    title: step.replaceAll("-", " "),
+    status: state.completedSteps.includes(step) ? "succeeded" : "queued",
+  }));
   updateTrackedWorkflow({
     title: `Implement #${issueNum}: ${issueTitle}`,
     repo: repoRoot,
@@ -341,6 +346,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         (state.completedSteps.length / workflowSteps.length) * 100,
       ),
     },
+    steps: runtimeSteps,
   });
   let specialistPaneId: string | null = null;
   let workflowSucceeded = false;
@@ -403,6 +409,23 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         completionValidator,
         onPaneChanged: (paneId) => {
           specialistPaneId = paneId;
+          updateTrackedWorkflow({
+            agents: paneId
+              ? [
+                  {
+                    id: `${process.env.GROVE_WORKFLOW_RUN_ID ?? "workflow"}:${role}`,
+                    kind:
+                      process.env.AGENT_FLOW_AGENT_BACKEND === "pi"
+                        ? "pi"
+                        : "opencode",
+                    name: role,
+                    status: "working",
+                    summary: `Executing ${role} stage`,
+                    pane_id: paneId,
+                  },
+                ]
+              : [],
+          });
         },
       });
     };
@@ -415,20 +438,47 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         console.log(`\x1b[33m[Resume]\x1b[0m Skipping completed step: ${step}`);
         return;
       }
-      updateTrackedWorkflow({ current_step: step });
-      action();
-      state.completedSteps.push(step);
-      saveWorkflowState(statePath, state);
-      updateTrackedWorkflow({
-        current_step: step,
-        progress: {
-          completed: state.completedSteps.length,
-          total: workflowSteps.length,
-          percent: Math.round(
-            (state.completedSteps.length / workflowSteps.length) * 100,
-          ),
-        },
-      });
+      const trackedStep = runtimeSteps.find((candidate) => candidate.id === step);
+      const startedAt = new Date().toISOString();
+      if (trackedStep) {
+        Object.assign(trackedStep, { status: "running", started_at: startedAt });
+      }
+      updateTrackedWorkflow({ current_step: step, steps: runtimeSteps });
+      try {
+        action();
+        state.completedSteps.push(step);
+        saveWorkflowState(statePath, state);
+        if (trackedStep) {
+          const completedAt = new Date().toISOString();
+          Object.assign(trackedStep, {
+            status: "succeeded",
+            completed_at: completedAt,
+            duration_ms: Date.parse(completedAt) - Date.parse(startedAt),
+          });
+        }
+        updateTrackedWorkflow({
+          current_step: step,
+          steps: runtimeSteps,
+          progress: {
+            completed: state.completedSteps.length,
+            total: workflowSteps.length,
+            percent: Math.round(
+              (state.completedSteps.length / workflowSteps.length) * 100,
+            ),
+          },
+        });
+      } catch (error) {
+        if (trackedStep) {
+          const completedAt = new Date().toISOString();
+          Object.assign(trackedStep, {
+            status: "failed",
+            completed_at: completedAt,
+            duration_ms: Date.parse(completedAt) - Date.parse(startedAt),
+          });
+        }
+        updateTrackedWorkflow({ current_step: step, steps: runtimeSteps });
+        throw error;
+      }
     };
 
     const commitChanges = (subject: string): void => {

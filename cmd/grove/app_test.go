@@ -218,6 +218,7 @@ func TestModel_Enter_TriggersSpawn(t *testing.T) {
 			// Setup: Create model with populated Worktrees list
 			model := NewModel()
 			require.NotNil(t, model, "Model creation should succeed")
+			model.view = viewWorktrees
 
 			// Convert test data to domain.Worktree
 			worktrees := make([]domain.Worktree, len(tt.worktrees))
@@ -268,6 +269,7 @@ func TestModel_Enter_EmptyList_NoOp(t *testing.T) {
 			// Setup: Create model with empty Worktrees list
 			model := NewModel()
 			require.NotNil(t, model, "Model creation should succeed")
+			model.view = viewWorktrees
 			require.Empty(t, model.Worktrees, "Worktrees should be empty initially")
 
 			// Action: Call Update with tea.KeyEnter
@@ -287,6 +289,7 @@ func TestModel_Enter_EmptyList_NoOp(t *testing.T) {
 func TestModel_Enter_OutOfRangeSelectedIndex_NoOp(t *testing.T) {
 	model := NewModel()
 	require.NotNil(t, model)
+	model.view = viewWorktrees
 
 	model.Worktrees = []domain.Worktree{
 		{Path: "/home/user/repos/wt1", Branch: "main", CommitSHA: "abc123"},
@@ -1051,6 +1054,7 @@ func TestModel_JK_ListFocused_NavigatesWorktrees(t *testing.T) {
 			model.Worktrees = worktrees
 			model.selectedIdx = tt.initialIdx
 			model.focused = panelList
+			model.view = viewWorktrees
 
 			updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
 			m, ok := updated.(*Model)
@@ -1316,9 +1320,11 @@ func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 }
 
 type fakeHerdrNavigator struct {
-	openedPath string
-	pane       *domain.PaneRef
-	openErr    error
+	openedPath  string
+	focusedPane string
+	pane        *domain.PaneRef
+	openErr     error
+	focusErr    error
 }
 
 func (f *fakeHerdrNavigator) OpenWorktree(_ context.Context, req herdr.OpenWorktreeRequest) (*domain.PaneRef, error) {
@@ -1326,15 +1332,338 @@ func (f *fakeHerdrNavigator) OpenWorktree(_ context.Context, req herdr.OpenWorkt
 	return f.pane, f.openErr
 }
 
+func (f *fakeHerdrNavigator) FocusPane(_ context.Context, paneID string) error {
+	f.focusedPane = paneID
+	return f.focusErr
+}
+
+func TestModel_DashboardJK_SelectsWorkflow(t *testing.T) {
+	m := NewModel()
+	m.view = viewDashboard
+	m.focused = panelList
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "implement-42", RunID: "run-42", Status: domain.WorkflowRunning},
+			{WorkflowID: "review-17", RunID: "run-17", Status: domain.WorkflowQueued},
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.Equal(t, 1, model.selectedMissionIdx)
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	require.Nil(t, cmd)
+	assert.Equal(t, 0, updated.(*Model).selectedMissionIdx)
+}
+
+func TestModel_DashboardMissionUpdateClampsSelection(t *testing.T) {
+	m := NewModel()
+	m.selectedMissionIdx = 2
+	state := domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "implement-42", RunID: "run-42", Status: domain.WorkflowRunning},
+		},
+	}
+
+	updated, cmd := m.Update(missionControlUpdatedMsg{state: state})
+	require.Nil(t, cmd)
+	assert.Equal(t, 0, updated.(*Model).selectedMissionIdx)
+}
+
+func TestModel_DashboardEnterFocusesCorrelatedHerdrPane(t *testing.T) {
+	navigator := &fakeHerdrNavigator{}
+	m := NewModel()
+	m.view = viewDashboard
+	m.herdrNavigator = navigator
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{
+				WorkflowID:   "implement-42",
+				RunID:        "run-42",
+				Status:       domain.WorkflowRunning,
+				WorktreePath: "/repos/grove-42",
+			},
+		},
+		Panes: []domain.PaneRef{
+			{PaneID: "window-1:pane-2", CWD: "/repos/grove-42", Status: "open"},
+		},
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(paneFocusedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "window-1:pane-2", navigator.focusedPane)
+}
+
+func TestModel_DashboardEnterFallsBackToTrackedHerdrSession(t *testing.T) {
+	navigator := &fakeHerdrNavigator{
+		pane: &domain.PaneRef{PaneID: "window-1:pane-3", CWD: "/repos/grove-42"},
+	}
+	m := NewModel()
+	m.view = viewDashboard
+	m.herdrNavigator = navigator
+	m.sessions = []domain.Session{
+		{WorktreePath: "/repos/grove-42", Runtime: domain.RuntimeHerdr, Status: domain.StatusActive},
+	}
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{
+				WorkflowID:   "implement-42",
+				RunID:        "run-42",
+				Status:       domain.WorkflowRunning,
+				WorktreePath: "/repos/grove-42",
+			},
+		},
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(sessionFocusedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "/repos/grove-42", navigator.openedPath)
+}
+
+func TestModel_DashboardEnterReportsMissingJumpTarget(t *testing.T) {
+	m := NewModel()
+	m.view = viewDashboard
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "implement-42", RunID: "run-42", Status: domain.WorkflowRunning},
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	assert.Contains(t, updated.(*Model).statusErr, "No terminal or Herdr pane found")
+}
+
+func TestModel_DashboardVOpensMissionInspector(t *testing.T) {
+	m := NewModel()
+	m.view = viewDashboard
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{
+				WorkflowID:  "run-42",
+				RunID:       "run-42",
+				Title:       "Implement issue #42",
+				Status:      domain.WorkflowRunning,
+				CurrentStep: "implementation",
+			},
+		},
+		Agents: []domain.AgentRef{
+			{AgentID: "agent-1", WorkflowRunID: "run-42", Summary: "Editing renderer"},
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	require.Nil(t, cmd)
+	inspector, ok := updated.(*Model).activeModal.(*modal.MissionModal)
+	require.True(t, ok)
+	assert.Equal(t, "run-42", inspector.RunID())
+	assert.Contains(t, inspector.View(), "Implement issue #42")
+}
+
+func TestModel_DashboardCompletedTabOpensCompletedMission(t *testing.T) {
+	m := NewModel()
+	m.view = viewDashboard
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "run-live", RunID: "run-live", Title: "Implement issue #42", Status: domain.WorkflowRunning},
+			{WorkflowID: "run-done", RunID: "run-done", Title: "Review pull request #17", Status: domain.WorkflowSucceeded},
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.Equal(t, dashboardTabCompleted, model.dashboardTab)
+	assert.Equal(t, 0, model.selectedMissionIdx)
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Nil(t, cmd)
+	inspector, ok := updated.(*Model).activeModal.(*modal.MissionModal)
+	require.True(t, ok)
+	assert.Equal(t, "run-done", inspector.RunID())
+	assert.Contains(t, inspector.View(), "Review pull request #17")
+}
+
+func TestModel_MouseClickNavigatesViews(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      2,
+		Y:      layout.panelTop + 1 + int(viewIssues),
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.Equal(t, viewIssues, model.view)
+	assert.Equal(t, panelNav, model.focused)
+}
+
+func TestModel_MouseClickSwitchesDashboardTabs(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	m.view = viewDashboard
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      layout.listX + 44,
+		Y:      layout.panelTop + 1 + 13,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	assert.Equal(t, dashboardTabCompleted, updated.(*Model).dashboardTab)
+}
+
+func TestModel_MouseWheelNavigatesList(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	m.view = viewWorktrees
+	m.Worktrees = []domain.Worktree{{Path: "/wt/one"}, {Path: "/wt/two"}}
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      layout.listX + 2,
+		Y:      layout.panelTop + 3,
+		Button: tea.MouseButtonWheelDown,
+		Action: tea.MouseActionPress,
+	})
+	require.NotNil(t, cmd)
+	model := updated.(*Model)
+	assert.Equal(t, 1, model.selectedIdx)
+	assert.Equal(t, panelList, model.focused)
+}
+
+func TestModel_MouseDoubleClickActivatesIssue(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	m.view = viewIssues
+	m.issues = []domain.Issue{{Number: 42, Title: "Mouse support"}}
+	layout := m.mouseLayout()
+	click := tea.MouseMsg{
+		X:      layout.listX + 2,
+		Y:      layout.panelTop + 2,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	}
+
+	updated, cmd := m.Update(click)
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	updated, cmd = model.Update(click)
+	require.Nil(t, cmd)
+	_, ok := updated.(*Model).activeModal.(*modal.CreateModal)
+	assert.True(t, ok)
+}
+
+func TestModel_MouseClickContextActionRunsIt(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	m.view = viewDashboard
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "run-42", RunID: "run-42", Title: "Implement issue #42", Status: domain.WorkflowRunning},
+		},
+	}
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      layout.contextX + 2,
+		Y:      layout.panelTop + 2,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	_, ok := updated.(*Model).activeModal.(*modal.MissionModal)
+	assert.True(t, ok)
+}
+
+func TestModel_MissionInspectorRefreshesWithMissionState(t *testing.T) {
+	m := NewModel()
+	workflow := domain.WorkflowRunRef{
+		WorkflowID: "run-42",
+		RunID:      "run-42",
+		Status:     domain.WorkflowRunning,
+		Progress:   domain.WorkflowProgress{Percent: 10},
+	}
+	m.activeModal = modal.NewMissionModal(workflow, nil)
+	workflow.Progress.Percent = 75
+	state := domain.MissionControlState{WorkflowRuns: []domain.WorkflowRunRef{workflow}}
+
+	updated, cmd := m.Update(missionControlUpdatedMsg{state: state})
+	require.Nil(t, cmd)
+	inspector := updated.(*Model).activeModal.(*modal.MissionModal)
+	assert.Contains(t, inspector.View(), "75%")
+}
+
 type fakeSandcastleWorkflowStarter struct {
-	request  sandcastle.StartWorkflowRequest
-	workflow domain.WorkflowRunRef
-	err      error
+	request      sandcastle.StartWorkflowRequest
+	workflow     domain.WorkflowRunRef
+	removedRunID string
+	removeStop   bool
+	err          error
 }
 
 func (f *fakeSandcastleWorkflowStarter) StartWorkflow(_ context.Context, req sandcastle.StartWorkflowRequest) (domain.WorkflowRunRef, error) {
 	f.request = req
 	return f.workflow, f.err
+}
+
+func (f *fakeSandcastleWorkflowStarter) RemoveWorkflow(_ context.Context, _ string, runID string, stop bool) error {
+	f.removedRunID = runID
+	f.removeStop = stop
+	return f.err
+}
+
+func TestModel_DashboardXConfirmsAndRemovesWorkflow(t *testing.T) {
+	manager := &fakeSandcastleWorkflowStarter{}
+	m := NewModel()
+	m.view = viewDashboard
+	m.workflowStarter = manager
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "run-42", RunID: "run-42", Title: "Implement issue #42", Status: domain.WorkflowRunning},
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	_, ok := model.activeModal.(*modal.WorkflowRemoveModal)
+	require.True(t, ok)
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	require.NotNil(t, cmd)
+	model = updated.(*Model)
+	confirmed, ok := cmd().(modal.WorkflowRemoveConfirmedMsg)
+	require.True(t, ok)
+	updated, cmd = model.Update(confirmed)
+	require.NotNil(t, cmd)
+	model = updated.(*Model)
+	msg, ok := cmd().(workflowRemovedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "run-42", manager.removedRunID)
+	assert.True(t, manager.removeStop)
+
+	updated, cmd = model.Update(msg)
+	require.NotNil(t, cmd)
+	assert.Equal(t, "Workflow stopped and removed", updated.(*Model).statusMsg)
 }
 
 func TestModel_AKeyFocusesContextActions(t *testing.T) {
@@ -1413,7 +1742,7 @@ func TestModel_Enter_InHerdr_OpensAndFocusesHerdrWorktree(t *testing.T) {
 		pane: &domain.PaneRef{PaneID: "w1:p2", CWD: "/repos/nexus"},
 	}
 	m := NewModel()
-	m.view = viewDashboard
+	m.view = viewWorktrees
 	m.insideHerdr = true
 	m.Config.Herdr.Enabled = true
 	m.Config.Herdr.PreferWorktreeAPI = true

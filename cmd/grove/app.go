@@ -35,6 +35,18 @@ type worktreeOpDoneMsg struct {
 	err error // Error during operation, if any
 }
 
+func (m *Model) focusPaneCmd(paneID, label string) tea.Cmd {
+	navigator := m.herdrNavigator
+	return func() tea.Msg {
+		if navigator == nil {
+			return paneFocusedMsg{label: label, err: fmt.Errorf("Herdr navigation unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return paneFocusedMsg{label: label, err: navigator.FocusPane(ctx, paneID)}
+	}
+}
+
 // worktreeSwitchedMsg carries the result of switching to a worktree.
 type worktreeSwitchedMsg struct {
 	err error // Error during switch, if any
@@ -150,6 +162,135 @@ func checkForUpdateCmd() tea.Cmd {
 	}
 }
 
+func (m *Model) jumpToSelectedMission() (tea.Model, tea.Cmd) {
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+	if len(missions) == 0 {
+		m.statusErr = "No active workflow selected"
+		return m, clearErrorCmd()
+	}
+	if m.selectedMissionIdx < 0 || m.selectedMissionIdx >= len(missions) {
+		m.selectedMissionIdx = 0
+	}
+	mission := missions[m.selectedMissionIdx]
+	return m.jumpToMission(mission)
+}
+
+func (m *Model) jumpToMissionRun(runID string) (tea.Model, tea.Cmd) {
+	for _, tab := range []dashboardTab{dashboardTabActive, dashboardTabCompleted} {
+		for i, mission := range dashboardMissionsForTab(m.missionState, tab) {
+			if mission.workflow.RunID == runID || mission.workflow.WorkflowID == runID {
+				m.dashboardTab = tab
+				m.selectedMissionIdx = i
+				return m.jumpToMission(mission)
+			}
+		}
+	}
+	m.statusErr = fmt.Sprintf("Workflow %s is no longer available", runID)
+	return m, clearErrorCmd()
+}
+
+func (m *Model) jumpToMission(mission dashboardMission) (tea.Model, tea.Cmd) {
+	if mission.paneID != "" {
+		return m, m.focusPaneCmd(mission.paneID, mission.label)
+	}
+	for _, session := range m.sessions {
+		if mission.worktreePath != "" && pathsEqual(session.WorktreePath, mission.worktreePath) {
+			return m, m.focusSessionCmd(session)
+		}
+	}
+	if mission.worktreePath != "" && m.insideHerdr && m.herdrNavigator != nil {
+		return m, m.openHerdrWorktreeCmd(mission.worktreePath)
+	}
+	m.statusErr = fmt.Sprintf("No terminal or Herdr pane found for %s", mission.label)
+	return m, clearErrorCmd()
+}
+
+func (m *Model) openSelectedMissionInspector() (tea.Model, tea.Cmd) {
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+	if len(missions) == 0 {
+		m.statusErr = "No active workflow selected"
+		return m, clearErrorCmd()
+	}
+	if m.selectedMissionIdx < 0 || m.selectedMissionIdx >= len(missions) {
+		m.selectedMissionIdx = 0
+	}
+	workflow := missions[m.selectedMissionIdx].workflow
+	if workflow.RunID == "" && workflow.WorkflowID == "" {
+		m.statusErr = "No Sandcastle workflow telemetry is available for this mission"
+		return m, clearErrorCmd()
+	}
+	runID := workflow.RunID
+	if runID == "" {
+		runID = workflow.WorkflowID
+	}
+	m.activeModal = modal.NewMissionModal(workflow, agentsForWorkflow(m.missionState, runID))
+	return m, nil
+}
+
+func (m *Model) confirmSelectedWorkflowRemoval() (tea.Model, tea.Cmd) {
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+	if len(missions) == 0 {
+		m.statusErr = "No workflow selected"
+		return m, clearErrorCmd()
+	}
+	if m.selectedMissionIdx < 0 || m.selectedMissionIdx >= len(missions) {
+		m.selectedMissionIdx = 0
+	}
+	workflow := missions[m.selectedMissionIdx].workflow
+	if workflow.RunID == "" && workflow.WorkflowID == "" {
+		m.statusErr = "No Sandcastle workflow record is available for this mission"
+		return m, clearErrorCmd()
+	}
+	m.activeModal = modal.NewWorkflowRemoveModal(workflow)
+	return m, nil
+}
+
+func workflowByRunID(state *domain.MissionControlState, runID string) (domain.WorkflowRunRef, bool) {
+	if state == nil {
+		return domain.WorkflowRunRef{}, false
+	}
+	for _, workflow := range state.WorkflowRuns {
+		if workflow.RunID == runID || workflow.WorkflowID == runID {
+			return workflow, true
+		}
+	}
+	for _, item := range state.WorkItems {
+		for _, workflow := range item.LinkedWorkflows {
+			if workflow.RunID == runID || workflow.WorkflowID == runID {
+				return workflow, true
+			}
+		}
+	}
+	return domain.WorkflowRunRef{}, false
+}
+
+func agentsForWorkflow(state *domain.MissionControlState, runID string) []domain.AgentRef {
+	if state == nil {
+		return nil
+	}
+	var agents []domain.AgentRef
+	seen := make(map[string]struct{})
+	appendAgent := func(agent domain.AgentRef) {
+		if agent.WorkflowRunID != runID {
+			return
+		}
+		if _, ok := seen[agent.AgentID]; ok {
+			return
+		}
+		seen[agent.AgentID] = struct{}{}
+		agents = append(agents, agent)
+	}
+	for _, agent := range state.Agents {
+		appendAgent(agent)
+	}
+	for _, item := range state.WorkItems {
+		for _, agent := range item.LinkedAgents {
+			appendAgent(agent)
+		}
+	}
+	return agents
+}
+
 // selfUpdateCmd runs the self-update in the background.
 func selfUpdateCmd(tagName string) tea.Cmd {
 	return func() tea.Msg {
@@ -238,6 +379,17 @@ type sessionFocusedMsg struct {
 	err          error
 }
 
+type paneFocusedMsg struct {
+	label string
+	err   error
+}
+
+type workflowRemovedMsg struct {
+	runID string
+	stop  bool
+	err   error
+}
+
 // herdrWorktreeOpenedMsg carries the result of opening and focusing a
 // worktree through Herdr.
 type herdrWorktreeOpenedMsg struct {
@@ -296,6 +448,13 @@ const (
 	viewPRs                         // Shows the GitHub pull requests list
 )
 
+type dashboardTab int
+
+const (
+	dashboardTabActive dashboardTab = iota
+	dashboardTabCompleted
+)
+
 // focusedPanel identifies which panel currently has keyboard focus.
 type focusedPanel int
 
@@ -318,27 +477,32 @@ type contextActionOption struct {
 // Model represents the root Bubbletea model for the Nexus TUI application.
 // It manages the list of git worktrees, user interactions, and active modals.
 type Model struct {
-	Worktrees        []domain.Worktree    // List of available git worktrees
-	RepoPath         string               // Path to the repository root
-	Config           *domain.Config       // Loaded application configuration
-	selectedIdx      int                  // Currently selected worktree index
-	activeModal      modal.Modal          // Currently open modal (if any)
-	statusErr        string               // Error message to display (if any)
-	statusMsg        string               // Success/info message to display (if any)
-	themeIdx         int                  // Index into styles.Themes for the active theme
-	view             activeView           // Currently active main panel view
-	width            int                  // Terminal width in columns; 0 means use default
-	height           int                  // Terminal height in rows; 0 means use default
-	prs              []domain.PullRequest // Latest synced pull requests
-	issues           []domain.Issue       // Latest synced issues
-	lastSynced       time.Time            // When the last successful GitHub sync completed
-	syncErr          error                // Error from the most recent GitHub sync attempt
-	syncing          bool                 // True while a background GitHub sync is in progress
-	selectedIssueIdx int                  // Currently selected issue index
-	selectedPRIdx    int                  // Currently selected PR index
-	focused          focusedPanel         // Which panel currently has keyboard focus
-	ctxScrollOffset  int                  // Scroll position within the context panel
-	contextActionIdx int                  // Selected action in the context panel
+	Worktrees          []domain.Worktree    // List of available git worktrees
+	RepoPath           string               // Path to the repository root
+	Config             *domain.Config       // Loaded application configuration
+	selectedIdx        int                  // Currently selected worktree index
+	activeModal        modal.Modal          // Currently open modal (if any)
+	statusErr          string               // Error message to display (if any)
+	statusMsg          string               // Success/info message to display (if any)
+	themeIdx           int                  // Index into styles.Themes for the active theme
+	view               activeView           // Currently active main panel view
+	width              int                  // Terminal width in columns; 0 means use default
+	height             int                  // Terminal height in rows; 0 means use default
+	prs                []domain.PullRequest // Latest synced pull requests
+	issues             []domain.Issue       // Latest synced issues
+	lastSynced         time.Time            // When the last successful GitHub sync completed
+	syncErr            error                // Error from the most recent GitHub sync attempt
+	syncing            bool                 // True while a background GitHub sync is in progress
+	selectedIssueIdx   int                  // Currently selected issue index
+	selectedPRIdx      int                  // Currently selected PR index
+	selectedMissionIdx int                  // Selected workflow/mission on the dashboard
+	dashboardTab       dashboardTab         // Active or completed dashboard workflows
+	focused            focusedPanel         // Which panel currently has keyboard focus
+	ctxScrollOffset    int                  // Scroll position within the context panel
+	contextActionIdx   int                  // Selected action in the context panel
+	lastMouseX         int
+	lastMouseY         int
+	lastMouseAt        time.Time
 
 	// Pagination state
 	currentPage int // 0-based current page index for issues/PRs lists
@@ -449,8 +613,231 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+type mouseUILayout struct {
+	panelTop    int
+	panelBottom int
+	listX       int
+	contextX    int
+}
+
+func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.activeModal != nil {
+		if handler, ok := m.activeModal.(interface {
+			HandleMouse(tea.MouseMsg, int, int) (tea.Model, tea.Cmd)
+		}); ok {
+			updated, cmd := handler.HandleMouse(msg, m.widthOrDefault(), m.heightOrDefault())
+			if next, ok := updated.(modal.Modal); ok {
+				m.activeModal = next
+			}
+			return m, cmd
+		}
+		return m, nil
+	}
+
+	if m.fuzzyActive {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if m.fuzzySelIdx > 0 {
+				m.fuzzySelIdx--
+			}
+		case tea.MouseButtonWheelDown:
+			if m.fuzzySelIdx < len(m.fuzzyResults)-1 {
+				m.fuzzySelIdx++
+			}
+		}
+		return m, nil
+	}
+
+	layout := m.mouseLayout()
+	if msg.Y < layout.panelTop || msg.Y >= layout.panelBottom {
+		return m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+		switch {
+		case msg.X < layout.listX:
+			m.focused = panelNav
+		case msg.X < layout.contextX:
+			m.focused = panelList
+		default:
+			m.focused = panelCtx
+		}
+		if msg.Button == tea.MouseButtonWheelUp {
+			m.moveUp()
+		} else {
+			m.moveDown()
+		}
+		return m, m.maybeLazyLoadCmd()
+	case tea.MouseButtonLeft:
+		if msg.Action != tea.MouseActionPress {
+			return m, nil
+		}
+	default:
+		return m, nil
+	}
+
+	doubleClick := msg.X == m.lastMouseX && msg.Y == m.lastMouseY &&
+		!m.lastMouseAt.IsZero() && time.Since(m.lastMouseAt) <= 450*time.Millisecond
+	m.lastMouseX, m.lastMouseY, m.lastMouseAt = msg.X, msg.Y, time.Now()
+
+	switch {
+	case msg.X < layout.listX:
+		return m.handleNavClick(msg, layout)
+	case msg.X < layout.contextX:
+		return m.handleListClick(msg, layout, doubleClick)
+	default:
+		return m.handleContextClick(msg, layout)
+	}
+}
+
+func (m *Model) mouseLayout() mouseUILayout {
+	width := m.widthOrDefault()
+	height := m.heightOrDefault()
+	navOuter := navPanelInner + panelOverhead
+	ctxOuter := computeCtxInner(width) + panelOverhead
+	listOuter := width - navOuter - ctxOuter
+	if listOuter < minPathWidth+panelOverhead {
+		listOuter = minPathWidth + panelOverhead
+	}
+	return mouseUILayout{
+		panelTop:    1,
+		panelBottom: max(1, height-2),
+		listX:       navOuter,
+		contextX:    navOuter + listOuter,
+	}
+}
+
+func (m *Model) widthOrDefault() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return defaultTermWidth
+}
+
+func (m *Model) heightOrDefault() int {
+	if m.height > 0 {
+		return m.height
+	}
+	return 24
+}
+
+func (m *Model) handleNavClick(msg tea.MouseMsg, layout mouseUILayout) (tea.Model, tea.Cmd) {
+	row := msg.Y - layout.panelTop - 1
+	if row < 0 || row >= len(navItems) {
+		return m, nil
+	}
+	m.focused = panelNav
+	m.view = activeView(row)
+	m.ctxScrollOffset = 0
+	m.contextActionIdx = 0
+	m.currentPage = 0
+	return m, nil
+}
+
+func (m *Model) handleListClick(msg tea.MouseMsg, layout mouseUILayout, doubleClick bool) (tea.Model, tea.Cmd) {
+	m.focused = panelList
+	contentRow := msg.Y - layout.panelTop - 1
+	if contentRow < 0 {
+		return m, nil
+	}
+
+	switch m.view {
+	case viewDashboard:
+		const dashboardTabRow = 13
+		const dashboardFirstMissionRow = 14
+		if contentRow == dashboardTabRow {
+			relativeX := msg.X - layout.listX - 2
+			if relativeX >= 39 {
+				m.dashboardTab = dashboardTabCompleted
+			} else {
+				m.dashboardTab = dashboardTabActive
+			}
+			m.selectedMissionIdx = 0
+			return m, nil
+		}
+		if contentRow < dashboardFirstMissionRow {
+			return m, nil
+		}
+		visibleRow := (contentRow - dashboardFirstMissionRow) / 2
+		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+		start := 0
+		if m.selectedMissionIdx >= 5 {
+			start = m.selectedMissionIdx - 4
+		}
+		idx := start + visibleRow
+		if idx < 0 || idx >= len(missions) {
+			return m, nil
+		}
+		m.selectedMissionIdx = idx
+		if doubleClick {
+			return m.activateSelectedItem()
+		}
+	case viewIssues:
+		row := contentRow - 1
+		treeRows := buildIssueTree(m.issues)
+		if row < 0 || row >= min(pageSize, len(treeRows)-m.currentPage*pageSize) {
+			return m, nil
+		}
+		treeIdx := m.currentPage*pageSize + row
+		if treeIdx < len(treeRows) {
+			m.selectedIssueIdx = treeRows[treeIdx].originalIdx
+			if doubleClick {
+				return m.activateSelectedItem()
+			}
+		}
+	case viewPRs:
+		row := contentRow - 1
+		idx := m.currentPage*pageSize + row
+		if row < 0 || idx >= len(m.prs) {
+			return m, nil
+		}
+		m.selectedPRIdx = idx
+		if doubleClick {
+			return m.activateSelectedItem()
+		}
+	default:
+		row := contentRow - 1
+		start := 0
+		panelHeight := m.heightOrDefault() - fixedChromeRows
+		maxItems := panelHeight - 1
+		if maxItems > 0 && m.selectedIdx >= maxItems {
+			start = m.selectedIdx - maxItems + 1
+		}
+		idx := start + row
+		if row < 0 || idx >= len(m.Worktrees) {
+			return m, nil
+		}
+		m.selectedIdx = idx
+		if doubleClick {
+			return m.activateSelectedItem()
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) handleContextClick(msg tea.MouseMsg, layout mouseUILayout) (tea.Model, tea.Cmd) {
+	actions := m.availableContextActions()
+	if m.ctxScrollOffset > 0 {
+		m.focused = panelCtx
+		return m, nil
+	}
+	actionRow := msg.Y - layout.panelTop - 2
+	if actionRow < 0 || actionRow >= len(actions) {
+		m.focused = panelCtx
+		return m, nil
+	}
+	m.focused = panelCtx
+	m.contextActionIdx = actionRow
+	return m.runSelectedContextAction()
+}
+
 // Update handles incoming messages and returns an updated model and command.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mouseMsg, ok := msg.(tea.MouseMsg); ok {
+		return m.handleMouse(mouseMsg)
+	}
+
 	// Route all messages to the active modal while one is open.
 	if m.activeModal != nil {
 		switch msg := msg.(type) {
@@ -474,7 +861,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.checkoutPRWorktreeCmd(msg.Branch, msg.Path)
 		case modal.WorktreeDeleteConfirmedMsg:
 			m.activeModal = nil
-			return m, m.removeWorktreeCmd(msg.Path)
+			return m, m.removeWorktreeCmd(msg.Path, msg.Branch)
 		case modal.CleanupConfirmedMsg:
 			m.activeModal = nil
 			return m, m.performCleanupCmd(msg.Worktrees, msg.Branches)
@@ -486,6 +873,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeModal = nil
 			m.statusMsg = fmt.Sprintf("Starting %s workflow…", msg.Kind)
 			return m, m.startSandcastleWorkflowCmd(msg)
+		case modal.MissionJumpMsg:
+			m.activeModal = nil
+			return m.jumpToMissionRun(msg.RunID)
+		case modal.MissionRefreshMsg:
+			var cmds []tea.Cmd
+			if m.healthChecker != nil {
+				if m.Config.Herdr.Enabled {
+					cmds = append(cmds, herdrSnapshotCmd(m.healthChecker))
+				}
+				if m.Config.Sandcastle.Enabled {
+					cmds = append(cmds, sandcastleSnapshotCmd(m.healthChecker))
+				}
+			}
+			return m, tea.Batch(cmds...)
+		case modal.MissionRemoveRequestedMsg:
+			workflow, ok := workflowByRunID(m.missionState, msg.RunID)
+			if !ok {
+				m.activeModal = nil
+				m.statusErr = fmt.Sprintf("Workflow %s is no longer available", msg.RunID)
+				return m, clearErrorCmd()
+			}
+			m.activeModal = modal.NewWorkflowRemoveModal(workflow)
+			return m, nil
+		case modal.WorkflowRemoveConfirmedMsg:
+			m.activeModal = nil
+			m.statusMsg = "Removing workflow…"
+			return m, m.removeWorkflowCmd(msg.RunID, msg.Stop)
 		case modal.ModalCancelledMsg:
 			m.activeModal = nil
 			return m, nil
@@ -620,6 +1034,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.view = viewDashboard
 				m.ctxScrollOffset = 0
 				m.contextActionIdx = 0
+			case "v", "V":
+				if m.view == viewDashboard {
+					return m.openSelectedMissionInspector()
+				}
+			case "x", "X":
+				if m.view == viewDashboard {
+					return m.confirmSelectedWorkflowRemoval()
+				}
+			case "[", "]":
+				if m.view == viewDashboard {
+					if msg.String() == "[" {
+						m.dashboardTab = dashboardTabActive
+					} else {
+						m.dashboardTab = dashboardTabCompleted
+					}
+					m.selectedMissionIdx = 0
+					return m, nil
+				}
 			case "w", "W":
 				m.view = viewWorktrees
 				m.ctxScrollOffset = 0
@@ -858,6 +1290,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case missionControlUpdatedMsg:
 		m.missionState = &msg.state
+		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+		if len(missions) == 0 {
+			m.selectedMissionIdx = 0
+		} else if m.selectedMissionIdx >= len(missions) {
+			m.selectedMissionIdx = len(missions) - 1
+		}
+		if inspector, ok := m.activeModal.(*modal.MissionModal); ok {
+			if workflow, found := workflowByRunID(m.missionState, inspector.RunID()); found {
+				inspector.SetWorkflow(workflow, agentsForWorkflow(m.missionState, inspector.RunID()))
+			}
+		}
 
 	case sessionFocusedMsg:
 		// Focus is best-effort; show a friendly toast regardless of outcome.
@@ -867,6 +1310,43 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = fmt.Sprintf("Focused session for %s", msg.worktreePath)
 		}
 		return m, clearMsgCmd()
+
+	case paneFocusedMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("Failed to focus %s: %v", msg.label, msg.err)
+			return m, clearErrorCmd()
+		}
+		m.statusMsg = fmt.Sprintf("Focused %s", msg.label)
+		return m, clearMsgCmd()
+
+	case workflowRemovedMsg:
+		if msg.err != nil {
+			m.statusMsg = ""
+			m.statusErr = fmt.Sprintf("Failed to remove workflow: %v", msg.err)
+			return m, clearErrorCmd()
+		}
+		if m.sandcastleSnapshot != nil {
+			filteredWorkflows := m.sandcastleSnapshot.Workflows[:0]
+			for _, workflow := range m.sandcastleSnapshot.Workflows {
+				if workflow.RunID != msg.runID && workflow.WorkflowID != msg.runID {
+					filteredWorkflows = append(filteredWorkflows, workflow)
+				}
+			}
+			m.sandcastleSnapshot.Workflows = filteredWorkflows
+			filteredAgents := m.sandcastleSnapshot.Agents[:0]
+			for _, agent := range m.sandcastleSnapshot.Agents {
+				if agent.WorkflowRunID != msg.runID {
+					filteredAgents = append(filteredAgents, agent)
+				}
+			}
+			m.sandcastleSnapshot.Agents = filteredAgents
+		}
+		if msg.stop {
+			m.statusMsg = "Workflow stopped and removed"
+		} else {
+			m.statusMsg = "Workflow removed from history"
+		}
+		return m, tea.Batch(clearMsgCmd(), m.rebuildMissionStateCmd())
 
 	case herdrWorktreeOpenedMsg:
 		if msg.err != nil {
@@ -991,7 +1471,7 @@ func (m *Model) View() string {
 			return &m.sandcastleSnapshot.Integration
 		}
 		return nil
-	}(), m.missionState, actionIdx)
+	}(), m.missionState, actionIdx, m.selectedMissionIdx, int(m.dashboardTab))
 
 	w, h := m.width, m.height
 	if w <= 0 {
@@ -1014,6 +1494,14 @@ func (m *Model) View() string {
 		}
 		if ta, ok := m.activeModal.(interface{ SetTheme(styles.Theme) }); ok {
 			ta.SetTheme(styles.NewTheme(styles.Themes[m.themeIdx]))
+		}
+		if ha, ok := m.activeModal.(interface{ SetHeight(int) }); ok {
+			ha.SetHeight(h)
+		}
+		if fs, ok := m.activeModal.(interface{ Fullscreen() bool }); ok && fs.Fullscreen() && w >= 64 && h >= 20 {
+			theme := styles.NewTheme(styles.Themes[m.themeIdx])
+			box := theme.RenderFullscreenBox(m.activeModal.Title(), m.activeModal.View(), w-4, h-2)
+			return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 		}
 		return overlay(m.activeModal.Title(), m.activeModal.View())
 	}
@@ -1262,13 +1750,12 @@ func computeParentBranches(issues []domain.Issue, worktrees []domain.Worktree) [
 	return branches
 }
 
-// removeWorktreeCmd returns a Cmd that removes a git worktree.
-func (m *Model) removeWorktreeCmd(path string) tea.Cmd {
+// removeWorktreeCmd removes a git worktree and its local branch.
+func (m *Model) removeWorktreeCmd(path, branch string) tea.Cmd {
 	repoPath := m.RepoPath
 	return func() tea.Msg {
 		cmd := internalexec.NewGitCommand(repoPath)
-		err := cmd.RemoveWorktree(path, true)
-		return worktreeOpDoneMsg{err: err}
+		return worktreeOpDoneMsg{err: cmd.RemoveWorktreeAndBranch(path, branch)}
 	}
 }
 
@@ -1705,10 +2192,12 @@ type sessionHealthChecker interface {
 
 type herdrNavigator interface {
 	OpenWorktree(ctx context.Context, req herdr.OpenWorktreeRequest) (*domain.PaneRef, error)
+	FocusPane(ctx context.Context, paneID string) error
 }
 
 type sandcastleWorkflowStarter interface {
 	StartWorkflow(ctx context.Context, req sandcastle.StartWorkflowRequest) (domain.WorkflowRunRef, error)
+	RemoveWorkflow(ctx context.Context, repoPath, runID string, stop bool) error
 }
 
 func (m *Model) startSandcastleWorkflowCmd(msg modal.WorkflowLaunchMsg) tea.Cmd {
@@ -1730,6 +2219,20 @@ func (m *Model) startSandcastleWorkflowCmd(msg modal.WorkflowLaunchMsg) tea.Cmd 
 			Source:      "grove",
 		})
 		return sandcastleWorkflowStartedMsg{workflow: workflow, kind: msg.Kind, err: err}
+	}
+}
+
+func (m *Model) removeWorkflowCmd(runID string, stop bool) tea.Cmd {
+	manager := m.workflowStarter
+	repoPath := m.RepoPath
+	return func() tea.Msg {
+		if manager == nil {
+			return workflowRemovedMsg{runID: runID, stop: stop, err: fmt.Errorf("Sandcastle runtime unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		err := manager.RemoveWorkflow(ctx, repoPath, runID, stop)
+		return workflowRemovedMsg{runID: runID, stop: stop, err: err}
 	}
 }
 
@@ -2171,6 +2674,11 @@ func (m *Model) selectedIssue() (domain.Issue, bool) {
 
 func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 	switch m.view {
+	case viewDashboard:
+		if m.dashboardTab == dashboardTabCompleted {
+			return m.openSelectedMissionInspector()
+		}
+		return m.jumpToSelectedMission()
 	case viewIssues:
 		issue, ok := m.selectedIssue()
 		if !ok {
@@ -2228,6 +2736,10 @@ func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 
 func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 	switch action {
+	case modal.ContextActionInspect:
+		return m.openSelectedMissionInspector()
+	case modal.ContextActionRemoveRun:
+		return m.confirmSelectedWorkflowRemoval()
 	case modal.ContextActionOpen:
 		return m.activateSelectedItem()
 	case modal.ContextActionOpenShell:
@@ -2281,10 +2793,17 @@ func (m *Model) availableContextActions() []contextActionOption {
 		m.prs,
 		m.selectedPRIdx,
 		m.sessions,
+		dashboardActionContext{state: m.missionState, tab: m.dashboardTab, selected: m.selectedMissionIdx},
 	)
 }
 
-func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session) []contextActionOption {
+type dashboardActionContext struct {
+	state    *domain.MissionControlState
+	tab      dashboardTab
+	selected int
+}
+
+func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session, dashboard ...dashboardActionContext) []contextActionOption {
 	switch view {
 	case viewIssues:
 		if len(issues) == 0 || issueIdx < 0 || issueIdx >= len(issues) {
@@ -2330,9 +2849,33 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 			contextActionOption{icon: "◇", label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
 		)
 	default:
-		return []contextActionOption{
-			{icon: "◇", label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
+		actions := []contextActionOption{
+			{icon: "◎", label: "Inspect workflow", action: modal.ContextActionInspect},
 		}
+		if len(dashboard) > 0 {
+			missions := dashboardMissionsForTab(dashboard[0].state, dashboard[0].tab)
+			if len(missions) > 0 {
+				selected := dashboard[0].selected
+				if selected < 0 || selected >= len(missions) {
+					selected = 0
+				}
+				label := "Remove workflow"
+				if isWorkflowActive(missions[selected].workflow) {
+					label = "Stop and remove workflow"
+				}
+				actions = append(actions, contextActionOption{icon: "×", label: label, action: modal.ContextActionRemoveRun})
+			}
+		}
+		return append(actions, contextActionOption{icon: "◇", label: "Clean merged work", workflowKind: modal.WorkflowKindClean})
+	}
+}
+
+func isWorkflowActive(workflow domain.WorkflowRunRef) bool {
+	switch strings.ToLower(workflow.Status) {
+	case domain.WorkflowQueued, domain.WorkflowRunning, domain.WorkflowBlocked:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -2498,6 +3041,10 @@ func (m *Model) moveDown() {
 		}
 	default: // panelList
 		switch m.view {
+		case viewDashboard:
+			if m.selectedMissionIdx < len(dashboardMissionsForTab(m.missionState, m.dashboardTab))-1 {
+				m.selectedMissionIdx++
+			}
 		case viewIssues:
 			tree := m.issueTree
 			if tree == nil {
@@ -2544,6 +3091,10 @@ func (m *Model) moveUp() {
 		}
 	default: // panelList
 		switch m.view {
+		case viewDashboard:
+			if m.selectedMissionIdx > 0 {
+				m.selectedMissionIdx--
+			}
 		case viewIssues:
 			tree := m.issueTree
 			if tree == nil {

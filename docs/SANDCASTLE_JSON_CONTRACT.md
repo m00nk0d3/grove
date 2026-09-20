@@ -18,6 +18,7 @@ In scope for this contract:
 grove-sandcastle status --json
 grove-sandcastle workflow list --json
 grove-sandcastle workflow get <run-id> --json
+grove-sandcastle workflow remove <run-id> --json [--stop]
 grove-sandcastle workflow start --json \
   --kind imp \
   --repo <repo-path> \
@@ -36,8 +37,8 @@ grove-sandcastle workflow start --kind ci --pr <number> --agent opencode --json
 grove-sandcastle workflow start --kind clean --agent opencode --json
 ```
 
-Not in scope: stop, pause, retry, or cancel workflow controls, raw log
-scraping, and real-time push updates. Grove integrates through CLI JSON only.
+Not in scope: pause, retry, or cancel controls, raw log scraping, and real-time
+push updates. Grove integrates through CLI JSON only.
 
 ## Normative Rules
 
@@ -215,6 +216,7 @@ and (a subset of) the `workflow` object in the start response.
 | `steps` | array | yes | Step entries; empty array when none |
 | `started_at` | string | yes | RFC 3339 UTC |
 | `updated_at` | string | yes | RFC 3339 UTC, last state change |
+| `error` | string | no | User-facing failure detail for a failed workflow |
 
 `github`:
 
@@ -241,6 +243,10 @@ and (a subset of) the `workflow` object in the start response.
 | `id` | string | yes | Step id (e.g. `step_1`) |
 | `title` | string | yes | Human-readable step title |
 | `status` | string | yes | Step status, see Status Vocabulary |
+| `summary` | string | no | Concise implementation activity or result |
+| `started_at` | string | no | RFC 3339 UTC timestamp when execution started |
+| `completed_at` | string | no | RFC 3339 UTC timestamp when execution ended |
+| `duration_ms` | integer | no | Measured step duration in milliseconds |
 
 ### `grove-sandcastle workflow get <run-id> --json`
 
@@ -291,6 +297,20 @@ detail after a user selects a workflow run.
   ],
   "started_at": "2026-09-17T21:00:00Z",
   "updated_at": "2026-09-17T21:19:00Z"
+}
+```
+
+### `grove-sandcastle workflow remove <run-id> --json [--stop]`
+
+Removes a workflow from Sandcastle's persisted history. Active workflows
+(`queued`, `running`, or `blocked`) reject removal unless `--stop` is supplied.
+With `--stop`, Sandcastle terminates the tracked workflow process before
+removing its state file. This command never removes a worktree or Git branch.
+
+```json
+{
+  "removed": "run_123",
+  "stopped": true
 }
 ```
 

@@ -82,7 +82,7 @@ func run() error {
 		_ = data.DeleteDeadSessions(db)
 	}
 
-	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}
 
 	// Git Bash (mintty) doesn't support Windows Console APIs that Bubbletea
 	// uses by default on Windows. When MSYSTEM is set we're in a MINGW/MSYS2

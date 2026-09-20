@@ -31,11 +31,31 @@ type PRWorktreeCreateConfirmedMsg struct {
 
 // WorktreeDeleteConfirmedMsg is sent when the user confirms deleting a worktree.
 type WorktreeDeleteConfirmedMsg struct {
-	Path string
+	Path   string
+	Branch string
 }
 
 // ModalCancelledMsg is sent when the user cancels a modal (Esc or 'n').
 type ModalCancelledMsg struct{}
+
+// MissionJumpMsg requests navigation to the inspected workflow's terminal.
+type MissionJumpMsg struct {
+	RunID string
+}
+
+// MissionRefreshMsg requests an immediate refresh of integration telemetry.
+type MissionRefreshMsg struct{}
+
+// MissionRemoveRequestedMsg asks Grove to confirm removal of an inspected run.
+type MissionRemoveRequestedMsg struct {
+	RunID string
+}
+
+// WorkflowRemoveConfirmedMsg confirms stopping/removing a workflow.
+type WorkflowRemoveConfirmedMsg struct {
+	RunID string
+	Stop  bool
+}
 
 // ParentWorktreeRequiredMsg is sent when the user tries to create a sub-issue worktree
 // but the parent issue has no worktree yet. The app should re-open the create modal
@@ -68,6 +88,8 @@ const (
 	ContextActionClose      = "close-session"
 	ContextActionDelete     = "delete-worktree"
 	ContextActionOpenGitHub = "open-github"
+	ContextActionInspect    = "inspect-mission"
+	ContextActionRemoveRun  = "remove-workflow"
 )
 
 // CandidateKind distinguishes the type of a cleanup candidate.

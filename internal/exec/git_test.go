@@ -2,8 +2,8 @@ package exec
 
 import (
 	"errors"
-	osexec "os/exec"
 	"os"
+	osexec "os/exec"
 	"testing"
 
 	"github.com/m00nk0d3/grove/internal/domain"
@@ -164,9 +164,9 @@ func TestGitCommand_ListWorktrees(t *testing.T) {
 		statusErrByPath map[string]error
 		// missingPaths overrides stat for specific paths to simulate non-existent dirs.
 		// nil means all paths are treated as existing (default for most test cases).
-		missingPaths  map[string]bool
-		want          []domain.Worktree
-		expectErr     string
+		missingPaths map[string]bool
+		want         []domain.Worktree
+		expectErr    string
 	}{
 		{
 			name:     "clean worktree is marked IsClean true",
@@ -476,9 +476,9 @@ func TestGitCommand_AddWorktreeNewBranch(t *testing.T) {
 
 func TestGitCommand_DefaultBranch(t *testing.T) {
 	tests := []struct {
-		name      string
-		output    string
-		runErr    error
+		name       string
+		output     string
+		runErr     error
 		wantBranch string
 	}{
 		{
@@ -586,6 +586,64 @@ func TestGitCommand_RemoveWorktree(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestGitCommand_RemoveWorktreeAndBranch(t *testing.T) {
+	t.Run("removes worktree then force deletes local branch", func(t *testing.T) {
+		var calls [][]string
+		runner := func(_ string, args ...string) (string, error) {
+			calls = append(calls, append([]string(nil), args...))
+			if args[0] == "symbolic-ref" {
+				return "origin/main\n", nil
+			}
+			return "", nil
+		}
+
+		cmd := NewGitCommandWithRunner("/repo", runner)
+		err := cmd.RemoveWorktreeAndBranch("/repo-feature", "feature")
+
+		require.NoError(t, err)
+		assert.Equal(t, [][]string{
+			{"symbolic-ref", "--short", "refs/remotes/origin/HEAD"},
+			{"worktree", "remove", "--force", "/repo-feature"},
+			{"branch", "-D", "feature"},
+		}, calls)
+	})
+
+	t.Run("protects default branch before removing worktree", func(t *testing.T) {
+		var calls [][]string
+		runner := func(_ string, args ...string) (string, error) {
+			calls = append(calls, append([]string(nil), args...))
+			return "origin/main\n", nil
+		}
+
+		cmd := NewGitCommandWithRunner("/repo", runner)
+		err := cmd.RemoveWorktreeAndBranch("/repo-main", "main")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "default branch")
+		assert.Len(t, calls, 1)
+	})
+
+	t.Run("reports partial removal when branch deletion fails", func(t *testing.T) {
+		runner := func(_ string, args ...string) (string, error) {
+			switch args[0] {
+			case "symbolic-ref":
+				return "origin/main\n", nil
+			case "branch":
+				return "", errors.New("branch is checked out")
+			default:
+				return "", nil
+			}
+		}
+
+		cmd := NewGitCommandWithRunner("/repo", runner)
+		err := cmd.RemoveWorktreeAndBranch("/repo-feature", "feature")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "worktree removed")
+		assert.Contains(t, err.Error(), "branch is checked out")
+	})
 }
 
 func TestGitCommand_PruneWorktrees(t *testing.T) {
@@ -1328,126 +1386,126 @@ func TestGitCommand_ListModifiedFiles(t *testing.T) {
 }
 
 func TestGitCommand_ListMergedBranches(t *testing.T) {
-tests := []struct {
-name          string
-defaultBranch string
-output        string
-runErr        error
-wantArgs      []string
-wantBranches  []string
-expectErr     string
-}{
-{
-name:          "returns merged branches excluding default",
-defaultBranch: "main",
-output:        "  feat/issue-1-something\n  fix/old-bug\n  main\n",
-wantArgs:      []string{"branch", "--merged", "main"},
-wantBranches:  []string{"feat/issue-1-something", "fix/old-bug"},
-},
-{
-name:          "strips current-branch marker",
-defaultBranch: "main",
-output:        "* feat/current\n  feat/old\n",
-wantArgs:      []string{"branch", "--merged", "main"},
-wantBranches:  []string{"feat/current", "feat/old"},
-},
-{
-name:          "returns nil when only default branch present",
-defaultBranch: "main",
-output:        "* main\n",
-wantArgs:      []string{"branch", "--merged", "main"},
-wantBranches:  nil,
-},
-{
-name:          "returns nil on empty output",
-defaultBranch: "main",
-output:        "",
-wantArgs:      []string{"branch", "--merged", "main"},
-wantBranches:  nil,
-},
-{
-name:          "propagates runner error",
-defaultBranch: "main",
-runErr:        errors.New("git exploded"),
-wantArgs:      []string{"branch", "--merged", "main"},
-expectErr:     "git exploded",
-},
-}
+	tests := []struct {
+		name          string
+		defaultBranch string
+		output        string
+		runErr        error
+		wantArgs      []string
+		wantBranches  []string
+		expectErr     string
+	}{
+		{
+			name:          "returns merged branches excluding default",
+			defaultBranch: "main",
+			output:        "  feat/issue-1-something\n  fix/old-bug\n  main\n",
+			wantArgs:      []string{"branch", "--merged", "main"},
+			wantBranches:  []string{"feat/issue-1-something", "fix/old-bug"},
+		},
+		{
+			name:          "strips current-branch marker",
+			defaultBranch: "main",
+			output:        "* feat/current\n  feat/old\n",
+			wantArgs:      []string{"branch", "--merged", "main"},
+			wantBranches:  []string{"feat/current", "feat/old"},
+		},
+		{
+			name:          "returns nil when only default branch present",
+			defaultBranch: "main",
+			output:        "* main\n",
+			wantArgs:      []string{"branch", "--merged", "main"},
+			wantBranches:  nil,
+		},
+		{
+			name:          "returns nil on empty output",
+			defaultBranch: "main",
+			output:        "",
+			wantArgs:      []string{"branch", "--merged", "main"},
+			wantBranches:  nil,
+		},
+		{
+			name:          "propagates runner error",
+			defaultBranch: "main",
+			runErr:        errors.New("git exploded"),
+			wantArgs:      []string{"branch", "--merged", "main"},
+			expectErr:     "git exploded",
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-var calledArgs []string
-runner := func(_ string, args ...string) (string, error) {
-calledArgs = append([]string{}, args...)
-return tt.output, tt.runErr
-}
-cmd := NewGitCommandWithRunner("/repo", runner)
-branches, err := cmd.ListMergedBranches(tt.defaultBranch)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calledArgs []string
+			runner := func(_ string, args ...string) (string, error) {
+				calledArgs = append([]string{}, args...)
+				return tt.output, tt.runErr
+			}
+			cmd := NewGitCommandWithRunner("/repo", runner)
+			branches, err := cmd.ListMergedBranches(tt.defaultBranch)
 
-assert.Equal(t, tt.wantArgs, calledArgs)
+			assert.Equal(t, tt.wantArgs, calledArgs)
 
-if tt.expectErr != "" {
-require.Error(t, err)
-assert.Contains(t, err.Error(), tt.expectErr)
-return
-}
-require.NoError(t, err)
-assert.Equal(t, tt.wantBranches, branches)
-})
-}
+			if tt.expectErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantBranches, branches)
+		})
+	}
 }
 
 func TestGitCommand_DeleteBranch(t *testing.T) {
-tests := []struct {
-name      string
-branch    string
-force     bool
-runErr    error
-wantArgs  []string
-expectErr string
-}{
-{
-name:     "safe delete uses -d",
-branch:   "feat/old",
-force:    false,
-wantArgs: []string{"branch", "-d", "feat/old"},
-},
-{
-name:     "force delete uses -D",
-branch:   "feat/old",
-force:    true,
-wantArgs: []string{"branch", "-D", "feat/old"},
-},
-{
-name:      "propagates runner error",
-branch:    "feat/old",
-force:     false,
-runErr:    errors.New("branch not found"),
-wantArgs:  []string{"branch", "-d", "feat/old"},
-expectErr: "branch not found",
-},
-}
+	tests := []struct {
+		name      string
+		branch    string
+		force     bool
+		runErr    error
+		wantArgs  []string
+		expectErr string
+	}{
+		{
+			name:     "safe delete uses -d",
+			branch:   "feat/old",
+			force:    false,
+			wantArgs: []string{"branch", "-d", "feat/old"},
+		},
+		{
+			name:     "force delete uses -D",
+			branch:   "feat/old",
+			force:    true,
+			wantArgs: []string{"branch", "-D", "feat/old"},
+		},
+		{
+			name:      "propagates runner error",
+			branch:    "feat/old",
+			force:     false,
+			runErr:    errors.New("branch not found"),
+			wantArgs:  []string{"branch", "-d", "feat/old"},
+			expectErr: "branch not found",
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-var calledArgs []string
-runner := func(_ string, args ...string) (string, error) {
-calledArgs = append([]string{}, args...)
-return "", tt.runErr
-}
-cmd := NewGitCommandWithRunner("/repo", runner)
-err := cmd.DeleteBranch(tt.branch, tt.force)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calledArgs []string
+			runner := func(_ string, args ...string) (string, error) {
+				calledArgs = append([]string{}, args...)
+				return "", tt.runErr
+			}
+			cmd := NewGitCommandWithRunner("/repo", runner)
+			err := cmd.DeleteBranch(tt.branch, tt.force)
 
-assert.Equal(t, tt.wantArgs, calledArgs)
+			assert.Equal(t, tt.wantArgs, calledArgs)
 
-if tt.expectErr != "" {
-require.Error(t, err)
-assert.Contains(t, err.Error(), tt.expectErr)
-return
-}
-require.NoError(t, err)
-})
-}
+			if tt.expectErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 // TestGitCommand_ListWorktrees_BrokenGitLink verifies that a worktree whose

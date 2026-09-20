@@ -265,6 +265,30 @@ func (t Theme) RenderBox(title, content string, width int) string {
 	return style.Render(content)
 }
 
+// RenderFullscreenBox renders a large modal panel with fixed terminal-relative
+// dimensions while preserving the active theme's border and background.
+func (t Theme) RenderFullscreenBox(title, content string, width, height int) string {
+	style := lipgloss.NewStyle().
+		Background(lipgloss.Color(t.bg)).
+		Foreground(lipgloss.Color(t.fg)).
+		BorderStyle(lipgloss.DoubleBorder()).
+		BorderForeground(lipgloss.Color(t.accent)).
+		Padding(0, 1)
+	if width > 4 {
+		style = style.Width(width - 4)
+	}
+	if height > 2 {
+		style = style.Height(height - 2)
+	}
+	if title != "" {
+		titleStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.accent)).
+			Bold(true)
+		return style.Render(titleStyle.Render(title) + "\n" + content)
+	}
+	return style.Render(content)
+}
+
 // RenderTable renders a padded table with styled muted column headers.
 func (t Theme) RenderTable(rows [][]string, headers []string) string {
 	var b strings.Builder

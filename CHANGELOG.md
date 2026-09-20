@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.7.0] - 2026-09-20
+
+### Added
+
+- **Sandcastle mission control dashboard** — navigate active, attention, and completed workflows directly from Grove, jump to their Herdr panes, and review completed missions without leaving the TUI.
+- **Mission Inspector** — inspect live workflow progress, step timing, execution metrics, implementation activity, and structured agent telemetry in a full-screen interface.
+- **Mouse support** — click navigation, dashboard tabs, list rows, actions, and Mission Inspector controls; use the wheel to navigate and double-click to activate rows.
+- **Workflow lifecycle controls** — stop and remove active Sandcastle workflows or remove completed workflow history with explicit confirmation.
+- **Self-contained release installers** — Linux, macOS, and Windows installers provision private Node.js and Sandcastle runtimes and install Herdr when it is not already available.
+
+### Changed
+
+- **Context Actions redesign** — actions now use a clearer, polished panel with keyboard and mouse focus.
+- **Completed workflow review** — dashboard workflows are separated into Active / Attention and Completed tabs.
+- **Worktree deletion removes its local branch** — confirmed deletion now removes both the worktree and its local branch while preserving the remote branch and protecting the default branch.
+- **Release archives include Sandcastle** — GoReleaser packages the compiled runtime and package metadata required by the self-contained installers.
+
+### Fixed
+
+- **Workflow dashboard counts and labels** — actionable counts match visible rows, successful runs no longer appear as active, and human-readable workflow titles replace raw run IDs when available.
+- **Long workflow lists remain navigable** — dashboard selection now scrolls to keep the selected mission visible.
+
 ## [v0.6.5] - 2026-05-30
 
 ### Fixed

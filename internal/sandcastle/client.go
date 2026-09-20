@@ -16,6 +16,7 @@ type Client interface {
 	Available(ctx context.Context) domain.ExternalIntegration
 	Snapshot(ctx context.Context, repoPath string) (Snapshot, error)
 	StartWorkflow(ctx context.Context, req StartWorkflowRequest) (domain.WorkflowRunRef, error)
+	RemoveWorkflow(ctx context.Context, repoPath, runID string, stop bool) error
 }
 
 // ClientConfig holds the configuration for creating a Sandcastle client.
@@ -194,6 +195,23 @@ func (c *sandcastleClient) StartWorkflow(ctx context.Context, req StartWorkflowR
 	return wf, nil
 }
 
+// RemoveWorkflow removes a tracked workflow. Active runs are stopped first
+// only when stop is explicitly true.
+func (c *sandcastleClient) RemoveWorkflow(ctx context.Context, repoPath, runID string, stop bool) error {
+	if runID == "" {
+		return fmt.Errorf("remove workflow: run ID is required")
+	}
+	args := []string{"workflow", "remove", runID, "--json", "--repo", repoPath}
+	if stop {
+		args = append(args, "--stop")
+	}
+	_, stderr, err := c.runCommand(ctx, args...)
+	if err != nil {
+		return fmt.Errorf("remove workflow: %s: %w", preserveStderr(stderr, err), err)
+	}
+	return nil
+}
+
 func (c *sandcastleClient) runCommand(ctx context.Context, args ...string) ([]byte, []byte, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
 	defer cancel()
@@ -240,6 +258,7 @@ type workflowRunRaw struct {
 	Steps        []stepRaw   `json:"steps"`
 	StartedAt    string      `json:"started_at"`
 	UpdatedAt    string      `json:"updated_at"`
+	Error        string      `json:"error"`
 }
 
 type progressRaw struct {
@@ -263,9 +282,13 @@ type agentRaw struct {
 }
 
 type stepRaw struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	Status         string `json:"status"`
+	Summary        string `json:"summary"`
+	StartedAt      string `json:"started_at"`
+	CompletedAt    string `json:"completed_at"`
+	DurationMillis int64  `json:"duration_ms"`
 }
 
 // normalizeWorkflow converts a raw Sandcastle workflow JSON shape into
@@ -280,24 +303,58 @@ func normalizeWorkflow(w workflowRunRaw) (domain.WorkflowRunRef, []domain.AgentR
 	wf := domain.WorkflowRunRef{
 		WorkflowID:   w.ID,
 		RunID:        w.ID,
+		Title:        w.Title,
+		Repo:         w.Repo,
 		WorktreePath: w.WorktreePath,
 		Branch:       w.Branch,
 		Status:       normalizeWorkflowStatus(w.Status),
-		IssueNumber:  w.Github.Issue,
-		PRNumber:     w.Github.PullRequest,
+		DefaultAgent: agent,
+		CurrentStep:  w.CurrentStep,
+		Progress: domain.WorkflowProgress{
+			Completed: w.Progress.Completed,
+			Total:     w.Progress.Total,
+			Percent:   w.Progress.Percent,
+		},
+		IssueNumber: w.Github.Issue,
+		PRNumber:    w.Github.PullRequest,
+		StartedAt:   parseRFC3339(w.StartedAt),
+		UpdatedAt:   parseRFC3339(w.UpdatedAt),
+		Error:       w.Error,
+	}
+	for _, step := range w.Steps {
+		wf.Steps = append(wf.Steps, domain.WorkflowStep{
+			ID:             step.ID,
+			Title:          step.Title,
+			Status:         step.Status,
+			Summary:        step.Summary,
+			StartedAt:      parseRFC3339(step.StartedAt),
+			CompletedAt:    parseRFC3339(step.CompletedAt),
+			DurationMillis: step.DurationMillis,
+		})
 	}
 
 	agents := make([]domain.AgentRef, 0, len(w.Agents))
 	for _, a := range w.Agents {
 		agents = append(agents, domain.AgentRef{
 			AgentID:       a.ID,
+			Kind:          a.Kind,
 			Name:          a.Name,
 			WorkflowRunID: w.ID,
 			Status:        normalizeAgentStatus(a.Status),
+			Summary:       a.Summary,
+			PaneID:        a.PaneID,
 		})
 	}
 
 	return wf, agents
+}
+
+func parseRFC3339(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 // normalizeWorkflowStatus maps raw Sandcastle workflow status strings to

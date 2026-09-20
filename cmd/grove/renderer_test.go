@@ -123,7 +123,7 @@ func TestRenderFull_DashboardShowsTelemetry(t *testing.T) {
 	}{
 		{
 			name:   "shows operational overview instead of worktree context",
-			wantIn: []string{"MISSION CONTROL", "OPERATIONAL PULSE", "ACTIVE MISSIONS", "SYSTEM TELEMETRY", "NETWORK STATUS"},
+			wantIn: []string{"MISSION CONTROL", "OPERATIONAL PULSE", "ACTIVE / ATTENTION", "SYSTEM TELEMETRY", "NETWORK STATUS"},
 		},
 	}
 
@@ -159,6 +159,67 @@ func TestRenderDashboard_DoesNotDuplicateIssueList(t *testing.T) {
 	assert.Contains(t, view, "feat-dashboard")
 	assert.NotContains(t, view, "Documentation issue")
 	assert.NotContains(t, view, "Feature PR")
+}
+
+func TestRenderDashboard_ScrollsToSelectedWorkflow(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.focused = panelList
+	model.selectedMissionIdx = 5
+	model.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "workflow-one", Status: domain.WorkflowRunning},
+			{WorkflowID: "workflow-two", Status: domain.WorkflowRunning},
+			{WorkflowID: "workflow-three", Status: domain.WorkflowRunning},
+			{WorkflowID: "workflow-four", Status: domain.WorkflowRunning},
+			{WorkflowID: "workflow-five", Status: domain.WorkflowRunning},
+			{WorkflowID: "workflow-six", Status: domain.WorkflowRunning},
+		},
+	}
+
+	view := model.View()
+
+	assert.Contains(t, view, "workflow-six")
+	assert.NotContains(t, view, "workflow-one")
+}
+
+func TestDashboardMissions_ShowsActionableRunsWithReadableTitles(t *testing.T) {
+	state := &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "run-running", Title: "Implement issue #42", Status: domain.WorkflowRunning},
+			{WorkflowID: "run-failed", Title: "Repair CI #17", Status: domain.WorkflowFailed},
+			{WorkflowID: "run-done", Title: "Review pull request #9", Status: domain.WorkflowSucceeded},
+		},
+	}
+
+	missions := dashboardMissions(state)
+
+	require.Len(t, missions, 2)
+	assert.Equal(t, "Implement issue #42", missions[0].label)
+	assert.Equal(t, "Repair CI #17", missions[1].label)
+
+	completed := completedDashboardMissions(state)
+	require.Len(t, completed, 1)
+	assert.Equal(t, "Review pull request #9", completed[0].label)
+}
+
+func TestRenderDashboard_CompletedTabShowsCompletedRuns(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.dashboardTab = dashboardTabCompleted
+	model.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{
+			{WorkflowID: "run-live", Title: "Implement issue #42", Status: domain.WorkflowRunning},
+			{WorkflowID: "run-done", Title: "Review pull request #9", Status: domain.WorkflowSucceeded},
+		},
+	}
+
+	view := model.View()
+
+	assert.Contains(t, view, "ACTIVE / ATTENTION 01")
+	assert.Contains(t, view, "COMPLETED 01")
+	assert.Contains(t, view, "Review pull request #9")
+	assert.NotContains(t, view, "Implement issue #42")
 }
 
 func TestRenderFull_ContainsFooterKeyHints(t *testing.T) {

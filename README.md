@@ -54,7 +54,7 @@ In short: if you work on multiple features simultaneously, Grove removes the glu
 | [Git](https://git-scm.com/) | Must be in `PATH` |
 | [GitHub CLI (`gh`)](https://cli.github.com/) | Run `gh auth login` before first use |
 | Go 1.25+ | Only needed if building from source |
-| Node.js 22+ | Required for Grove's Sandcastle workflows (`imp`, `review`, `resolve`, `ci`, `clean`) |
+| Node.js 22+ | Only needed when building the Sandcastle runtime from source |
 
 ---
 
@@ -66,7 +66,12 @@ In short: if you work on multiple features simultaneously, Grove removes the glu
 curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash
 ```
 
-Auto-detects your OS and architecture, downloads the right binary from GitHub Releases, and installs to `/usr/local/bin`.
+Auto-detects your OS and architecture and installs Grove to `/usr/local/bin`.
+It also installs a private Node.js runtime and Grove's Sandcastle commands
+under `~/.local/share/grove`. If Herdr is not already installed, the matching
+official Herdr release is installed there as well and exposed on `PATH`.
+Set `GROVE_INSTALL_DIR` or `GROVE_DATA_DIR` to override the Unix command and
+private dependency locations.
 
 ### Windows (PowerShell)
 
@@ -74,7 +79,10 @@ Auto-detects your OS and architecture, downloads the right binary from GitHub Re
 irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex
 ```
 
-Downloads the latest `windows_amd64` release, installs to `%LOCALAPPDATA%\grove\`, and adds it to your user `PATH` automatically. Restart your terminal after running.
+Downloads the latest `windows_amd64` release, installs Grove, a private Node.js
+runtime, and Sandcastle under `%LOCALAPPDATA%\grove\`, and installs Herdr when
+it is missing. The directory is added to your user `PATH` automatically.
+Restart your terminal after running.
 
 ### go install
 
@@ -83,6 +91,9 @@ Works on all platforms — requires Go 1.22+.
 ```bash
 go install github.com/m00nk0d3/grove/cmd/grove@latest
 ```
+
+`go install` installs only the Grove binary. Use the platform installer above
+for the self-contained Grove + Sandcastle + Herdr setup.
 
 ### Build from source
 
@@ -94,7 +105,8 @@ make install-runtime
 ./grove
 ```
 
-Grove ships its own Sandcastle runtime. `make install-runtime` installs
+Grove ships its own Sandcastle runtime. The platform installers provision it
+automatically. For source builds, `make install-runtime` installs
 `grove-sandcastle` plus the compatible `imp`, `review`, `resolve`, `ci`, and
 `clean` commands. Workflow state is stored in the repository's common Git
 directory and appears automatically in Grove's mission-control dashboard.
@@ -107,9 +119,9 @@ directory and appears automatically in Grove's mission-control dashboard.
 
 1. `cd` into any Git repository
 2. Run `grove`
-3. Grove opens in the **Worktrees** view — use `j`/`k` to navigate the list
+3. Grove opens on the **Dashboard** — use `j`/`k` to select an active workflow and `Enter` to jump to its Herdr pane or terminal
 4. Press `i` to switch to the Issues view, select an issue, and press `Enter` to create a new worktree for it
-5. Press `Enter` to open or focus the selected worktree
+5. In the Worktrees view, press `Enter` to open or focus the selected worktree
 6. Focus the visible **Actions** panel to run `imp`, `review`, `ci`, `resolve`, or `clean`
 
 ---
@@ -123,7 +135,7 @@ directory and appears automatically in Grove's mission-control dashboard.
 | `↑` / `↓` or `j` / `k` | Navigate within panel |
 | `←` / `→` or `h` / `l` | Switch between panels / tabs |
 | `Tab` | Cycle panel focus / tab |
-| `Enter` | Open shell in worktree / Select |
+| `Enter` | Jump to workflow / Open selected item |
 
 ### Context Actions
 
@@ -132,7 +144,12 @@ directory and appears automatically in Grove's mission-control dashboard.
 | `Enter` (Issues view) | Create worktree from selected issue |
 | `Enter` (PRs view) | Checkout PR into a new worktree |
 | `Enter` (Worktrees view) | Open / focus shell in worktree |
+| `Enter` (Dashboard) | Focus the selected workflow's Herdr pane or terminal |
+| `v` (Dashboard) | Inspect workflow progress, steps, metrics, and implementation activity |
+| `x` (Dashboard/Inspector) | Confirm stopping/removing the selected workflow |
+| `[` / `]` (Dashboard) | Switch between Active / Attention and Completed workflows |
 | `a` | Focus the visible context Actions panel |
+| Mouse | Click navigation, rows, workflow tabs, and Actions; scroll with the wheel |
 
 ### Views
 
@@ -194,7 +211,8 @@ worktree_root = "../worktrees"
 Active sessions are displayed inline in the **Worktrees** view — no separate view needed. See which agents are running, which shells are alive, and which worktrees are just sitting there pretending to be productive.
 
 - Focus **Actions** to open a separate shell, close a tracked session, delete
-  the worktree, or run cleanup.
+  the worktree and its local branch, or run cleanup. Worktree deletion never
+  deletes the remote branch and refuses to remove the default branch.
 
 ---
 
@@ -248,7 +266,7 @@ Grove checks for new versions on startup and lets you know when there's somethin
 | Symptom | Fix |
 |---|---|
 | Empty issues / PRs list or "gh: not logged in" | Run `gh auth login` and follow the prompts |
-| Sandcastle workflows are unavailable | Run `make install-runtime` or configure `sandcastle.binary` |
+| Sandcastle workflows are unavailable | Re-run the platform installer; source builds can run `make install-runtime` or configure `sandcastle.binary` |
 | No worktrees visible — "git not in PATH" | Ensure Git is installed: `git --version` |
 | Deleted worktrees still appear | Run `git worktree prune` in your repo, then press `r` in Grove |
 | Warning banner on startup — config not loading | Check `~/.grove/config.toml` for TOML syntax errors; delete to restore defaults |

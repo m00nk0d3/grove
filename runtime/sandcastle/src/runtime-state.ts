@@ -5,7 +5,26 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 export type WorkflowKind = "imp" | "review" | "resolve" | "ci" | "clean";
-export type WorkflowStatus = "queued" | "running" | "succeeded" | "failed";
+export type WorkflowStatus = "queued" | "running" | "blocked" | "succeeded" | "failed";
+
+export interface RuntimeStep {
+  id: string;
+  title: string;
+  status: string;
+  summary?: string;
+  started_at?: string;
+  completed_at?: string;
+  duration_ms?: number;
+}
+
+export interface RuntimeAgent {
+  id: string;
+  kind: string;
+  name: string;
+  status: string;
+  summary: string;
+  pane_id: string | null;
+}
 
 export interface RuntimeWorkflow {
   id: string;
@@ -18,8 +37,8 @@ export interface RuntimeWorkflow {
   current_step: string;
   progress: { completed: number; total: number; percent: number };
   github: { issue: number | null; pull_request: number | null };
-  agents: [];
-  steps: Array<{ id: string; title: string; status: string }>;
+  agents: RuntimeAgent[];
+  steps: RuntimeStep[];
   started_at: string;
   updated_at: string;
   kind: WorkflowKind;
@@ -113,6 +132,61 @@ export function saveWorkflow(cwd: string, workflow: RuntimeWorkflow): void {
   writeWorkflow(cwd, workflow);
 }
 
+export function removeWorkflow(
+  cwd: string,
+  id: string,
+  stop: boolean,
+): { removed: string; stopped: boolean } {
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+    throw new Error(`Invalid workflow run ID: ${id}`);
+  }
+  const destination = path.join(workflowStateDir(cwd), `${id}.json`);
+  if (!fs.existsSync(destination)) {
+    throw new Error(`Unknown workflow run: ${id}`);
+  }
+
+  const workflow = JSON.parse(
+    fs.readFileSync(destination, "utf8"),
+  ) as RuntimeWorkflow;
+  const active = ["queued", "running", "blocked"].includes(workflow.status);
+  if (active && !stop) {
+    throw new Error(`Workflow ${id} is active; confirm stop before removal`);
+  }
+
+  let stopped = false;
+  if (stop && workflow.pid !== null) {
+    if (!processOwnsWorkflow(workflow.pid, id)) {
+      throw new Error(
+        `Refusing to stop PID ${workflow.pid}: it is not owned by workflow ${id}`,
+      );
+    }
+    for (const agent of workflow.agents ?? []) {
+      if (!agent.pane_id) continue;
+      const closed = spawnSync("herdr", ["pane", "close", agent.pane_id], {
+        encoding: "utf8",
+      });
+      if (closed.status !== 0) {
+        throw new Error(
+          (closed.stderr || closed.stdout).trim() ||
+            `Unable to close Herdr pane ${agent.pane_id}`,
+        );
+      }
+    }
+    try {
+      process.kill(workflow.pid, "SIGTERM");
+      stopped = true;
+    } catch (error) {
+      const code =
+        error !== null && typeof error === "object" && "code" in error
+          ? String(error.code)
+          : "";
+      if (code !== "ESRCH") throw error;
+    }
+  }
+  fs.rmSync(destination);
+  return { removed: id, stopped };
+}
+
 export function updateTrackedWorkflow(
   update: Partial<RuntimeWorkflow>,
 ): void {
@@ -134,6 +208,7 @@ export async function runTrackedWorkflow(
   workflow.pid = process.pid;
   workflow.current_step = `Running ${kind}`;
   workflow.steps[0].status = "running";
+  workflow.steps[0].started_at = workflow.updated_at;
   workflow.updated_at = new Date().toISOString();
   activeWorkflow = { cwd, workflow };
   writeWorkflow(cwd, workflow);
@@ -143,11 +218,31 @@ export async function runTrackedWorkflow(
     workflow.status = "succeeded";
     workflow.current_step = "Complete";
     workflow.progress = { completed: 1, total: 1, percent: 100 };
-    workflow.steps[0].status = "succeeded";
+    const activeStep =
+      workflow.steps.find((step) => step.status === "running") ??
+      (workflow.steps.length === 1 ? workflow.steps[0] : undefined);
+    if (activeStep) {
+      activeStep.status = "succeeded";
+      activeStep.completed_at = new Date().toISOString();
+      if (activeStep.started_at) {
+        activeStep.duration_ms =
+          Date.parse(activeStep.completed_at) - Date.parse(activeStep.started_at);
+      }
+    }
   } catch (error) {
     workflow.status = "failed";
     workflow.current_step = "Failed";
-    workflow.steps[0].status = "failed";
+    const activeStep =
+      workflow.steps.find((step) => step.status === "running") ??
+      (workflow.steps.length === 1 ? workflow.steps[0] : undefined);
+    if (activeStep) {
+      activeStep.status = "failed";
+      activeStep.completed_at = new Date().toISOString();
+      if (activeStep.started_at) {
+        activeStep.duration_ms =
+          Date.parse(activeStep.completed_at) - Date.parse(activeStep.started_at);
+      }
+    }
     workflow.error = error instanceof Error ? error.message : String(error);
     throw error;
   } finally {
@@ -165,6 +260,20 @@ function processAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function processOwnsWorkflow(pid: number, id: string): boolean {
+  const marker = `GROVE_WORKFLOW_RUN_ID=${id}`;
+  try {
+    const environment = fs.readFileSync(`/proc/${pid}/environ`, "utf8");
+    if (environment.split("\0").includes(marker)) return true;
+  } catch {
+    // Fall through to the portable process-list check.
+  }
+  const processInfo = spawnSync("ps", ["eww", "-p", String(pid), "-o", "command="], {
+    encoding: "utf8",
+  });
+  return processInfo.status === 0 && processInfo.stdout.includes(marker);
 }
 
 export function listWorkflows(cwd = process.cwd()): RuntimeWorkflow[] {

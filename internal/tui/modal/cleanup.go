@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
 )
 
@@ -100,10 +100,10 @@ func (m *CleanupModal) View() string {
 	}
 
 	var (
-		accentSt  = lipgloss.NewStyle()
-		mutedSt   = lipgloss.NewStyle()
+		accentSt   = lipgloss.NewStyle()
+		mutedSt    = lipgloss.NewStyle()
 		selectedSt = lipgloss.NewStyle()
-		cursorSt  = lipgloss.NewStyle().Bold(true)
+		cursorSt   = lipgloss.NewStyle().Bold(true)
 	)
 
 	if m.theme != nil {

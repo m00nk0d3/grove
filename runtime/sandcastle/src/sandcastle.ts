@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   createWorkflow,
   listWorkflows,
+  removeWorkflow,
   saveWorkflow,
   type RuntimeWorkflow,
   type WorkflowKind,
@@ -65,6 +66,12 @@ function workflowGet(cwd: string, id: string | undefined): void {
   const workflow = listWorkflows(cwd).find((candidate) => candidate.id === id);
   if (!workflow) throw new Error(`Unknown workflow run: ${id}`);
   output(workflow);
+}
+
+function workflowRemove(cwd: string, id: string | undefined, args: string[]): void {
+  if (!id) throw new Error("Usage: grove-sandcastle workflow remove <run-id> [--stop] --json");
+  const repo = flag(args, "--repo") ?? cwd;
+  output(removeWorkflow(repo, id, args.includes("--stop")));
 }
 
 export function resolveWorkflowCommand(
@@ -187,11 +194,14 @@ function main(args = process.argv.slice(2)): void {
   if (args[0] === "workflow" && args[1] === "get") {
     return workflowGet(cwd, args[2]);
   }
+  if (args[0] === "workflow" && args[1] === "remove") {
+    return workflowRemove(cwd, args[2], args.slice(3));
+  }
   if (args[0] === "workflow" && args[1] === "start") {
     return workflowStart(cwd, args.slice(2));
   }
   throw new Error(
-    "Usage: grove-sandcastle status|workflow list|workflow get <id>|workflow start --kind <imp|review|resolve|ci|clean> [--issue <number>|--pr <number>]",
+    "Usage: grove-sandcastle status|workflow list|workflow get <id>|workflow remove <id> [--stop]|workflow start --kind <imp|review|resolve|ci|clean> [--issue <number>|--pr <number>]",
   );
 }
 

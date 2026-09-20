@@ -47,6 +47,9 @@ func TestDeleteModal_Y_EmitsDeleteConfirmedMsg(t *testing.T) {
 	confirmed, ok := msg.(WorktreeDeleteConfirmedMsg)
 	require.True(t, ok)
 	assert.Equal(t, testWorktree.Path, confirmed.Path)
+	assert.Equal(t, testWorktree.Branch, confirmed.Branch)
+	assert.Contains(t, m.View(), "local branch")
+	assert.Contains(t, m.View(), "remote branch will be preserved")
 }
 
 func TestDeleteModal_N_EmitsCancelMsg(t *testing.T) {

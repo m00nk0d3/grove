@@ -38,6 +38,25 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Validate installers
+        shell: pwsh
+        run: |
+          bash -n install.sh
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path install.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
       - name: Build Sandcastle runtime
         run: make runtime-build
 

@@ -1,11 +1,11 @@
-﻿package modal
+package modal
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
 )
 

@@ -17,6 +17,11 @@ This section is for contributors building and running Grove from source.
 | Git | Any recent | Must be in `PATH` |
 | Node.js | 22+ | Required for the bundled Sandcastle workflow runtime |
 
+The release installers do not require a system Node.js or Herdr installation.
+They provision a private Node.js runtime, install Grove's Sandcastle package,
+and install Herdr only when no existing `herdr` command is available. `go
+install` remains binary-only and does not provision these dependencies.
+
 ### Clone the repository
 
 ```bash
@@ -161,7 +166,9 @@ Key settings:
 - Create a worktree from the dashboard.
 - Switch to a worktree when you need repository context there.
 - Lock worktrees before long-lived work.
-- Prune stale worktrees after branch deletion or directory removal.
+- Deleting a worktree also force-deletes its local branch after confirmation.
+  The default branch is protected and the remote branch is preserved.
+- Prune stale worktrees after remote branch deletion or directory removal.
 
 ### GitHub sync
 
@@ -173,6 +180,18 @@ Key settings:
 
 - Select an issue, focus Actions with `a`, and start `imp`.
 - Select a pull request, focus Actions, and start `review`, `ci`, or `resolve`.
+- On the dashboard, select an active workflow with `j`/`k` and press `Enter`
+  to jump to its correlated Herdr pane or tracked terminal session.
+- Use `[`/`]` to switch between **Active / Attention** and **Completed**.
+  Pressing `Enter` on a completed workflow opens its Mission Inspector.
+- Mouse input is supported: click navigation, workflow tabs, list rows, and
+  Actions; use the wheel to move the selection. Double-click a row to open it.
+- Press `v`, or choose **Inspect workflow** from Actions, to open the live
+  Mission Inspector. Use `Tab` to switch between overview, steps, metrics,
+  and implementation activity; `Enter` jumps to the workflow terminal.
+- Press `x`, or choose **Stop and remove workflow** / **Remove workflow** from
+  Actions, then confirm. Active runs are terminated before their Sandcastle
+  state is removed; worktrees and Git branches are always preserved.
 - From a worktree or the dashboard, focus Actions and start `clean`.
 - Configure agent selection in Sandcastle; Grove does not launch agents directly.
 

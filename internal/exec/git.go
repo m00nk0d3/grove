@@ -150,6 +150,24 @@ func (g *GitCommand) RemoveWorktree(path string, force bool) error {
 	return g.runNoOutput("remove worktree", args...)
 }
 
+// RemoveWorktreeAndBranch removes a worktree and then force-deletes its local
+// branch. The repository's default branch is always protected.
+func (g *GitCommand) RemoveWorktreeAndBranch(path, branch string) error {
+	if branch != "" && branch == g.DefaultBranch() {
+		return fmt.Errorf("refusing to delete default branch %q", branch)
+	}
+	if err := g.RemoveWorktree(path, true); err != nil {
+		return err
+	}
+	if branch == "" {
+		return nil
+	}
+	if err := g.DeleteBranch(branch, true); err != nil {
+		return fmt.Errorf("worktree removed, but local branch %q could not be deleted: %w", branch, err)
+	}
+	return nil
+}
+
 // ListModifiedFiles returns the list of modified (unstaged) and untracked files
 // in the worktree at path using git ls-files --modified --others --exclude-standard.
 // Note: staged-only files (added with git add but not yet modified) are not included.
