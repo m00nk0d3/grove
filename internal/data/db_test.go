@@ -229,5 +229,13 @@ func TestNewDB_SchemaVersionsTracked(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 
-	assert.Equal(t, []string{"001_init_schema.sql", "002_add_diff_summary_to_context_snapshots.sql", "003_add_issue_hierarchy.sql", "004_add_active_sessions.sql", "005_add_repo_path_to_github_cache.sql", "006_add_runtime_refs_to_active_sessions.sql"}, filenames)
+	assert.Equal(t, []string{
+		"001_init_schema.sql",
+		"002_add_diff_summary_to_context_snapshots.sql",
+		"003_add_issue_hierarchy.sql",
+		"004_add_active_sessions.sql",
+		"005_add_repo_path_to_github_cache.sql",
+		"006_add_runtime_refs_to_active_sessions.sql",
+		"007_add_pr_attention.sql",
+	}, filenames)
 }

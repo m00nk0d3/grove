@@ -449,6 +449,72 @@ func TestListOpenPRs_MapsAssigneesCorrectly(t *testing.T) {
 	}
 }
 
+func TestListOpenPRs_MapsTeamAttentionMetadata(t *testing.T) {
+	raw := `[{
+		"number": 12,
+		"title": "Team change",
+		"headRefName": "feature/team",
+		"author": {"login": "alice"},
+		"state": "OPEN",
+		"reviewDecision": "CHANGES_REQUESTED",
+		"labels": [],
+		"isDraft": false,
+		"assignees": [],
+		"mergeable": "CONFLICTING",
+		"comments": [{"author":{"login":"bob"},"body":"Please update this.","createdAt":"2026-09-20T10:00:00Z","url":"https://example.test/comment"}],
+		"latestReviews": [{"author":{"login":"carol"},"body":"Blocking issue.","state":"CHANGES_REQUESTED","submittedAt":"2026-09-20T11:00:00Z","url":"https://example.test/review"}],
+		"statusCheckRollup": [{"conclusion":"FAILURE"}]
+	}]`
+	client := NewPRCommandWithRunner("/repo", func(_ string, _ ...string) (string, error) {
+		return raw, nil
+	})
+
+	prs, err := client.ListOpenPRs()
+
+	require.NoError(t, err)
+	require.Len(t, prs, 1)
+	assert.Equal(t, "CHANGES_REQUESTED", prs[0].ReviewDecision)
+	assert.True(t, prs[0].ChecksFailing)
+	assert.True(t, prs[0].MergeConflict)
+	require.Len(t, prs[0].Comments, 1)
+	assert.Equal(t, "Please update this.", prs[0].Comments[0].Body)
+	require.Len(t, prs[0].Reviews, 1)
+	assert.Equal(t, "CHANGES_REQUESTED", prs[0].Reviews[0].State)
+}
+
+func TestEnrichViewerAttention(t *testing.T) {
+	runner := func(_ string, args ...string) (string, error) {
+		switch args[0] {
+		case "repo":
+			return `{"owner":{"login":"acme"},"name":"widget"}`, nil
+		case "api":
+			return `{"data":{"viewer":{"login":"alice"},"repository":{"pullRequests":{"nodes":[{"number":12,"comments":{"nodes":[{"author":{"login":"bob"},"body":"Please revise.","createdAt":"2026-09-20T10:00:00Z","url":"https://example.test/comment"}]},"latestReviews":{"nodes":[{"author":{"login":"carol"},"body":"Blocking issue.","state":"CHANGES_REQUESTED","submittedAt":"2026-09-20T11:00:00Z","url":"https://example.test/review"}]},"reviewThreads":{"nodes":[{"isResolved":false},{"isResolved":true}]}},{"number":13,"comments":{"nodes":[]},"latestReviews":{"nodes":[]},"reviewThreads":{"nodes":[]}}]}}}}`, nil
+		case "pr":
+			return `[{"number":13}]`, nil
+		default:
+			return "", fmt.Errorf("unexpected command: %v", args)
+		}
+	}
+	client := NewPRCommandWithRunner("/repo", runner)
+	prs := []domain.PullRequest{
+		{Number: 12, Author: "alice"},
+		{Number: 13, Author: "bob"},
+	}
+
+	err := client.EnrichViewerAttention(prs)
+
+	require.NoError(t, err)
+	assert.True(t, prs[0].IsMine)
+	assert.Equal(t, 1, prs[0].UnresolvedThreads)
+	assert.False(t, prs[0].ReviewRequested)
+	require.Len(t, prs[0].Comments, 1)
+	assert.Equal(t, "Please revise.", prs[0].Comments[0].Body)
+	require.Len(t, prs[0].Reviews, 1)
+	assert.Equal(t, "CHANGES_REQUESTED", prs[0].Reviews[0].State)
+	assert.False(t, prs[1].IsMine)
+	assert.True(t, prs[1].ReviewRequested)
+}
+
 func TestGetPR(t *testing.T) {
 	validPRJSON := `{"number":42,"title":"Implement feature","body":"This implements the feature.","headRefName":"feat/feature","author":{"login":"frank"},"state":"MERGED","labels":[{"name":"feature"}],"isDraft":false}`
 

@@ -1171,16 +1171,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncing = false
 			m.syncErr = pending.err
 			if pending.err != nil {
-				m.statusErr = fmt.Sprintf("GitHub sync failed: %v", pending.err)
+				if pending.prs != nil || pending.issues != nil {
+					m.statusErr = fmt.Sprintf("GitHub sync degraded; showing available data: %v", pending.err)
+				} else {
+					m.statusErr = fmt.Sprintf("GitHub sync failed: %v", pending.err)
+				}
 			}
-			if pending.err == nil {
+			prsUpdated := pending.prs != nil
+			issuesUpdated := pending.issues != nil
+			if prsUpdated {
 				m.prs = pending.prs
+				m.clampPRIdx()
+			}
+			if issuesUpdated {
 				m.issues = pending.issues
 				m.issueTree = buildIssueTree(m.issues)
-				m.lastSynced = pending.syncedAt
 				m.clampIssueIdx()
-				m.clampPRIdx()
-				// Re-link worktrees to PRs whenever PRs are refreshed.
+			}
+			if prsUpdated || issuesUpdated {
+				m.lastSynced = pending.syncedAt
+			}
+			if prsUpdated {
 				if m.db != nil {
 					if linked, err := data.LinkWorktreesToPRs(m.db, m.Worktrees, m.prs); err == nil {
 						m.Worktrees = linked
@@ -1619,6 +1630,10 @@ func (m *Model) syncGitHubCmd(force bool) tea.Cmd {
 		}
 
 		prs, prErr := prCmd.ListOpenPRs()
+		var attentionErr error
+		if prErr == nil {
+			attentionErr = prCmd.EnrichViewerAttention(prs)
+		}
 
 		// Persist enriched issues and PRs to DB so the next fresh-cache read
 		// returns hierarchy-enriched data rather than a flat list.
@@ -1632,7 +1647,12 @@ func (m *Model) syncGitHubCmd(force bool) tea.Cmd {
 			}
 		}
 
-		return githubSyncedMsg{prs: prs, issues: issues, err: errors.Join(issErr, prErr), syncedAt: time.Now()}
+		return githubSyncedMsg{
+			prs:      prs,
+			issues:   issues,
+			err:      errors.Join(issErr, prErr, attentionErr),
+			syncedAt: time.Now(),
+		}
 	}
 }
 

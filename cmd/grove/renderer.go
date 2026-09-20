@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -325,6 +326,7 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 	activeMissions := dashboardMissions(missionState)
 	completedMissions := completedDashboardMissions(missionState)
 	activeWorkflows := len(activeMissions)
+	attentionCount := countAttentionPRs(prs)
 	blocked := countStatuses(workflowStatuses(workflows), domain.WorkflowBlocked, domain.WorkflowFailed) +
 		countStatuses(agentStatuses(agents), domain.AgentBlocked, domain.AgentFailed)
 
@@ -336,7 +338,18 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 	var b strings.Builder
 	b.WriteString(accent.Render("◈ MISSION CONTROL // LIVE OPERATIONS"))
 	b.WriteString("\n")
-	b.WriteString(muted.Render(fmt.Sprintf("SYSTEM %-10s  %d open issues  •  %d sessions online", strings.ToUpper(status), len(issues), activeSessions)))
+	b.WriteString(muted.Render(fmt.Sprintf(
+		"SYSTEM %-10s  %d issues  •  %d PRs  •  %d sessions  •  ",
+		strings.ToUpper(status),
+		len(issues),
+		len(prs),
+		activeSessions,
+	)))
+	if attentionCount > 0 {
+		b.WriteString(warning.Render(fmt.Sprintf("%d PRs NEED ATTENTION", attentionCount)))
+	} else {
+		b.WriteString(success.Render("PR INBOX CLEAR"))
+	}
 	b.WriteString("\n\n")
 
 	cardWidth := listInner / 4
@@ -896,7 +909,28 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 			author := truncateStr(pr.Author, ctxInner-9) // "Author: @" prefix = 9 chars
 			// "Labels: " prefix = 8 chars; wrap to remaining width to avoid re-wrap.
 			labels := wrapText(labelsStr, ctxInner-8)
-			content = fmt.Sprintf("Context: PR #%d\n%s\n\nBranch: %s\nAuthor: @%s\nStatus: %s\nLabels: %s\n\n%s", pr.Number, title, branch, author, state, labels, body)
+			attention := "None"
+			if reasons := pr.AttentionReasons(); len(reasons) > 0 {
+				attention = strings.Join(reasons, " • ")
+			}
+			review := pr.ReviewDecision
+			if review == "" {
+				review = "PENDING"
+			}
+			activity := renderPRActivity(pr, ctxInner)
+			content = fmt.Sprintf(
+				"Context: PR #%d\n%s\n\nBranch: %s\nAuthor: @%s\nStatus: %s\nReview: %s\nAttention: %s\nLabels: %s\n\n%s%s",
+				pr.Number,
+				title,
+				branch,
+				author,
+				state,
+				review,
+				attention,
+				labels,
+				body,
+				activity,
+			)
 		}
 	default: // viewWorktrees
 		if len(worktrees) == 0 || worktreeIdx < 0 || worktreeIdx >= len(worktrees) {
@@ -1332,10 +1366,14 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 		}
 		status := prDisplayStatus(pr)
 		stateValues[i] = strings.ToLower(status)
+		title := pr.Title
+		if pr.NeedsAttention() {
+			title = "⚠ " + title
+		}
 		entries[i] = prEntry{
 			cursor: cursor,
 			num:    fmt.Sprintf("%-6d", pr.Number),
-			title:  truncateStr(pr.Title, prTitleColW),
+			title:  truncateStr(title, prTitleColW),
 			branch: truncateStr(pr.Branch, prBranchColW),
 			assign: truncateStr(strings.Join(pr.Assignees, ","), prAssignColW),
 			status: status,
@@ -1672,6 +1710,9 @@ func prDisplayStatus(pr domain.PullRequest) string {
 	if pr.IsDraft {
 		return "DRAFT"
 	}
+	if pr.NeedsAttention() {
+		return "ACTION"
+	}
 	switch pr.ReviewDecision {
 	case "APPROVED":
 		return "APPROVED"
@@ -1681,6 +1722,45 @@ func prDisplayStatus(pr domain.PullRequest) string {
 		return "REVIEW"
 	}
 	return pr.State
+}
+
+func countAttentionPRs(prs []domain.PullRequest) int {
+	count := 0
+	for _, pr := range prs {
+		if pr.NeedsAttention() {
+			count++
+		}
+	}
+	return count
+}
+
+func renderPRActivity(pr domain.PullRequest, width int) string {
+	activities := append([]domain.PullRequestActivity(nil), pr.Comments...)
+	activities = append(activities, pr.Reviews...)
+	if len(activities) == 0 {
+		return "\n\nRecent activity: none"
+	}
+	sort.SliceStable(activities, func(i, j int) bool {
+		return activities[i].CreatedAt.After(activities[j].CreatedAt)
+	})
+	if len(activities) > 3 {
+		activities = activities[:3]
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\nRecent activity:")
+	for _, activity := range activities {
+		kind := "commented"
+		if activity.State != "" {
+			kind = strings.ToLower(strings.ReplaceAll(activity.State, "_", " "))
+		}
+		b.WriteString(fmt.Sprintf("\n@%s %s", activity.Author, kind))
+		if activity.Body != "" {
+			b.WriteString("\n")
+			b.WriteString(wrapText(sanitizeBody(activity.Body), width))
+		}
+	}
+	return b.String()
 }
 
 // formatAssignees formats a slice of assignee logins into "@user1,@user2" format.

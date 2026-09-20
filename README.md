@@ -34,7 +34,8 @@ In short: if you work on multiple features simultaneously, Grove removes the glu
 
 - **3-pane TUI** — worktree list, GitHub context panel, and detail view in one terminal window
 - **Full worktree management** — create, delete, switch shell, lock/unlock, and prune worktrees without leaving the terminal
-- **GitHub sync** — pull requests and issues fetched via the `gh` CLI and kept fresh in the background
+- **GitHub sync** — pull requests, issues, reviews, comments, checks, and merge state fetched via the `gh` CLI and kept fresh in the background
+- **Team-aware PR attention** — highlights your PRs with requested changes, unresolved review threads, failing checks, or merge conflicts, plus teammate PRs awaiting your review
 - **Issue hierarchy & sub-issue branching** — navigate parent/child issue trees and spin up a worktree for any sub-issue in one move, with smart guards so you never branch off a ghost
 - **Active sessions dashboard** — mission control for your worktrees: see exactly what's alive, what's idle, and what's absolutely on fire 🔥
 - **Sandcastle workflow launcher** — run `imp`, `review`, `ci`, `resolve`, and `clean` from a context-aware action menu

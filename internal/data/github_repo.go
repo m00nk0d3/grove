@@ -30,19 +30,48 @@ func (r *GitHubRepository) UpsertPRs(prs []domain.PullRequest) error {
 		if err != nil {
 			return fmt.Errorf("upsert prs: marshal labels for pr %d: %w", pr.Number, err)
 		}
+		assignees, err := json.Marshal(pr.Assignees)
+		if err != nil {
+			return fmt.Errorf("upsert prs: marshal assignees for pr %d: %w", pr.Number, err)
+		}
+		comments, err := json.Marshal(pr.Comments)
+		if err != nil {
+			return fmt.Errorf("upsert prs: marshal comments for pr %d: %w", pr.Number, err)
+		}
+		reviews, err := json.Marshal(pr.Reviews)
+		if err != nil {
+			return fmt.Errorf("upsert prs: marshal reviews for pr %d: %w", pr.Number, err)
+		}
 
 		_, err = r.db.Conn.Exec(`
-			INSERT INTO github_prs (number, repo_path, title, branch, author, state, is_draft, labels, synced_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			INSERT INTO github_prs (
+				number, repo_path, title, body, branch, author, state, review_decision,
+				is_draft, labels, assignees, comments, reviews, unresolved_threads,
+				checks_failing, merge_conflict, is_mine, review_requested, synced_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 			ON CONFLICT(number, repo_path) DO UPDATE SET
-				title     = excluded.title,
-				branch    = excluded.branch,
-				author    = excluded.author,
-				state     = excluded.state,
-				is_draft  = excluded.is_draft,
-				labels    = excluded.labels,
-				synced_at = CURRENT_TIMESTAMP
-		`, pr.Number, r.repoPath, pr.Title, pr.Branch, pr.Author, pr.State, pr.IsDraft, string(labels))
+				title              = excluded.title,
+				body               = excluded.body,
+				branch             = excluded.branch,
+				author             = excluded.author,
+				state              = excluded.state,
+				review_decision    = excluded.review_decision,
+				is_draft           = excluded.is_draft,
+				labels             = excluded.labels,
+				assignees          = excluded.assignees,
+				comments           = excluded.comments,
+				reviews            = excluded.reviews,
+				unresolved_threads = excluded.unresolved_threads,
+				checks_failing     = excluded.checks_failing,
+				merge_conflict     = excluded.merge_conflict,
+				is_mine            = excluded.is_mine,
+				review_requested   = excluded.review_requested,
+				synced_at          = CURRENT_TIMESTAMP
+		`, pr.Number, r.repoPath, pr.Title, pr.Body, pr.Branch, pr.Author, pr.State,
+			pr.ReviewDecision, pr.IsDraft, string(labels), string(assignees),
+			string(comments), string(reviews), pr.UnresolvedThreads, pr.ChecksFailing,
+			pr.MergeConflict, pr.IsMine, pr.ReviewRequested)
 		if err != nil {
 			return fmt.Errorf("upsert prs: %w", err)
 		}
@@ -53,7 +82,9 @@ func (r *GitHubRepository) UpsertPRs(prs []domain.PullRequest) error {
 // GetPRs returns all cached pull requests for this repository.
 func (r *GitHubRepository) GetPRs() ([]domain.PullRequest, error) {
 	rows, err := r.db.Conn.Query(`
-		SELECT number, title, branch, author, state, is_draft, labels
+		SELECT number, title, body, branch, author, state, review_decision,
+		       is_draft, labels, assignees, comments, reviews, unresolved_threads,
+		       checks_failing, merge_conflict, is_mine, review_requested
 		FROM github_prs
 		WHERE repo_path = ?
 		ORDER BY number
@@ -67,16 +98,41 @@ func (r *GitHubRepository) GetPRs() ([]domain.PullRequest, error) {
 	for rows.Next() {
 		var pr domain.PullRequest
 		var labelsJSON string
+		var assigneesJSON string
+		var commentsJSON string
+		var reviewsJSON string
 		var isDraftInt int
+		var checksFailingInt int
+		var mergeConflictInt int
+		var isMineInt int
+		var reviewRequestedInt int
 
-		if err := rows.Scan(&pr.Number, &pr.Title, &pr.Branch, &pr.Author, &pr.State, &isDraftInt, &labelsJSON); err != nil {
+		if err := rows.Scan(
+			&pr.Number, &pr.Title, &pr.Body, &pr.Branch, &pr.Author, &pr.State,
+			&pr.ReviewDecision, &isDraftInt, &labelsJSON, &assigneesJSON,
+			&commentsJSON, &reviewsJSON, &pr.UnresolvedThreads, &checksFailingInt,
+			&mergeConflictInt, &isMineInt, &reviewRequestedInt,
+		); err != nil {
 			return nil, fmt.Errorf("get prs: scan row: %w", err)
 		}
 
 		pr.IsDraft = isDraftInt != 0
+		pr.ChecksFailing = checksFailingInt != 0
+		pr.MergeConflict = mergeConflictInt != 0
+		pr.IsMine = isMineInt != 0
+		pr.ReviewRequested = reviewRequestedInt != 0
 
 		if err := json.Unmarshal([]byte(labelsJSON), &pr.Labels); err != nil {
 			return nil, fmt.Errorf("get prs: parse labels for pr %d: %w", pr.Number, err)
+		}
+		if err := json.Unmarshal([]byte(assigneesJSON), &pr.Assignees); err != nil {
+			return nil, fmt.Errorf("get prs: parse assignees for pr %d: %w", pr.Number, err)
+		}
+		if err := json.Unmarshal([]byte(commentsJSON), &pr.Comments); err != nil {
+			return nil, fmt.Errorf("get prs: parse comments for pr %d: %w", pr.Number, err)
+		}
+		if err := json.Unmarshal([]byte(reviewsJSON), &pr.Reviews); err != nil {
+			return nil, fmt.Errorf("get prs: parse reviews for pr %d: %w", pr.Number, err)
 		}
 
 		prs = append(prs, pr)

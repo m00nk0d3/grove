@@ -623,6 +623,30 @@ func TestModel_GithubSyncedMsg_StoresPRsAndIssues(t *testing.T) {
 	}
 }
 
+func TestModel_GithubSync_PreservesSuccessfulPartialResults(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.prs = []domain.PullRequest{{Number: 1}}
+	model.issues = []domain.Issue{{Number: 2}}
+
+	updated, _ := model.Update(githubSyncedMsg{
+		prs:      []domain.PullRequest{{Number: 3}},
+		issues:   nil,
+		err:      errors.New("list open issues: network timeout"),
+		syncedAt: time.Now(),
+	})
+	updated, _ = updated.(*Model).Update(debouncedRenderMsg{})
+	got := updated.(*Model)
+
+	require.Len(t, got.prs, 1)
+	assert.Equal(t, 3, got.prs[0].Number)
+	require.Len(t, got.issues, 1)
+	assert.Equal(t, 2, got.issues[0].Number)
+	require.Error(t, got.syncErr)
+	assert.Contains(t, got.statusErr, "GitHub sync degraded; showing available data")
+	assert.False(t, got.lastSynced.IsZero())
+}
+
 // TestModel_SyncTickMsg_TriggersSyncCmd verifies that receiving a syncTickMsg
 // via Update() returns a non-nil Cmd to schedule the next background GitHub sync.
 func TestModel_SyncTickMsg_TriggersSyncCmd(t *testing.T) {

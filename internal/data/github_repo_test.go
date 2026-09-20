@@ -3,6 +3,7 @@ package data
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/m00nk0d3/grove/internal/exec"
@@ -36,7 +37,23 @@ func TestGitHubRepository_UpsertAndGetPRs(t *testing.T) {
 	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
 
 	input := []domain.PullRequest{
-		{Number: 1, Title: "Add login", Branch: "feat/login", Author: "alice", State: "OPEN", Labels: []string{"enhancement"}, IsDraft: false},
+		{
+			Number:            1,
+			Title:             "Add login",
+			Body:              "PR body",
+			Branch:            "feat/login",
+			Author:            "alice",
+			State:             "OPEN",
+			ReviewDecision:    "CHANGES_REQUESTED",
+			Labels:            []string{"enhancement"},
+			Assignees:         []string{"alice"},
+			Comments:          []domain.PullRequestActivity{{Author: "bob", Body: "Please revise.", CreatedAt: time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)}},
+			Reviews:           []domain.PullRequestActivity{{Author: "bob", State: "CHANGES_REQUESTED", CreatedAt: time.Date(2026, 9, 20, 11, 0, 0, 0, time.UTC)}},
+			UnresolvedThreads: 1,
+			ChecksFailing:     true,
+			MergeConflict:     true,
+			IsMine:            true,
+		},
 		{Number: 2, Title: "WIP: refactor", Branch: "chore/refactor", Author: "bob", State: "OPEN", Labels: []string{"wip", "refactor"}, IsDraft: true},
 	}
 

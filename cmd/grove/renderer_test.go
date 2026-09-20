@@ -222,6 +222,20 @@ func TestRenderDashboard_CompletedTabShowsCompletedRuns(t *testing.T) {
 	assert.NotContains(t, view, "Implement issue #42")
 }
 
+func TestRenderDashboard_ShowsPRAttentionCount(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.prs = []domain.PullRequest{
+		{Number: 1, IsMine: true, ChecksFailing: true},
+		{Number: 2, ReviewRequested: true},
+		{Number: 3, Author: "teammate", ChecksFailing: true},
+	}
+
+	view := model.View()
+
+	assert.Contains(t, view, "2 PRs NEED ATTENTION")
+}
+
 func TestRenderFull_ContainsFooterKeyHints(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -728,6 +742,34 @@ func TestRenderContextPanel_PRContext(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRenderContextPanel_PRContextShowsAttentionAndRecentActivity(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewPRs
+	model.prs = []domain.PullRequest{{
+		Number:            42,
+		Title:             "Team PR",
+		Branch:            "feat/team",
+		Author:            "alice",
+		State:             "OPEN",
+		IsMine:            true,
+		ReviewDecision:    "CHANGES_REQUESTED",
+		UnresolvedThreads: 1,
+		Comments: []domain.PullRequestActivity{{
+			Author: "bob",
+			Body:   "Please cover the retry path.",
+		}},
+	}}
+
+	view := model.View()
+
+	assert.Contains(t, view, "Attention: changes requested • 1")
+	assert.Contains(t, view, "unresolved thread")
+	assert.Contains(t, view, "Recent activity:")
+	assert.Contains(t, view, "@bob commented")
+	assert.Contains(t, view, "Please cover the retry path.")
 }
 
 // TestRenderFull_IssueViewShowsIssueList verifies that when view is viewIssues,

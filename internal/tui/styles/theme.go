@@ -212,7 +212,7 @@ func (t Theme) StatusStyle(status string) lipgloss.Style {
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.success))
 	case "created", "dirty", "review":
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.warning))
-	case "locked", "changes":
+	case "locked", "changes", "action":
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.danger))
 	case "approved":
 		return lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.success)).Bold(true)

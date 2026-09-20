@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/m00nk0d3/grove/internal/domain"
 )
@@ -241,7 +242,7 @@ func NewPRCommandWithRunner(repoPath string, runner commandRunner) *PRCommand {
 	return &PRCommand{repoPath: repoPath, runner: runner}
 }
 
-const prFields = "number,title,body,headRefName,author,state,labels,isDraft,assignees,reviewDecision"
+const prFields = "number,title,body,headRefName,author,state,labels,isDraft,assignees,reviewDecision,statusCheckRollup,mergeable"
 
 // ListOpenPRs returns all open pull requests via `gh pr list`.
 func (c *PRCommand) ListOpenPRs() ([]domain.PullRequest, error) {
@@ -256,6 +257,148 @@ func (c *PRCommand) ListOpenPRs() ([]domain.PullRequest, error) {
 	}
 
 	return prs, nil
+}
+
+// EnrichViewerAttention annotates PRs with viewer ownership, review requests,
+// and unresolved review-thread counts.
+func (c *PRCommand) EnrichViewerAttention(prs []domain.PullRequest) error {
+	if len(prs) == 0 {
+		return nil
+	}
+
+	repoOutput, err := c.runner(c.repoPath, "repo", "view", "--json", "owner,name")
+	if err != nil {
+		return fmt.Errorf("get repository identity for PR attention: %w", err)
+	}
+	var repository struct {
+		Owner ghAuthor `json:"owner"`
+		Name  string   `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(repoOutput), &repository); err != nil {
+		return fmt.Errorf("parse repository identity for PR attention: %w", err)
+	}
+
+	query := `query($owner: String!, $name: String!) {
+		viewer { login }
+		repository(owner: $owner, name: $name) {
+			pullRequests(states: OPEN, first: 100) {
+				nodes {
+					number
+					comments(last: 3) {
+						nodes { author { login } body createdAt url }
+					}
+					latestReviews(first: 10) {
+						nodes { author { login } body state submittedAt url }
+					}
+					reviewThreads(first: 100) {
+						nodes { isResolved }
+					}
+				}
+			}
+		}
+	}`
+	output, err := c.runner(
+		c.repoPath,
+		"api", "graphql",
+		"-F", "owner="+repository.Owner.Login,
+		"-F", "name="+repository.Name,
+		"-f", "query="+query,
+	)
+	if err != nil {
+		return fmt.Errorf("fetch PR attention metadata: %w", err)
+	}
+	var response struct {
+		Data struct {
+			Viewer     ghAuthor `json:"viewer"`
+			Repository struct {
+				PullRequests struct {
+					Nodes []struct {
+						Number   int `json:"number"`
+						Comments struct {
+							Nodes []ghPRActivity `json:"nodes"`
+						} `json:"comments"`
+						LatestReviews struct {
+							Nodes []ghPRActivity `json:"nodes"`
+						} `json:"latestReviews"`
+						ReviewThreads struct {
+							Nodes []struct {
+								IsResolved bool `json:"isResolved"`
+							} `json:"nodes"`
+						} `json:"reviewThreads"`
+					} `json:"nodes"`
+				} `json:"pullRequests"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal([]byte(output), &response); err != nil {
+		return fmt.Errorf("parse PR attention metadata: %w", err)
+	}
+	if len(response.Errors) > 0 {
+		return fmt.Errorf("fetch PR attention metadata: %s", response.Errors[0].Message)
+	}
+
+	unresolvedByNumber := make(map[int]int, len(response.Data.Repository.PullRequests.Nodes))
+	metadataByNumber := make(map[int]struct {
+		comments []domain.PullRequestActivity
+		reviews  []domain.PullRequestActivity
+	}, len(response.Data.Repository.PullRequests.Nodes))
+	for _, node := range response.Data.Repository.PullRequests.Nodes {
+		for _, thread := range node.ReviewThreads.Nodes {
+			if !thread.IsResolved {
+				unresolvedByNumber[node.Number]++
+			}
+		}
+		comments := make([]domain.PullRequestActivity, 0, len(node.Comments.Nodes))
+		for _, comment := range node.Comments.Nodes {
+			comments = append(comments, ghActivityToDomain(comment, comment.CreatedAt))
+		}
+		reviews := make([]domain.PullRequestActivity, 0, len(node.LatestReviews.Nodes))
+		for _, review := range node.LatestReviews.Nodes {
+			reviews = append(reviews, ghActivityToDomain(review, review.SubmittedAt))
+		}
+		metadataByNumber[node.Number] = struct {
+			comments []domain.PullRequestActivity
+			reviews  []domain.PullRequestActivity
+		}{comments: comments, reviews: reviews}
+	}
+	for i := range prs {
+		prs[i].IsMine = strings.EqualFold(prs[i].Author, response.Data.Viewer.Login)
+		prs[i].UnresolvedThreads = unresolvedByNumber[prs[i].Number]
+		if metadata, ok := metadataByNumber[prs[i].Number]; ok {
+			prs[i].Comments = metadata.comments
+			prs[i].Reviews = metadata.reviews
+		}
+	}
+
+	requestedOutput, err := c.runner(
+		c.repoPath,
+		"pr", "list",
+		"--json", "number",
+		"--state", "open",
+		"--search", "review-requested:@me",
+		"--limit", "100",
+	)
+	if err != nil {
+		return fmt.Errorf("list viewer review requests: %w", err)
+	}
+	var requested []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(requestedOutput), &requested); err != nil {
+		return fmt.Errorf("parse viewer review requests: %w", err)
+	}
+	requestedByNumber := make(map[int]bool, len(requested))
+	for _, pr := range requested {
+		requestedByNumber[pr.Number] = true
+	}
+
+	for i := range prs {
+		prs[i].ReviewRequested = requestedByNumber[prs[i].Number]
+	}
+	return nil
 }
 
 // GetPR returns a single pull request by number via `gh pr view`.
@@ -278,18 +421,36 @@ type ghAuthor struct {
 	Login string `json:"login"`
 }
 
+type ghPRActivity struct {
+	Author      ghAuthor `json:"author"`
+	Body        string   `json:"body"`
+	State       string   `json:"state"`
+	URL         string   `json:"url"`
+	CreatedAt   string   `json:"createdAt"`
+	SubmittedAt string   `json:"submittedAt"`
+}
+
+type ghStatusCheck struct {
+	Conclusion string `json:"conclusion"`
+	State      string `json:"state"`
+}
+
 // ghPR is the JSON shape returned by `gh pr list/view --json ...`.
 type ghPR struct {
-	Number         int        `json:"number"`
-	Title          string     `json:"title"`
-	Body           string     `json:"body"`
-	HeadRefName    string     `json:"headRefName"`
-	Author         ghAuthor   `json:"author"`
-	State          string     `json:"state"`
-	ReviewDecision string     `json:"reviewDecision"`
-	Labels         []ghLabel  `json:"labels"`
-	IsDraft        bool       `json:"isDraft"`
-	Assignees      []ghAuthor `json:"assignees"`
+	Number            int             `json:"number"`
+	Title             string          `json:"title"`
+	Body              string          `json:"body"`
+	HeadRefName       string          `json:"headRefName"`
+	Author            ghAuthor        `json:"author"`
+	State             string          `json:"state"`
+	ReviewDecision    string          `json:"reviewDecision"`
+	Labels            []ghLabel       `json:"labels"`
+	IsDraft           bool            `json:"isDraft"`
+	Assignees         []ghAuthor      `json:"assignees"`
+	Comments          []ghPRActivity  `json:"comments"`
+	LatestReviews     []ghPRActivity  `json:"latestReviews"`
+	StatusCheckRollup []ghStatusCheck `json:"statusCheckRollup"`
+	Mergeable         string          `json:"mergeable"`
 }
 
 func ghPRToDomain(g ghPR) domain.PullRequest {
@@ -304,6 +465,27 @@ func ghPRToDomain(g ghPR) domain.PullRequest {
 			assignees[i] = a.Login
 		}
 	}
+	var comments []domain.PullRequestActivity
+	if len(g.Comments) > 0 {
+		comments = make([]domain.PullRequestActivity, 0, len(g.Comments))
+		for _, comment := range g.Comments {
+			comments = append(comments, ghActivityToDomain(comment, comment.CreatedAt))
+		}
+	}
+	var reviews []domain.PullRequestActivity
+	if len(g.LatestReviews) > 0 {
+		reviews = make([]domain.PullRequestActivity, 0, len(g.LatestReviews))
+		for _, review := range g.LatestReviews {
+			reviews = append(reviews, ghActivityToDomain(review, review.SubmittedAt))
+		}
+	}
+	checksFailing := false
+	for _, check := range g.StatusCheckRollup {
+		switch strings.ToUpper(firstNonEmpty(check.Conclusion, check.State)) {
+		case "ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE", "STARTUP_FAILURE", "TIMED_OUT":
+			checksFailing = true
+		}
+	}
 	return domain.PullRequest{
 		Number:         g.Number,
 		Title:          g.Title,
@@ -315,7 +497,31 @@ func ghPRToDomain(g ghPR) domain.PullRequest {
 		Labels:         labels,
 		IsDraft:        g.IsDraft,
 		Assignees:      assignees,
+		Comments:       comments,
+		Reviews:        reviews,
+		ChecksFailing:  checksFailing,
+		MergeConflict:  strings.EqualFold(g.Mergeable, "CONFLICTING"),
 	}
+}
+
+func ghActivityToDomain(activity ghPRActivity, timestamp string) domain.PullRequestActivity {
+	createdAt, _ := time.Parse(time.RFC3339, timestamp)
+	return domain.PullRequestActivity{
+		Author:    activity.Author.Login,
+		Body:      activity.Body,
+		State:     activity.State,
+		URL:       activity.URL,
+		CreatedAt: createdAt,
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func parsePRList(raw string) ([]domain.PullRequest, error) {

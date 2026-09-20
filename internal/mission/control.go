@@ -305,6 +305,8 @@ func clonePullRequests(items []domain.PullRequest) []domain.PullRequest {
 func clonePullRequest(item domain.PullRequest) domain.PullRequest {
 	item.Labels = append([]string(nil), item.Labels...)
 	item.Assignees = append([]string(nil), item.Assignees...)
+	item.Comments = append([]domain.PullRequestActivity(nil), item.Comments...)
+	item.Reviews = append([]domain.PullRequestActivity(nil), item.Reviews...)
 	return item
 }
 
