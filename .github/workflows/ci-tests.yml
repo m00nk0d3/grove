@@ -24,7 +24,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          package-manager-cache: false
+          cache: 'npm'
+          cache-dependency-path: runtime/sandcastle/package-lock.json
 
       - name: Install Sandcastle dependencies
         run: cd runtime/sandcastle && npm ci
