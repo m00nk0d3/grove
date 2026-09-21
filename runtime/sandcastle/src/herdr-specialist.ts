@@ -122,6 +122,10 @@ export function buildCompletionRetryPrompt(problems: string[]): string {
   return `The previous turn stopped without satisfying these completion requirements:
 ${problems.map((problem) => `- ${problem}`).join("\n")}
 
+Important reminder: All required artifacts must be written to filesystem paths specified in the original assignment.
+If you're using OpenCode (API-based agent), write each artifact using bash commands like:
+  echo '{"key":"value"}' > "/abs/path/to/artifact.json"
+
 The context has been compacted and the exact original assignment re-injected.
 Do not restart broad exploration. Reconcile the current worktree and Git state,
 finish the remaining acceptance criteria and validation, then write every
@@ -158,6 +162,13 @@ export function runSpecialistInPane(options: SpecialistOptions): void {
     "This step may be resuming after an interruption. Inspect and preserve " +
     "valid existing work, then continue from the current state.\n" +
     promptText;
+  if (launch.backend === "opencode") {
+    effectivePrompt += `
+
+IMPORTANT: All required artifacts must be written to absolute filesystem paths.
+For OpenCode agents, use bash commands like: echo '{"..."}' > "/absolute/path/to/file.json"
+`;
+  }
   const continuityDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "agent-flow-continuity-"),
   );
@@ -277,6 +288,28 @@ export function runSpecialistInPane(options: SpecialistOptions): void {
         AGENT_TIMEOUT_MS,
         retryCursor,
       );
+      completionProblems = getCompletionProblems(
+        completionArtifacts,
+        completionValidator,
+      );
+    } else if (completionProblems.length > 0 && launch.backend === "opencode") {
+      console.log(
+        `\x1b[33m[Continuity]\x1b[0m ${role} settled without required output; prompting retry.`,
+      );
+      const retryOutput = runCommand("herdr", [
+        "agent",
+        "prompt",
+        agentName,
+        buildCompletionRetryPrompt(completionProblems),
+        "--wait",
+        "--timeout",
+        String(AGENT_TIMEOUT_MS),
+      ]);
+      assertAgentSettled(retryOutput, `${role} completion retry`);
+
+      // Immediately re-check completion artifacts for OpenCode
+      const retryCursor = 0;
+
       completionProblems = getCompletionProblems(
         completionArtifacts,
         completionValidator,

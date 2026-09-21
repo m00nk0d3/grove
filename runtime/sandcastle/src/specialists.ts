@@ -412,12 +412,14 @@ Required work:
 2. Check correctness, acceptance criteria, regressions, edge cases, security, concurrency, compatibility, error handling, tests, and maintainability.
 3. If there are no blockers, do not modify the worktree and set verdict to "approved".
 4. If blockers exist, do not modify source files. Set verdict to "blockers" and describe each defect and required fix precisely so the original implementation specialist can address it.
-5. Write exactly one JSON object to '${verdictPath}' with this schema:
+5. Write exactly one JSON object to the exact path '${verdictPath}' with this schema:
    {"verdict":"approved|blockers","summary":"detailed review conclusion","reviewedAreas":["specific area and evidence"],"blockers":["severity, location, and impact"],"fixes":["specific required correction"],"validation":["command and result"],"residualRisks":["remaining non-blocking risk or limitation"]}
+   Every item in every array must be one JSON string. Do not use objects as array items. Do NOT write Markdown fences or any text outside the JSON.
+
+Important: This is a filesystem path on disk, not an API endpoint. Use bash to write: echo '{"..."}' > '${verdictPath}'
 
 Boundaries:
 - Do not modify source files, commit, push, open or close pull requests, remove worktrees, or alter Git history.
-- Do not write Markdown fences or any text outside the JSON verdict file.
 - Do not approve based only on earlier agent reports.
 
 Completion criteria:

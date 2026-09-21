@@ -235,10 +235,13 @@ Required work:
    - "approve": no blocking defects remain.
    - "request_changes": one or more concrete blocking defects exist.
    - "comment": useful non-blocking feedback exists but approval is not warranted.
-7. Write exactly one JSON object to '${verdictPath}' with this schema:
-   {"recommendation":"approve|request_changes|comment","summary":"detailed conclusion","linkedIssues":["issue and purpose"],"acceptanceCriteria":["criterion and whether satisfied"],"reviewedAreas":["area and evidence"],"findings":["severity, file:line, defect, impact, and recommended change"],"strengths":["specific positive observation"],"validation":["command/check and result"],"residualRisks":["remaining risk or uncertainty"]}
+7. Write exactly one JSON object to the exact path '${verdictPath}' with this schema:
+   {"recommendation":"approve|request_changes|comment","summary":"detailed conclusion","linkedIssues":["issue and purpose"],"acceptanceCriteria":["criterion and whether satisfied"],"reviewedAreas":["area and evidence"],"findings":["severity, file:line, defect, impact, and recommended change"],"strengths":["specific positive observation"],"validation":["command/check and result"],"residualRisks":["remaining risk or limitation"]}
    Every item in every array must be one JSON string. Do not use objects as
-   array items.
+   array items. Do NOT write Markdown fences or any text outside the JSON.
+
+Important: This is a filesystem path, not an API endpoint. Write to the file at
+that absolute location on disk using bash commands like: echo '{"..."}' > '${verdictPath}'
 
 Boundaries:
 - Do not modify files, commit, push, post to GitHub, change PR state, or remove the worktree.
