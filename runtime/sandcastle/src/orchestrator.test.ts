@@ -257,8 +257,7 @@ test("getAgentLaunchConfig defaults to OpenCode with a Pi override", () => {
       "lmstudio/qwen/qwen3.5-9b",
       "--agent",
       "build",
-      "--tools",
-      "read,bash,edit,write",
+      "--auto",
     ],
     needsLmStudioEnv: false,
   });

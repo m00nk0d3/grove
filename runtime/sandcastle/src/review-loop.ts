@@ -243,7 +243,19 @@ export async function readJsonArtifactWithRetry(
         throw new Error(`Invalid JSON: ${detail}`);
       }
 
-      return value as ReviewVerdict;
+      // Normalize string fields to arrays (agents sometimes return strings instead of arrays)
+      const raw = value as Record<string, unknown>;
+      const normalized: ReviewVerdict = {
+        verdict: raw.verdict as ReviewVerdict["verdict"],
+        summary: typeof raw.summary === "string" ? raw.summary : String(raw.summary ?? ""),
+        reviewedAreas: normalizeStringList(raw.reviewedAreas) ?? [],
+        blockers: normalizeStringList(raw.blockers) ?? [],
+        fixes: normalizeStringList(raw.fixes) ?? [],
+        validation: normalizeStringList(raw.validation) ?? [],
+        residualRisks: normalizeStringList(raw.residualRisks) ?? [],
+      };
+
+      return normalized;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       

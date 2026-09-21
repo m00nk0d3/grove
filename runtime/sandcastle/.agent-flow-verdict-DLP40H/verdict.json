@@ -1,0 +1,1 @@
+{"verdict":"blockers","summary":"One correctness blocker requires implementation work.","reviewedAreas":["Nil handling in the request path."],"blockers":["Nil input panicked."],"fixes":["Guard nil input before dereferencing it."],"validation":["go test ./..."],"residualRisks":[]}
