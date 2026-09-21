@@ -269,15 +269,18 @@ opens the workflow in Herdr, and displays runtime status.
 
 After the implementation is verified, a workflow runs additional review stages —
 but only the ones the diff calls for, so an ordinary change is no slower than
-before. Each audit hands blockers back to the implementation specialist rather
-than fixing them itself.
+before. The review audits only, and hands blockers back to the implementation
+specialist rather than fixing them itself.
 
-| Stage | Runs when the diff touches | Reviews |
+| Concern | Raised when the diff touches | Reviews |
 | --- | --- | --- |
-| `security-audit` | auth, roles, policies, sessions, middleware, CORS, secrets, app settings | Authorization coverage, untrusted input, leaked credentials, transport and browser protections, sensitive data |
-| `database-review` | migrations, `.sql`, schema definitions, entities, seed routines | Destructive operations, additive-only compliance, backfills, index and cascade impact, rollback cost |
-| `api-contract-review` | controllers, routes, handlers, endpoints, DTOs, API clients | An interface change staying consistent across every layer that declares, produces, or consumes it |
-| `documentation` | any non-documentation file, when the repository has docs | The documentation artifacts the repository's own rules require for that kind of change |
+| security | auth, roles, policies, sessions, middleware, CORS, secrets, app settings | Authorization coverage, untrusted input, leaked credentials, transport and browser protections, sensitive data |
+| database | migrations, `.sql`, schema definitions, entities, seed routines | Destructive operations, additive-only compliance, backfills, index and cascade impact, rollback cost |
+| API contract | controllers, routes, handlers, endpoints, DTOs, API clients | An interface change staying consistent across every layer that declares, produces, or consumes it |
+
+Whichever concerns a diff raises are reviewed together in one `domain-review`
+stage, each against its own checklist, so three concerns cost one agent run
+rather than three.
 
 The `documentation` stage follows the repository's stated obligations, and
 leaves a generated changelog to the release tooling that owns it.

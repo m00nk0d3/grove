@@ -27,10 +27,7 @@ export const FULL_WORKFLOW_STEPS = [
   "tests",
   "implementation",
   "verification",
-  "security-audit",
-  "database-review",
-  "api-contract-review",
-  "adversarial-review",
+  "domain-review",
   "documentation",
   "delivery",
   "report",
@@ -43,9 +40,7 @@ export const LEAN_WORKFLOW_STEPS = [
   "lean-implementation",
   "lean-review",
   "verification",
-  "security-audit",
-  "database-review",
-  "api-contract-review",
+  "domain-review",
   "documentation",
   "delivery",
   "report",
@@ -58,7 +53,7 @@ export type WorkflowStep =
   | (typeof LEAN_WORKFLOW_STEPS)[number];
 
 export interface WorkflowState {
-  version: 6;
+  version: 7;
   repo: string;
   issueNum: string;
   issueTitle: string;
@@ -557,7 +552,7 @@ export function loadWorkflowState(statePath: string): WorkflowState | null {
   };
   const completedSteps = candidate.completedSteps;
   if (
-    ![1, 2, 3, 4, 5, 6].includes(candidate.version ?? 0) ||
+    ![1, 2, 3, 4, 5, 6, 7].includes(candidate.version ?? 0) ||
     typeof candidate.repo !== "string" ||
     typeof candidate.issueNum !== "string" ||
     typeof candidate.issueTitle !== "string" ||
@@ -574,7 +569,7 @@ export function loadWorkflowState(statePath: string): WorkflowState | null {
     typeof candidate.modeReason === "string" &&
     ["automatic", "explicit", "migration"].includes(candidate.modeSource ?? "");
 
-  if (candidate.version === 6) {
+  if (candidate.version === 7) {
     if (!hasModeFields) {
       throw new Error(`Invalid workflow checkpoint: ${statePath}`);
     }
@@ -589,7 +584,7 @@ export function loadWorkflowState(statePath: string): WorkflowState | null {
     return candidate as WorkflowState;
   }
 
-  // Versions 1-5 predate the current step list: planning was three separate
+  // Versions 1-6 predate the current step list: planning was three separate
   // stages, and Git bookkeeping had stages of its own. Rather than guess how a
   // retired stage maps onto the current one, keep the completed steps that
   // still line up from the start and rerun the rest. Every stage is safe to
@@ -615,7 +610,7 @@ export function loadWorkflowState(statePath: string): WorkflowState | null {
       | "modeReason"
       | "modeSource"
     >),
-    version: 6,
+    version: 7,
     completedSteps: retained,
     reviewCyclesCompleted: candidate.reviewCyclesCompleted ?? 0,
     approved: candidate.approved ?? false,

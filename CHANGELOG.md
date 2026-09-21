@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   been pushed, only when the subject is still the placeholder, and never when
   it cannot be proven unpublished.
 - **Shorter workflows for the same review coverage** — the full workflow ran 18
-  steps; it now runs 13, and the lean workflow 12, without dropping a single
+  steps; it now runs 10, and the lean workflow 10, without dropping a single
   check:
   - **One `planning` stage** replaces `issue-analysis`, `repository-scout`, and
     `architecture`. Those were a pipeline rather than independent reviews —
@@ -77,26 +77,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     handoff only the next one consumed. The merged stage still writes the same
     three artifacts, so every downstream stage is unchanged. **Two fewer agent
     runs per issue.**
+  - **One `domain-review` stage** replaces `security-audit`, `database-review`,
+    and `api-contract-review`. Each concern keeps its own checklist, and the
+    stage works through whichever ones the diff raised, so a change touching
+    all three costs one agent run rather than three.
+  - **The adversarial review folds into `verification`.** The verification
+    engineer already reads the whole diff and runs the suite; it now challenges
+    the change rather than only confirming it, instead of a second agent
+    repeating that reading. **One fewer agent run per issue.**
   - **Git bookkeeping is no longer tracked as workflow stages.** `cleanup`
     folds into `delivery`, `push` and `pr` become one `publish`, and
     `publish-review` completes `review`. These never spawned an agent; they
     only added rows to mission control.
-  - Workflow checkpoints are now version 6. Older checkpoints keep the
+  - Workflow checkpoints are now version 7. Older checkpoints keep the
     completed steps that still line up from the start and rerun the rest;
     every stage is safe to repeat.
-
-- **Conditional review specialists** — workflows gained four review stages that
-  run only when the diff contains something they review, so an ordinary change
-  costs what it did before:
-  - `security-audit` — authorization coverage, untrusted input, secrets,
-    transport and browser protections, sensitive data. Audits only and hands
-    blockers back to the implementation specialist.
-  - `database-review` — destructive migrations, additive-only compliance,
+- **Conditional domain review** — workflows gained a `domain-review` stage that
+  runs only when the diff raises one of its concerns, and covers every concern
+  the diff raises in a single pass, so an ordinary change costs what it did
+  before. The stage audits only, and hands blockers back to the implementation
+  specialist. Its concerns are:
+  - **security** — authorization coverage, untrusted input, secrets, transport
+    and browser protections, sensitive data.
+  - **database** — destructive migrations, additive-only compliance,
     backfills, index and cascade impact, rollback cost.
-  - `api-contract-review` — an interface change staying consistent across every
-    layer that declares, produces, or consumes it.
-  - `documentation` — updates the documentation the repository's own rules
-    require, and leaves generated changelogs to the release tooling.
+  - **interface contract** — an interface change staying consistent across
+    every layer that declares, produces, or consumes it.
+
+  A separate `documentation` stage, gated the same way, updates the
+  documentation the repository's own rules require, and leaves generated
+  changelogs to the release tooling.
 - **Multi-stack repositories are identified and validated per project** — stack
   detection recognised only Go and Python and fell back to TypeScript, so a
   .NET repository was handed a "Senior TypeScript Engineer" persona, and a

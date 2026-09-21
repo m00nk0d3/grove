@@ -581,9 +581,7 @@ test("lean workflow tracks three agent stages before the delivery gate", () => {
     "lean-implementation",
     "lean-review",
     "verification",
-    "security-audit",
-    "database-review",
-    "api-contract-review",
+    "domain-review",
     "documentation",
     "delivery",
     "report",
@@ -595,10 +593,7 @@ test("lean workflow tracks three agent stages before the delivery gate", () => {
     "tests",
     "implementation",
     "verification",
-    "security-audit",
-    "database-review",
-    "api-contract-review",
-    "adversarial-review",
+    "domain-review",
     "documentation",
     "delivery",
     "report",
@@ -617,6 +612,10 @@ test("lean workflow tracks three agent stages before the delivery gate", () => {
     "push",
     "pr",
     "publish-review",
+    "security-audit",
+    "database-review",
+    "api-contract-review",
+    "adversarial-review",
   ]) {
     assert.ok(
       !(FULL_WORKFLOW_STEPS as readonly string[]).includes(retired),
@@ -706,7 +705,9 @@ test("every specialist enforces the shared file-size standard", () => {
       ".agent/REQUIREMENTS.md",
       ".agent/PLAN.md",
     ),
-    SPECIALISTS.REVIEWER("42", ".agent/REQUIREMENTS.md"),
+    SPECIALISTS.DOMAIN_REVIEWER("42", "owner/repo", "/tmp/verdict.json", [
+      "security-audit",
+    ]),
     SPECIALISTS.IMPLEMENTER_VALIDATION_FIXES(
       TS_PERSONA,
       "42",
@@ -1027,7 +1028,7 @@ test("issue metadata parsing and explicit classifications are transparent", () =
 
 test("resume rejects an override that conflicts with persisted mode", () => {
   const state = {
-    version: 6 as const,
+    version: 7 as const,
     repo: "owner/repo",
     issueNum: "42",
     issueTitle: "Test",
@@ -1087,6 +1088,8 @@ test("review verdicts are validated and formatted in detail", () => {
     throw new Error(
       `PR review verdict invalid: ${error instanceof Error ? error.message : String(error)}`
     );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -1174,7 +1177,7 @@ test("legacy checkpoints migrate to the current step list", () => {
       completedSteps: ["issue-analysis", "repository-scout"],
     });
     let state = loadWorkflowState(statePath);
-    assert.equal(state?.version, 6);
+    assert.equal(state?.version, 7);
     assert.equal(state?.mode, "full");
     assert.equal(state?.modeSource, "migration");
     assert.deepEqual(state?.completedSteps, []);
@@ -1194,7 +1197,7 @@ test("legacy checkpoints migrate to the current step list", () => {
       approved: false,
     });
     state = loadWorkflowState(statePath);
-    assert.equal(state?.version, 6);
+    assert.equal(state?.version, 7);
     assert.equal(state?.mode, "lean");
     assert.deepEqual(state?.completedSteps, [
       "lean-planning",
@@ -1205,7 +1208,7 @@ test("legacy checkpoints migrate to the current step list", () => {
     // A checkpoint already on the current list is returned untouched.
     const current = {
       ...base,
-      version: 6,
+      version: 7,
       mode: "full" as const,
       modeReason: "scope spans multiple components",
       modeSource: "automatic" as const,
@@ -1235,7 +1238,7 @@ test("a checkpoint whose steps are not a prefix of its mode is rejected", () => 
         issueTitle: "Test issue",
         branchName: "agent/test-42",
         baseCommit: "abc123",
-        version: 6,
+        version: 7,
         mode: "full",
         modeReason: "scope spans multiple components",
         modeSource: "automatic",

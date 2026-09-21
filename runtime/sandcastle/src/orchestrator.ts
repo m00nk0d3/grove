@@ -421,7 +421,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       : classifyIssue(issueMetadata);
     const issueSlug = slugifyIssueTitle(issueMetadata.title);
     state = {
-      version: 6,
+      version: 7,
       repo,
       issueNum,
       issueTitle: issueMetadata.title,
@@ -674,81 +674,77 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       return conditionalSelection;
     };
 
-    const runConditionalAudits = (handoffPath: string): void => {
-      const runAudit = (
-        step: ConditionalSpecialist,
-        buildPrompt: (verdictPath: string) => string,
-      ): void => {
-        runStep(step, () => {
-          if (!selectedSpecialists().includes(step)) {
-            console.log(
-              `\x1b[33m[Specialists]\x1b[0m Skipping ${step}: the diff contains nothing it reviews.`,
+    // One review covering whichever concerns the diff raises. Three separate
+    // stages meant three agent runs, three pane boots and three re-reads of
+    // the same diff for what is one pass over one change.
+    const runDomainReview = (handoffPath: string): void => {
+      runStep("domain-review", () => {
+        const domains = selectedSpecialists().filter(
+          (specialist) => specialist !== "documentation",
+        );
+        if (domains.length === 0) {
+          console.log(
+            "[33m[Specialists][0m Skipping domain-review: the diff raises none of its concerns.",
+          );
+          return;
+        }
+        console.log(
+          `[36m[Specialists][0m Domain review covering: ${domains.join(", ")}`,
+        );
+        // Keep the verdict inside the worktree: Claude needs approval to write
+        // outside its working directory, and .agent/ is removed at delivery.
+        const verdictRelativePath = `${agentDir
+          .split(path.sep)
+          .join("/")}/domain-review-verdict.json`;
+        const verdictPath = path.join(targetDir, verdictRelativePath);
+        fs.mkdirSync(path.dirname(verdictPath), { recursive: true });
+
+        for (let cycle = 1; cycle <= REVIEW_BATCH_SIZE; cycle += 1) {
+          fs.rmSync(verdictPath, { force: true });
+          const stateBefore = captureWorktreeState(
+            targetDir,
+            verdictRelativePath,
+          );
+          runSpecialist(
+            `domain-review-${cycle}`,
+            SPECIALISTS.DOMAIN_REVIEWER(issueNum, repo, verdictPath, domains),
+            [verdictPath],
+            () => {
+              readAuditVerdict(verdictPath, "domain-review");
+            },
+          );
+          if (
+            captureWorktreeState(targetDir, verdictRelativePath) !== stateBefore
+          ) {
+            throw new Error(
+              "The domain reviewer modified the implementation instead of reporting blockers.",
             );
+          }
+          if (readAuditVerdict(verdictPath, "domain-review").verdict === "approved") {
             return;
           }
-          // Keep the verdict inside the worktree. Claude requires approval to
-          // write outside its working directory, and everything under .agent/
-          // is removed at delivery anyway.
-          const verdictRelativePath = `${agentDir
-            .split(path.sep)
-            .join("/")}/${step}-verdict.json`;
-          const verdictPath = path.join(targetDir, verdictRelativePath);
-          fs.mkdirSync(path.dirname(verdictPath), { recursive: true });
-          for (let cycle = 1; cycle <= REVIEW_BATCH_SIZE; cycle += 1) {
-            fs.rmSync(verdictPath, { force: true });
-            const stateBefore = captureWorktreeState(
-              targetDir,
-              verdictRelativePath,
-            );
-            runSpecialist(`${step}-${cycle}`, buildPrompt(verdictPath), [
-              verdictPath,
-            ], () => {
-              readAuditVerdict(verdictPath, step);
-            });
-            if (
-              captureWorktreeState(targetDir, verdictRelativePath) !==
-              stateBefore
-            ) {
-              throw new Error(
-                `The ${step} specialist modified the implementation instead of reporting blockers.`,
-              );
-            }
-            if (readAuditVerdict(verdictPath, step).verdict === "approved") {
-              return;
-            }
-            console.log(
-              `\x1b[33m[${step}]\x1b[0m Blockers reported in cycle ${cycle}; returning control to the implementation specialist.`,
-            );
-            runSpecialist(
-              `${stack.toLowerCase()}-${step}-fix-${cycle}`,
-              SPECIALISTS.IMPLEMENTER_REVIEW_FIXES(
-                persona,
-                issueNum,
-                repo,
-                handoffPath,
-                verdictPath,
-              ),
-              [],
-              undefined,
-              implementerSessionId,
-            );
-            verifyWithRepair(handoffPath);
-          }
-          throw new Error(
-            `The ${step} specialist still reports blockers after ${REVIEW_BATCH_SIZE} implementation cycles.`,
+          console.log(
+            `[33m[domain-review][0m Blockers reported in cycle ${cycle}; returning control to the implementation specialist.`,
           );
-        });
-      };
-
-      runAudit("security-audit", (verdictPath) =>
-        SPECIALISTS.SECURITY_AUDITOR(issueNum, repo, verdictPath),
-      );
-      runAudit("database-review", (verdictPath) =>
-        SPECIALISTS.DATABASE_REVIEWER(issueNum, repo, verdictPath),
-      );
-      runAudit("api-contract-review", (verdictPath) =>
-        SPECIALISTS.API_CONTRACT_REVIEWER(issueNum, repo, verdictPath),
-      );
+          runSpecialist(
+            `${stack.toLowerCase()}-domain-review-fix-${cycle}`,
+            SPECIALISTS.IMPLEMENTER_REVIEW_FIXES(
+              persona,
+              issueNum,
+              repo,
+              handoffPath,
+              verdictPath,
+            ),
+            [],
+            undefined,
+            implementerSessionId,
+          );
+          verifyWithRepair(handoffPath);
+        }
+        throw new Error(
+          `The domain reviewer still reports blockers after ${REVIEW_BATCH_SIZE} implementation cycles.`,
+        );
+      });
     };
 
     const runDocumentationStage = (handoffPath: string): void => {
@@ -851,14 +847,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
         verifyWithRepair(planPath);
       });
-      runConditionalAudits(planPath);
-      runStep("adversarial-review", () => {
-        runSpecialist(
-          "reviewer",
-          SPECIALISTS.REVIEWER(issueNum, requirementsPath),
-        );
-        verifyWithRepair(planPath);
-      });
+      runDomainReview(planPath);
       runDocumentationStage(planPath);
     } else {
       runStep("lean-planning", () => {
@@ -947,7 +936,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
       });
       runStep("verification", () => verifyWithRepair(leanPlanPath));
-      runConditionalAudits(leanPlanPath);
+      runDomainReview(leanPlanPath);
       runDocumentationStage(leanPlanPath);
     }
     runStep("delivery", () => {

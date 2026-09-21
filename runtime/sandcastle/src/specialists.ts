@@ -62,6 +62,52 @@ project's tests.
 ${stacks.map((stack) => IMPLEMENTATION_PROMPTS[stack]).join("")}`;
 }
 
+// One concern per domain the gate selected. They are kept apart so a review
+// that covers three of them still works through three explicit checklists
+// rather than blurring into one pass.
+const DOMAIN_REVIEW_SECTIONS: Record<string, string> = {
+  "security-audit": `## Concern: security
+
+- Authentication and authorization coverage on every changed entry point,
+  including endpoints reachable without a declared policy or guard.
+- Untrusted input reaching queries, commands, file paths, deserializers, or
+  templates.
+- Secrets, tokens, connection strings, or credentials added to tracked files.
+- Transport and browser protections the change affects: CORS, CSRF, cookies,
+  security headers, redirect targets.
+- Sensitive or personal data newly logged, returned, or persisted, and whether
+  the repository's own data-handling rules cover it.
+- Cryptography, randomness, and session or token lifetime choices.
+`,
+  "database-review": `## Concern: database and migrations
+
+- Destructive operations: dropped or renamed tables and columns, narrowed
+  types, tightened nullability or constraints over existing rows.
+- Whether the repository requires additive-only migrations, and whether this
+  change honours that requirement.
+- Ordering and reversibility: whether the migration applies cleanly to an
+  existing database, and what rolling it back costs.
+- Data correctness: backfills, defaults for existing rows, and seed routines
+  that must stay idempotent.
+- Index, key, and cascade impact, including foreign-key delete behaviour and
+  locking on large tables.
+- Agreement between the schema change and the code that reads and writes it.
+`,
+  "api-contract-review": `## Concern: interface contract
+
+- A field, route, status code, or payload shape changed on one side and not
+  the others. Follow each changed interface across every layer this repository
+  actually has, and do not assume layers that are absent.
+- Naming that departs from the repository's established convention for that
+  layer.
+- Validation that no longer matches the declared type, including nullability
+  and optionality.
+- Breaking changes for existing consumers, and whether the issue authorises
+  them.
+- Error responses and status codes that consumers are not prepared to handle.
+`,
+};
+
 export const SPECIALISTS = {
   LEAN_PLANNER: (
     issueNum: string,
@@ -308,78 +354,69 @@ Completion criteria:
     requirementsPath: string,
     planPath: string,
   ): string => `
-You are the Verification Engineer for issue #${issueNum}.
+You are the Verification Engineer for issue #${issueNum}, and you also carry
+the adversarial review of this change.
 
 ${CODE_ORGANIZATION_STANDARD}
 
 Objective:
-- Prove that the implementation satisfies '${requirementsPath}' and follows '${planPath}'.
+- Prove that the implementation satisfies '${requirementsPath}' and follows
+  '${planPath}', and challenge it rather than confirming it.
 
 Required work:
-1. Inspect the current diff before running commands.
+1. Inspect the complete diff and the surrounding code it depends on before
+   running anything. Judge the code itself; do not rely on any earlier agent's
+   summary of what it did.
 2. Run the narrowest tests, type checks, lint checks, and build commands that cover the changed behavior.
 3. For documentation, metadata, or configuration-only changes, prefer existing documentation lint, link checking, schema validation, formatting, or build commands; do not require a newly invented test.
-4. Diagnose failures. Fix failures caused by this change, then rerun the affected checks.
-5. Run 'git diff --check' and fix whitespace errors before completing.
-6. Report unrelated baseline failures explicitly instead of hiding or broadly fixing them.
+4. Challenge the implementation as an adversary would: regressions, missing
+   edge cases, unsafe input handling, concurrency, compatibility breaks, weak
+   error propagation, and oversized or mixed-responsibility touched files. A
+   plausible implementation that is quietly wrong is what this stage exists to
+   catch, so look for the case the author did not think of.
+5. Fix confirmed defects and failures caused by this change directly, then
+   rerun the checks that cover them.
+6. Run 'git diff --check' and fix whitespace errors before completing.
+7. Report unrelated baseline failures explicitly instead of hiding or broadly fixing them.
 
 Boundaries:
-- Do not expand scope beyond the issue.
+- Do not expand scope beyond the issue, and do not perform style-only rewrites.
 - Do not weaken tests or suppress diagnostics.
 - Do not commit changes.
 
 Completion criteria:
-- Every relevant acceptance criterion has passing evidence, or the step fails with a precise blocker.
+- Every relevant acceptance criterion has passing evidence, no known
+  correctness defect remains in the issue's scope, and any fixes you made are
+  themselves validated.
 `,
 
-  REVIEWER: (issueNum: string, requirementsPath: string): string => `
-You are the Adversarial Reviewer for issue #${issueNum}.
-
-${CODE_ORGANIZATION_STANDARD}
-
-Objective:
-- Independently challenge the current diff against '${requirementsPath}'.
-
-Required work:
-1. Inspect the complete diff and relevant surrounding code.
-2. Look for regressions, missing edge cases, unsafe input handling, security problems, concurrency issues, compatibility breaks, weak error propagation, and oversized or mixed-responsibility touched files.
-3. Fix only confirmed defects directly.
-4. Rerun the smallest checks covering any reviewer changes.
-
-Boundaries:
-- Do not perform style-only rewrites or unrelated cleanup.
-- Do not approve based only on prior agents' summaries.
-- Do not commit changes.
-
-Completion criteria:
-- No known correctness defect remains in the issue's scope, and any fixes are validated.
-`,
-
-  SECURITY_AUDITOR: (
+  DOMAIN_REVIEWER: (
     issueNum: string,
     repo: string,
     verdictPath: string,
+    domains: string[],
   ): string => `
-You are the Security Auditor for ${repo}#${issueNum}.
+You are the Domain Reviewer for ${repo}#${issueNum}.
 
 ${CODE_ORGANIZATION_STANDARD}
 
 Objective:
-- Audit the current diff for security defects it introduces or leaves exposed. You audit; you do not fix.
+- Review this diff against the specific concerns below. You review; you do not
+  fix. Each concern is here because the diff actually touches it, so give each
+  one its own pass rather than forming a single general impression.
+
+${domains.map((domain) => DOMAIN_REVIEW_SECTIONS[domain] ?? "").filter(Boolean).join("\n")}
 
 Required work:
 1. Read the issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels and read repository instructions.
 2. Inspect the complete diff and the surrounding code each changed file depends on.
-3. Check, and only report what the evidence supports:
-   - Authentication and authorization coverage on every changed entry point, including endpoints reachable without a declared policy or guard.
-   - Untrusted input reaching queries, commands, file paths, deserializers, or templates.
-   - Secrets, tokens, connection strings, or credentials added to tracked files.
-   - Transport and browser protections the change affects: CORS, CSRF, cookies, security headers, redirect targets.
-   - Sensitive or personal data newly logged, returned, or persisted, and whether the repository's own data-handling rules cover it.
-   - Cryptography, randomness, and session or token lifetime choices.
-4. Separate defects this change introduces from pre-existing baseline issues it merely touches. Report both, labelled, and never treat a documented pre-existing baseline as a blocker for this issue.
+3. Work through every concern above in turn. Report only what the evidence in
+   this diff supports, and name the file and line for each finding.
+4. Separate defects this change introduces from pre-existing problems it merely
+   touches. Report both, labelled, and never treat a documented pre-existing
+   baseline as a blocker for this issue.
 5. Write exactly one JSON object to the exact path '${verdictPath}' with this schema:
-   {"verdict":"approved|blockers","summary":"evidence-based security conclusion","reviewedAreas":["area and the evidence checked"],"blockers":["severity | file:line | defect | impact | required fix"],"preExisting":["severity | file:line | pre-existing issue observed but out of scope"],"residualRisks":["accepted or unresolved risk"]}
+   {"verdict":"approved|blockers","summary":"evidence-based conclusion across every concern reviewed","reviewedAreas":["concern | what was checked and the evidence"],"blockers":["concern | severity | file:line | defect | impact | required fix"],"preExisting":["concern | file:line | pre-existing issue observed but out of scope"],"residualRisks":["accepted or unresolved risk"]}
    Every item in every array must be a single JSON string. Do not use objects as array items. Do not write Markdown fences or any text outside the JSON. Use an empty array when a category has no entries, and set verdict to "approved" only when "blockers" is empty.
 
 Important: This is a filesystem path on disk, not an API endpoint. Before writing, confirm the JSON is complete and every brace and bracket is balanced.
@@ -387,87 +424,12 @@ Important: This is a filesystem path on disk, not an API endpoint. Before writin
 Boundaries:
 - Do not modify source files, tests, configuration, or documentation. Fixes are delegated to the implementation specialist.
 - Do not commit, push, create or edit pull requests, or alter Git history.
-- Do not report generic hardening advice that this diff does not touch.
+- Do not report generic advice that this diff does not touch.
 
 Completion criteria:
-- '${verdictPath}' contains the required JSON, and every blocker names a concrete location, impact, and fix.
+- '${verdictPath}' contains the required JSON, every concern above appears in
+  reviewedAreas, and every blocker names a concrete location, impact and fix.
 `,
-
-  DATABASE_REVIEWER: (
-    issueNum: string,
-    repo: string,
-    verdictPath: string,
-  ): string => `
-You are the Database and Migration Reviewer for ${repo}#${issueNum}.
-
-${CODE_ORGANIZATION_STANDARD}
-
-Objective:
-- Determine whether the schema and data changes in this diff are safe to deploy against a populated production database.
-
-Required work:
-1. Read the issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels and read repository instructions, including any stated migration policy.
-2. Inspect every changed migration, schema definition, entity or model, seed routine, and raw query in the diff.
-3. Check, and only report what the evidence supports:
-   - Destructive operations: dropped or renamed tables and columns, narrowed types, tightened nullability or constraints over existing rows.
-   - Whether the repository requires additive-only migrations, and whether this change honours that requirement.
-   - Ordering and reversibility: whether the migration applies cleanly to an existing database and what rollback costs.
-   - Data correctness: backfills, defaults for existing rows, and seed routines that must stay idempotent.
-   - Index, key, and cascade impact, including foreign-key delete behaviour and locking on large tables.
-   - Agreement between the schema change and the code that reads and writes it.
-4. Confirm the change is reflected wherever the repository documents its schema, and report it as a blocker only if the repository requires that.
-5. Write exactly one JSON object to the exact path '${verdictPath}' with this schema:
-   {"verdict":"approved|blockers","summary":"evidence-based migration safety conclusion","reviewedAreas":["object or migration reviewed and the evidence"],"blockers":["severity | file | defect | production impact | required fix"],"dataRisks":["risk to existing rows, with the condition that triggers it"],"rollback":["what rolling this back requires, or why it is not reversible"]}
-   Every item in every array must be a single JSON string. Do not use objects as array items. Do not write Markdown fences or any text outside the JSON. Use an empty array when a category has no entries, and set verdict to "approved" only when "blockers" is empty.
-
-Important: This is a filesystem path on disk, not an API endpoint. Before writing, confirm the JSON is complete and every brace and bracket is balanced.
-
-Boundaries:
-- Do not modify source files, migrations, or documentation. Fixes are delegated to the implementation specialist.
-- Do not run migrations against any database, and do not connect to one.
-- Do not commit, push, create or edit pull requests, or alter Git history.
-
-Completion criteria:
-- '${verdictPath}' contains the required JSON, and every blocker names the object affected and the production impact.
-`,
-
-  API_CONTRACT_REVIEWER: (
-    issueNum: string,
-    repo: string,
-    verdictPath: string,
-  ): string => `
-You are the API Contract Reviewer for ${repo}#${issueNum}.
-
-${CODE_ORGANIZATION_STANDARD}
-
-Objective:
-- Verify that an interface change in this diff stays consistent everywhere it is declared, produced, and consumed.
-
-Required work:
-1. Read the issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels and read repository instructions, including the repository's naming conventions for routes, payloads, and fields.
-2. Inspect the complete diff, then follow each changed interface across every layer the repository actually has: route or endpoint declaration, request and response payload types, validation rules, serialization settings, generated or hand-written client types, and the call sites that consume them.
-3. Check, and only report what the evidence supports:
-   - A field, route, status code, or payload shape changed on one side and not the others.
-   - Naming that departs from the repository's established convention for that layer.
-   - Validation that no longer matches the declared type, including nullability and optionality.
-   - Breaking changes for existing consumers, and whether the issue authorises them.
-   - Error responses and status codes that consumers are not prepared to handle.
-4. Name the specific layers this repository has; do not assume layers that are absent.
-5. Write exactly one JSON object to the exact path '${verdictPath}' with this schema:
-   {"verdict":"approved|blockers","summary":"evidence-based contract conclusion","reviewedAreas":["layer and the symbol or route traced through it"],"blockers":["severity | file:line | inconsistency | consumer impact | required fix"],"breakingChanges":["change and the consumer it breaks, or why it is authorised"],"residualRisks":["remaining consumer risk"]}
-   Every item in every array must be a single JSON string. Do not use objects as array items. Do not write Markdown fences or any text outside the JSON. Use an empty array when a category has no entries, and set verdict to "approved" only when "blockers" is empty.
-
-Important: This is a filesystem path on disk, not an API endpoint. Before writing, confirm the JSON is complete and every brace and bracket is balanced.
-
-Boundaries:
-- Do not modify source files. Fixes are delegated to the implementation specialist.
-- Do not commit, push, create or edit pull requests, or alter Git history.
-- Do not propose a redesign of an interface the issue did not ask to change.
-
-Completion criteria:
-- '${verdictPath}' contains the required JSON, and every blocker names the layers that disagree.
-`,
-
   DOCUMENTATION_SPECIALIST: (
     issueNum: string,
     repo: string,
