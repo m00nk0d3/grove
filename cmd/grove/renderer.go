@@ -21,7 +21,7 @@ import (
 
 const (
 	footerHintsWorktrees = "[Tab] Panel | [j/k] Navigate | [Enter] Open | [a] Actions | [t] Settings | [/] Fuzzy | [q/esc]"
-	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] New WT | [a] Actions | [t] Settings | [/] Fuzzy | [q/esc]"
+	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] Jump/Open | [a] Actions | [r] Sync | [t] Settings | [/] Fuzzy | [q/esc]"
 	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [a] Actions | [t] Settings | [/] Fuzzy | [q/esc]"
 	footerHintsDefault   = footerHintsWorktrees
 	actionBarHints       = "[enter] Open  [a] Focus actions | [f1] Help"
@@ -270,7 +270,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	case viewDashboard:
 		list = renderDashboard(missionState, worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, sessions, selectedMissionIdx, selectedDashboardTab)
 	case viewIssues:
-		list = renderIssueList(visibleIssues, visibleSelectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList)
+		list = renderIssueList(visibleIssues, visibleSelectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList, missionState)
 	case viewPRs:
 		list = renderPRList(visiblePRs, visibleSelectedPRIdx, theme, listInner, panelHeight, focused == panelList)
 	default:
@@ -281,7 +281,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	if len(selections) > 0 {
 		actionIdx = selections[0]
 	}
-	actions := contextActionsFor(
+	actions := withGlobalContextActions(contextActionsFor(
 		view,
 		worktrees,
 		selectedIdx,
@@ -291,7 +291,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 		selectedPRIdx,
 		sessions,
 		dashboardActionContext{state: missionState, tab: selectedDashboardTab, selected: selectedMissionIdx},
-	)
+	))
 	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState, actions, actionIdx)
 	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, nav, list, ctx)
 	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, prs, currentPage)
@@ -1189,7 +1189,7 @@ func buildIssueTree(issues []domain.Issue) []issueTreeRow {
 	return rows
 }
 
-func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.Worktree, theme styles.Theme, listInner, panelHeight int, focused bool) string {
+func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.Worktree, theme styles.Theme, listInner, panelHeight int, focused bool, missionStates ...*domain.MissionControlState) string {
 	// Fixed column widths. titleColW fills all remaining space (no upper cap).
 	const (
 		numColW    = 5
@@ -1239,7 +1239,10 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 	for i, row := range visible {
 		issue := row.issue
 		status := "Open"
-		if issueHasWorktree(issue.Number, worktrees) {
+		if len(missionStates) > 0 {
+			status = issueWorkflowStatus(issue.Number, missionStates[0])
+		}
+		if status == "Open" && issueHasWorktree(issue.Number, worktrees) {
 			status = "In Progress"
 		}
 		statusValues[i] = status
@@ -1322,6 +1325,37 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
 	return st.Render(t.Render())
+}
+
+func issueWorkflowStatus(issueNumber int, state *domain.MissionControlState) string {
+	if state == nil {
+		return "Open"
+	}
+	bestPriority := 0
+	status := "Open"
+	for _, workflow := range state.WorkflowRuns {
+		if workflow.IssueNumber == nil || *workflow.IssueNumber != issueNumber {
+			continue
+		}
+		switch strings.ToLower(workflow.Status) {
+		case domain.WorkflowRunning, domain.WorkflowQueued:
+			if bestPriority < 4 {
+				bestPriority = 4
+				status = "In Progress"
+			}
+		case domain.WorkflowBlocked:
+			if bestPriority < 3 {
+				bestPriority = 3
+				status = "Blocked"
+			}
+		case domain.WorkflowFailed:
+			if bestPriority < 2 {
+				bestPriority = 2
+				status = "Failed"
+			}
+		}
+	}
+	return status
 }
 
 func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme, listInner, panelHeight int, focused bool) string {

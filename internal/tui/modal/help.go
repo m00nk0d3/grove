@@ -51,6 +51,7 @@ var keybindingGroups = []bindingGroup{
 			{"Tab", "Focus the visible Actions panel"},
 			{"a", "Jump directly to the Actions panel"},
 			{"j / k", "Select an action while focused"},
+			{"J / K or wheel", "Scroll right-panel details"},
 			{"Enter", "Run the selected action"},
 		},
 	},

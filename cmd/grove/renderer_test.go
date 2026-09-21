@@ -508,6 +508,21 @@ func TestRenderIssueList_InProgressStatus(t *testing.T) {
 		result := renderIssueList(issues, 0, nil, theme, 80, 20, false)
 		assert.NotContains(t, result, "In Progress")
 	})
+
+	t.Run("running Sandcastle workflow shows In Progress without branch-name matching", func(t *testing.T) {
+		issueNumber := 8
+		state := &domain.MissionControlState{
+			WorkflowRuns: []domain.WorkflowRunRef{{
+				RunID:        "run-8",
+				Status:       domain.WorkflowRunning,
+				IssueNumber:  &issueNumber,
+				Branch:       "agent/project-feature-8",
+				WorktreePath: "/repo/.sandcastle/worktrees/agent-project-feature-8",
+			}},
+		}
+		result := renderIssueList(issues[1:], 0, nil, theme, 80, 20, false, state)
+		assert.Contains(t, result, "In Progress")
+	})
 }
 
 // TestRenderIssueList_ShowsAssignees verifies that assignees are shown in the list.
@@ -662,7 +677,7 @@ func TestRenderContextPanel_IssueContext(t *testing.T) {
 				{Number: 1, Title: "Some Issue", Labels: nil},
 			},
 			selectedIdx: 0,
-			wantIn:      []string{"+1 more actions"},
+			wantIn:      []string{"+2 more actions"},
 		},
 	}
 
@@ -723,7 +738,7 @@ func TestRenderContextPanel_PRContext(t *testing.T) {
 				{Number: 1, Title: "Some PR", Branch: "main", Author: "dev", State: "OPEN"},
 			},
 			prIdx:  0,
-			wantIn: []string{"+3 more actions"},
+			wantIn: []string{"+4 more actions"},
 		},
 	}
 
@@ -1622,7 +1637,7 @@ func TestRenderer_IssueContextPanel_ShowsBody(t *testing.T) {
 				"Labels: [bug]",
 				"Details about the issue.",
 				"◆ ACTIONS",
-				"+1 more actions",
+				"+2 more actions",
 			},
 		},
 	}

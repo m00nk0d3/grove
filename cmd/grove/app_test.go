@@ -1329,6 +1329,41 @@ func TestModel_Enter_InViewIssues_EmptyList_NoOp(t *testing.T) {
 	assert.Nil(t, updatedModel.activeModal)
 }
 
+func TestModel_Enter_Issue_FocusesWorkflowAgentPane(t *testing.T) {
+	issueNumber := 52
+	navigator := &fakeHerdrNavigator{}
+	m := NewModel()
+	m.view = viewIssues
+	m.herdrNavigator = navigator
+	m.issues = []domain.Issue{{Number: issueNumber, Title: "Define IPC protocol"}}
+	m.missionState = &domain.MissionControlState{
+		WorkflowRuns: []domain.WorkflowRunRef{{
+			WorkflowID:  "run-52",
+			RunID:       "run-52",
+			Title:       "Implement #52",
+			Status:      domain.WorkflowRunning,
+			IssueNumber: &issueNumber,
+		}},
+		Agents: []domain.AgentRef{{
+			AgentID:       "agent-52",
+			Name:          "opencode",
+			WorkflowRunID: "run-52",
+			Status:        domain.AgentWorking,
+			PaneID:        "w8:pP",
+		}},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	assert.Nil(t, updated.(*Model).activeModal)
+
+	msg, ok := cmd().(paneFocusedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "w8:pP", navigator.focusedPane)
+	assert.Empty(t, navigator.openedPath)
+}
+
 // TestModel_Enter_InViewWorktrees_SpawnsSession verifies that Enter spawns a
 // session (same as the s key) when a worktree is selected.
 func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
@@ -1679,6 +1714,54 @@ func TestModel_MouseWheelNavigatesList(t *testing.T) {
 	assert.Equal(t, panelList, model.focused)
 }
 
+func TestModel_MouseWheelScrollsContextDetails(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	m.view = viewIssues
+	m.issues = []domain.Issue{{Number: 52}}
+	m.contextActionIdx = 1
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      layout.contextX + 2,
+		Y:      layout.panelTop + 3,
+		Button: tea.MouseButtonWheelDown,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.Equal(t, panelCtx, model.focused)
+	assert.Equal(t, 1, model.ctxScrollOffset)
+	assert.Equal(t, 1, model.contextActionIdx)
+
+	updated, cmd = model.Update(tea.MouseMsg{
+		X:      layout.contextX + 2,
+		Y:      layout.panelTop + 3,
+		Button: tea.MouseButtonWheelUp,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	assert.Equal(t, 0, updated.(*Model).ctxScrollOffset)
+}
+
+func TestModel_ContextPanelKeyboardScrollPreservesActionSelection(t *testing.T) {
+	m := NewModel()
+	m.focused = panelCtx
+	m.contextActionIdx = 1
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'J'}})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.Equal(t, 1, model.ctxScrollOffset)
+	assert.Equal(t, 1, model.contextActionIdx)
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	require.Nil(t, cmd)
+	assert.Equal(t, 0, updated.(*Model).ctxScrollOffset)
+	assert.Equal(t, 1, updated.(*Model).contextActionIdx)
+}
+
 func TestModel_MouseDoubleClickActivatesIssue(t *testing.T) {
 	m := NewModel()
 	m.width = 120
@@ -1841,6 +1924,31 @@ func TestModel_AKeyFocusesContextActions(t *testing.T) {
 	}
 }
 
+func TestModel_GitHubSyncActionIsAvailableFromEveryView(t *testing.T) {
+	for _, view := range []activeView{viewDashboard, viewWorktrees, viewIssues, viewPRs} {
+		t.Run(fmt.Sprintf("view-%d", view), func(t *testing.T) {
+			m := NewModel()
+			m.view = view
+
+			actions := m.availableContextActions()
+			require.NotEmpty(t, actions)
+			assert.Equal(t, modal.ContextActionSyncGitHub, actions[len(actions)-1].action)
+			assert.Equal(t, "Sync GitHub now", actions[len(actions)-1].label)
+		})
+	}
+}
+
+func TestModel_GitHubSyncActionForcesImmediateSync(t *testing.T) {
+	m := NewModel()
+
+	updated, cmd := m.handleContextAction(modal.ContextActionSyncGitHub)
+
+	require.NotNil(t, cmd)
+	model := updated.(*Model)
+	assert.True(t, model.syncing)
+	assert.Equal(t, "Syncing GitHub…", model.statusMsg)
+}
+
 func TestModel_WorkflowLaunchMsgStartsOpenCodeWorkflow(t *testing.T) {
 	issueNumber := 42
 	starter := &fakeSandcastleWorkflowStarter{
@@ -1893,7 +2001,7 @@ func TestModel_FailedDashboardWorkflowCanBeRetried(t *testing.T) {
 	m.contextActionIdx = 1
 
 	actions := m.availableContextActions()
-	require.Len(t, actions, 4)
+	require.Len(t, actions, 5)
 	assert.Equal(t, modal.ContextActionRetryRun, actions[1].action)
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})

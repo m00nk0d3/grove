@@ -354,7 +354,7 @@ func agentsForWorkflow(state *domain.MissionControlState, runID string) []domain
 	return agents
 }
 
-func workflowPaneForWorktree(state *domain.MissionControlState, worktree domain.Worktree) (string, string) {
+func workflowPaneMatching(state *domain.MissionControlState, matches func(domain.WorkflowRunRef) bool, fallbackLabel string) (string, string) {
 	if state == nil {
 		return "", ""
 	}
@@ -376,7 +376,7 @@ func workflowPaneForWorktree(state *domain.MissionControlState, worktree domain.
 		default:
 			continue
 		}
-		if !pathsEqual(workflow.WorktreePath, worktree.Path) && workflow.Branch != worktree.Branch {
+		if !matches(workflow) {
 			continue
 		}
 		if priority < bestPriority || (priority == bestPriority && !workflow.UpdatedAt.After(bestUpdatedAt)) {
@@ -393,7 +393,7 @@ func workflowPaneForWorktree(state *domain.MissionControlState, worktree domain.
 					label = workflow.Title
 				}
 				if label == "" {
-					label = worktree.Branch
+					label = fallbackLabel
 				}
 				bestPane = agent.PaneID
 				bestLabel = label
@@ -404,6 +404,18 @@ func workflowPaneForWorktree(state *domain.MissionControlState, worktree domain.
 		}
 	}
 	return bestPane, bestLabel
+}
+
+func workflowPaneForWorktree(state *domain.MissionControlState, worktree domain.Worktree) (string, string) {
+	return workflowPaneMatching(state, func(workflow domain.WorkflowRunRef) bool {
+		return pathsEqual(workflow.WorktreePath, worktree.Path) || workflow.Branch == worktree.Branch
+	}, worktree.Branch)
+}
+
+func workflowPaneForIssue(state *domain.MissionControlState, issue domain.Issue) (string, string) {
+	return workflowPaneMatching(state, func(workflow domain.WorkflowRunRef) bool {
+		return workflow.IssueNumber != nil && *workflow.IssueNumber == issue.Number
+	}, fmt.Sprintf("issue #%d", issue.Number))
 }
 
 // selfUpdateCmd runs the self-update in the background.
@@ -777,6 +789,14 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.focused = panelList
 		default:
 			m.focused = panelCtx
+			if msg.Button == tea.MouseButtonWheelUp {
+				if m.ctxScrollOffset > 0 {
+					m.ctxScrollOffset--
+				}
+			} else {
+				m.ctxScrollOffset++
+			}
+			return m, nil
 		}
 		if msg.Button == tea.MouseButtonWheelUp {
 			m.moveUp()
@@ -1124,9 +1144,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveDown()
 			return m, m.maybeLazyLoadCmd()
 		case tea.KeyPgDown:
+			if m.focused == panelCtx {
+				m.ctxScrollOffset++
+				return m, nil
+			}
 			m.nextPage()
 			return m, nil
 		case tea.KeyPgUp:
+			if m.focused == panelCtx {
+				if m.ctxScrollOffset > 0 {
+					m.ctxScrollOffset--
+				}
+				return m, nil
+			}
 			m.prevPage()
 			return m, nil
 		case tea.KeyRunes:
@@ -1140,6 +1170,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveDown()
 				return m, m.maybeLazyLoadCmd()
 			case "k":
+				m.moveUp()
+				return m, m.maybeLazyLoadCmd()
+			case "J":
+				if m.focused == panelCtx {
+					m.ctxScrollOffset++
+					return m, nil
+				}
+				m.moveDown()
+				return m, m.maybeLazyLoadCmd()
+			case "K":
+				if m.focused == panelCtx {
+					if m.ctxScrollOffset > 0 {
+						m.ctxScrollOffset--
+					}
+					return m, nil
+				}
 				m.moveUp()
 				return m, m.maybeLazyLoadCmd()
 			case "t":
@@ -2828,6 +2874,9 @@ func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		if paneID, label := workflowPaneForIssue(m.missionState, issue); paneID != "" {
+			return m, m.focusPaneCmd(paneID, label)
+		}
 		if session := m.sessionForIssue(issue); session != nil {
 			return m, m.focusSessionCmd(*session)
 		}
@@ -2883,6 +2932,14 @@ func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 
 func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 	switch action {
+	case modal.ContextActionSyncGitHub:
+		if m.syncing {
+			m.statusMsg = "GitHub sync already in progress"
+			return m, clearMsgCmd()
+		}
+		m.syncing = true
+		m.statusMsg = "Syncing GitHub…"
+		return m, m.syncGitHubCmd(true)
 	case modal.ContextActionInspect:
 		return m.openSelectedMissionInspector()
 	case modal.ContextActionRetryRun:
@@ -2933,7 +2990,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) availableContextActions() []contextActionOption {
-	return contextActionsFor(
+	return withGlobalContextActions(contextActionsFor(
 		m.view,
 		m.Worktrees,
 		m.selectedIdx,
@@ -2943,7 +3000,15 @@ func (m *Model) availableContextActions() []contextActionOption {
 		m.selectedPRIdx,
 		m.sessions,
 		dashboardActionContext{state: m.missionState, tab: m.dashboardTab, selected: m.selectedMissionIdx},
-	)
+	))
+}
+
+func withGlobalContextActions(actions []contextActionOption) []contextActionOption {
+	return append(actions, contextActionOption{
+		icon:   "↻",
+		label:  "Sync GitHub now",
+		action: modal.ContextActionSyncGitHub,
+	})
 }
 
 type dashboardActionContext struct {
@@ -2959,7 +3024,7 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 			return nil
 		}
 		return []contextActionOption{
-			{icon: "↵", label: "Open or create worktree", action: modal.ContextActionOpen},
+			{icon: "↵", label: "Jump to workflow or create worktree", action: modal.ContextActionOpen},
 			{icon: "⚡", label: "Implement issue", workflowKind: modal.WorkflowKindImplement},
 			{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
 		}

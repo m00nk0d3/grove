@@ -98,6 +98,7 @@ const (
 	ContextActionInspect    = "inspect-mission"
 	ContextActionRetryRun   = "retry-workflow"
 	ContextActionRemoveRun  = "remove-workflow"
+	ContextActionSyncGitHub = "sync-github"
 )
 
 // CandidateKind distinguishes the type of a cleanup candidate.
