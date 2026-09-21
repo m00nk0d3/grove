@@ -26,7 +26,7 @@ test:
 	cd runtime/sandcastle && npm test
 
 lint:
-	golangci-lint run --exclude runtime/sandcastle
+	golangci-lint run
 
 clean:
 	rm -f $(BINARY) $(BINARY)-linux-* $(BINARY)-darwin-* $(BINARY).exe
