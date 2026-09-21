@@ -23,11 +23,11 @@ jobs:
       - name: Run tests
         run: make test
         
+      # Install golangci-lint for lint checks, skipping typecheck due to Go 1.25 compatibility
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v3
         with:
-          version: latest
-          args: --out-format=colored-line-number
-      
+          version: v1.64 # Use older v1.x which has better Go 1.25 support
+          
       - name: Run lint
         run: make lint
