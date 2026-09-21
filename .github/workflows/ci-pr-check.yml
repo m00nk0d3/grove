@@ -11,15 +11,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: runtime/sandcastle/package-lock.json
-
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
       - name: Install Sandcastle dependencies
         run: npm ci --prefix runtime/sandcastle
