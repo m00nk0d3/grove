@@ -23,11 +23,15 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22.x'
           cache: npm
           cache-dependency-path: |
             runtime/sandcastle/package-lock.json
             runtime/sandcastle/package.json
+
+      # Clear npm cache to prevent using stale Node 20 installations
+      - name: Clear npm cache
+        run: npm cache clean --force
 
       - name: Install Sandcastle dependencies
         run: npm ci --prefix runtime/sandcastle
