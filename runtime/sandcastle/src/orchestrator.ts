@@ -782,6 +782,16 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       verifyWorktree(targetDir);
       runCommand("git", ["add", "-A"], { cwd: targetDir });
       runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
+      
+      // For Go projects, also apply gofmt before committing to ensure consistent formatting
+      if (stack === "GO") {
+        runCommand("go", ["fmt", "./..."], { cwd: targetDir });
+        const goFmtOutput = runCommand("gofmt", ["-d", "."], { cwd: targetDir });
+        if (goFmtOutput.trim()) {
+          throw new Error("Go files still have formatting differences after go fmt.");
+        }
+      }
+      
       runCommand(
         "git",
         [
@@ -794,6 +804,82 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         { cwd: targetDir },
       );
       requireCleanWorktree(targetDir);
+    };
+
+    const extractCommitSubject = (reportPath: string, subject: string): string => {
+      try {
+        const reportContent = fs.readFileSync(reportPath, "utf8");
+        
+        // Determine commit type from the implementation report
+        let commitType: "feat" | "fix" | "perf" | "refactor" | "docs" | "test" | "chore" = "chore";
+        let subjectLine: string | null = null;
+        
+        // Check for specific patterns that indicate the change type
+        if (/Added.*[Ss]upport|Implemented|Introduced|New/.test(reportContent)) {
+          commitType = "feat";
+        } else if (/Fixed|Resolved|Corrected|Addressed/.test(reportContent) && !/Feature|Add|Implement/i.test(reportContent)) {
+          commitType = "fix";
+        } else if (/Performance|Optimization|Speed/.test(reportContent)) {
+          commitType = "perf";
+        } else if (/Refactored|Restructured|Renamed|Moved/.test(reportContent)) {
+          commitType = "refactor";
+        } else if (/Documentation|Docs|README|CHANGELOG/.test(reportContent)) {
+          commitType = "docs";
+        } else if (/Test|Testing|Verify/.test(reportContent) && /New test|Added test/i.test(reportContent)) {
+          commitType = "test";
+        } else if (/Migrate|Upgrade|Update.*to [0-9]/.test(reportContent)) {
+          commitType = "chore";
+        }
+        
+        // Extract concrete details from the report for a specific subject line
+        const changedFiles = reportContent.match(/`M `?([^`]+)`/g)?.map(f => f.replace("`M ", "")) || [];
+        const addedFiles = reportContent.match(/`A `?([^`]+)`/g)?.map(f => f.replace("`A ", "")) || [];
+        
+        // Build a detailed subject line from concrete evidence
+        if (commitType === "feat") {
+          // For new features, find what was implemented
+          const featureMatch = reportContent.match(/(?:Implemented|Added|introduced)\s+([^\n]+)/);
+          if (featureMatch) {
+            const featureDesc = featureMatch[1].trim().substring(0, 60);
+            subjectLine = `${commitType}: implement ${featureDesc}`;
+          } else if (changedFiles.length > 0) {
+            const primaryFile = changedFiles[0]?.split("/").pop()?.replace(/ /g, "_");
+            subjectLine = `${commitType}(api): add ${primaryFile} endpoint`;
+          }
+        } else if (commitType === "fix") {
+          // For fixes, find what issue was resolved
+          const fixMatch = reportContent.match(/(?:Fixed|Resolved|Corrected)\s+(?:[a-z]+)\s+([^\n]+)/);
+          if (fixMatch) {
+            const issueDesc = fixMatch[1].trim().substring(0, 50);
+            subjectLine = `${commitType}: ${issueDesc}`;
+          } else if (changedFiles.length > 0) {
+            const primaryFile = changedFiles[0]?.split("/").pop()?.replace(/ /g, "_");
+            subjectLine = `${commitType}: fix issue in ${primaryFile || "the application"}`;
+          }
+        } else if (changedFiles.length > 0) {
+          // Fall back to file-based subjects when specific patterns aren't found
+          const primaryFile = changedFiles[0]?.split("/").pop()?.replace(/ /g, "_") || "";
+          subjectLine = `${commitType}: update ${primaryFile || "the repository"}`;
+        } else if (addedFiles.length > 0) {
+          // New files added
+          const primaryFile = addedFiles[0]?.split("/").pop();
+          subjectLine = `${commitType}(core): add ${primaryFile}`;
+        }
+        
+        // Default to a more descriptive format than the placeholder
+        if (!subjectLine && /resolve #\d+/.test(subject)) {
+          const issueNum = parseInt(subject.match(/#(\d+)/)?.[1] || "0");
+          subjectLine = `${commitType}: resolve #${issueNum}`;
+        } else if (!subjectLine) {
+          // Last resort: use a descriptive type-based message
+          subjectLine = `${commitType}: implement requested changes`;
+        }
+        
+        return subjectLine;
+      } catch (error) {
+        console.warn(`Failed to extract commit subject from report: ${error}`);
+        return subject;
+      }
     };
 
     if (state.mode === "full") {
@@ -949,7 +1035,49 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           "\x1b[33m[Resume]\x1b[0m Changes are already committed; skipping duplicate Git work.",
         );
       } else {
-        commitChanges(`fix: resolve #${issueNum}`);
+        const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
+        if (!status) {
+          throw new Error("The workflow produced no changes to commit.");
+        }
+        verifyWorktree(targetDir);
+        runCommand("git", ["add", "-A"], { cwd: targetDir });
+        runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
+        
+        // Generate a specific commit message from the implementation report to make
+        // the changelog useful. The reporter has written a detailed report at reportPath.
+        const reportContent = fs.readFileSync(reportPath, "utf8");
+        let commitSubject: string;
+        try {
+          if (/Added.*[Ss]upport|Implemented/.test(reportContent)) {
+            const featureMatch = reportContent.match(/(?:Added|introduced|Implemented)\s+([^\n`]+)/);
+            if (featureMatch) {
+              commitSubject = `feat: implement ${featureMatch[1].trim().substring(0, 60)}`;
+            } else {
+              commitSubject = `feat: implement requested changes`;
+            }
+          } else if (/Fixed|Resolved|Corrected/.test(reportContent)) {
+            const fixMatch = reportContent.match(/(?:Fixed|Resolved|Corrected|Addressed)\s+([^\n`]+)/);
+            if (fixMatch) {
+              commitSubject = `fix: ${fixMatch[1].trim().substring(0, 60)}`;
+            } else {
+              commitSubject = `fix: resolve #${issueNum}`;
+            }
+          } else {
+            // Fall back to file-based subjects when specific patterns aren't found
+            const changedFiles = reportContent.match(/(`M `?`?([^`]+)`?)/g) || [];
+            if (changedFiles.length > 0) {
+              const primaryFile = changedFiles[1]?.replace("`M ", "")?.split("/").pop() || "";
+              commitSubject = `chore: update ${primaryFile}`;
+            } else {
+              // Last resort
+              commitSubject = `fix: resolve #${issueNum}`;
+            }
+          }
+        } catch {
+          commitSubject = `fix: resolve #${issueNum}`;
+        }
+        
+        commitChanges(commitSubject);
       }
       requireCleanWorktree(targetDir);
     });

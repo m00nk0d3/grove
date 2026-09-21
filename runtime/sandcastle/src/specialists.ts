@@ -621,18 +621,28 @@ Required work:
    ## 👀 Reviewer Checklist
 6. Prefer concise bullets for evidence and a table with Criterion, Evidence, and Status columns for acceptance criteria. Use ✅, ⚠️, and ❌ only when supported by evidence.
 7. Write a pull request title to '${prTitlePath}': one line, nothing else, no
-   quotes and no trailing full stop. It must say what this change actually
-   does, in the words of the change rather than the words of the issue. The
-   issue title is '${issueTitle}'; do not simply repeat it, and do not write a
-   generic subject such as "resolve issue ${issueNum}".
-   - Use the repository's commit convention. Where that is Conventional
-     Commits, that means '<type>(<scope>): <summary>' with a type the change
-     earns: feat for new behaviour, fix for a defect, perf, refactor, docs,
-     test or chore as appropriate. Match the scopes the repository already
-     uses.
-   - Keep the whole line at 72 characters or fewer, in the imperative mood,
-     and specific enough that someone reading a release changelog learns what
-     changed. If the change does several things, name the one that matters.
+    quotes and no trailing full stop. It must say what this change actually
+    does, in the words of the change rather than the words of the issue. The
+    issue title is '${issueTitle}'; do not simply repeat it, and do not write a
+    generic subject such as "resolve issue ${issueNum}" or "fix: resolve #174".
+    
+    Derive the PR title directly from your own report content at this file:
+    - Read the '## ✅ What Changed' and '## 🏗️ Architecture and Data Flow' sections
+      to understand exactly what was built, modified, or removed.
+    - Extract concrete behaviors, file paths, component names, API changes, or
+      architectural updates that define this change.
+    - Reference specific artifacts: function names, endpoints, schema changes,
+      configuration keys where applicable.
+    
+    - Use the repository's commit convention. Where that is Conventional
+      Commits, that means '<type>(<scope>): <summary>' with a type the change
+      earns: feat for new behaviour, fix for a defect, perf, refactor, docs,
+      test or chore as appropriate. Match the scopes the repository already
+      uses.
+    - Keep the whole line at 72 characters or fewer, in the imperative mood,
+      and specific enough that someone reading a release changelog learns what
+      changed. If the change does several things, name the one that matters.
+    - Avoid generic phrases like "add", "update", "improve" without specifying what.
 
 Boundaries:
 - Do not modify source files, tests, dependencies, commits, branches, remotes, pull requests, or worktrees.
