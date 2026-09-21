@@ -173,13 +173,10 @@ export function getAgentLaunchConfig(
       model,
       "--agent",
       env.AGENT_FLOW_OPENCODE_AGENT ?? "build",
-      "--tools",
-      "read,bash,edit,write",  // Restrict to local filesystem tools only
+      "--auto",
     ],
     needsLmStudioEnv: false,
   };
-
-const OPENCODE_SYSTEM_PROMPT = `IMPORTANT: This agent cannot access the internet or external APIs. Do not use webfetch, http:// requests, or any external API calls. Use ONLY gh CLI commands for GitHub operations (gh pr view, gh issue read, etc.). All tool usage must be local filesystem operations only.`;
 }
 
 export function getVerificationCommand(
