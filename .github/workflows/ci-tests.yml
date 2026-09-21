@@ -20,6 +20,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: runtime/sandcastle/package-lock.json
+
+      - name: Install Sandcastle dependencies
+        run: npm ci --prefix runtime/sandcastle
+
       - name: Run tests
         run: make test
         
