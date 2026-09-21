@@ -401,7 +401,7 @@ test("lean workflow tracks three agent stages before the delivery gate", () => {
   ]);
 });
 
-test("lean planning state ignores only its handoff and detects resumed file edits", () => {
+test("worktree state compares content across resumed and staged changes", () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), ".lean-planning-state-"));
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: root, stdio: "pipe" });
@@ -420,12 +420,20 @@ test("lean planning state ignores only its handoff and detects resumed file edit
       "-m",
       "initial",
     );
+    fs.writeFileSync(path.join(root, "tracked.txt"), "existing tracked work\n");
     fs.writeFileSync(path.join(root, "resumed.txt"), "existing work\n");
     const before = captureWorktreeState(root, planPath);
 
     fs.mkdirSync(path.join(root, ".agent", "issue-42"), { recursive: true });
     fs.writeFileSync(path.join(root, planPath), "implementation plan\n");
     assert.equal(captureWorktreeState(root, planPath), before);
+
+    git("add", "tracked.txt");
+    assert.equal(
+      captureWorktreeState(root, planPath),
+      before,
+      "staging metadata alone does not count as an implementation edit",
+    );
 
     fs.writeFileSync(path.join(root, "resumed.txt"), "planner changed it\n");
     assert.notEqual(captureWorktreeState(root, planPath), before);

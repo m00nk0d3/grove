@@ -49,13 +49,6 @@ export function captureWorktreeState(
   targetDir: string,
   ignoredRelativePath: string,
 ): string {
-  const status = runCommand(
-    "git",
-    ["status", "--porcelain=v1", "--untracked-files=all"],
-    { cwd: targetDir },
-  )
-    .split("\n")
-    .filter((line) => line && line.slice(3) !== ignoredRelativePath);
   const trackedDiff = runCommand(
     "git",
     ["diff", "--binary", "HEAD", "--", ".", `:(exclude)${ignoredRelativePath}`],
@@ -74,8 +67,9 @@ export function captureWorktreeState(
         ? fs.readlinkSync(absolutePath)
         : fs.readFileSync(absolutePath);
       return [file, createHash("sha256").update(content).digest("hex")];
-    });
-  return JSON.stringify({ status, trackedDiff, untracked });
+    })
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify({ trackedDiff, untracked });
 }
 
 export function implementationSessionId(repo: string, issueNum: string): string {
