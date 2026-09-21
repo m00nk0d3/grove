@@ -24,14 +24,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.x'
-          cache: npm
-
-      # Clear npm cache to prevent using stale versions
-      - name: Clear npm cache
-        run: npm cache clean --force
 
       - name: Install Sandcastle dependencies
-        run: npm ci --prefix runtime/sandcastle || npm install --prefix runtime/sandcastle
+        run: npm ci --prefix runtime/sandcastle
 
       - name: Install Sandcastle dependencies
         run: npm ci --prefix runtime/sandcastle
