@@ -1,15 +1,6 @@
 run:
   timeout: 10m
   
-issues:
-  exclude-use-default: true
-  exclude-dirs:
-    - vendor
-    - runtime/sandcastle
-    - .git
-    - dist/
-    - node_modules
-
 linters:
   disable-all: true
   enable:
@@ -18,14 +9,16 @@ linters:
     - govet
     - unused
     - errcheck
-    
-  settings:
-    typecheck:
-      disabled: true
 
 issues:
+  exclude-use-default: true
+  exclude-dirs:
+    - vendor
+    - runtime/sandcastle
+    - .git
+    - dist/
+    - node_modules
   exclude-rules:
-    # Exclude TypeScript files from Go linters
     - path: 'runtime/sandcastle/src/.*\.ts'
       linters:
         - gofmt
