@@ -132,7 +132,7 @@ func renderSessionBlock(s *domain.Session) string {
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, selections ...int) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, selections ...int) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
@@ -268,7 +268,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	}
 	switch view {
 	case viewDashboard:
-		list = renderDashboard(missionState, worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, sessions, selectedMissionIdx, selectedDashboardTab)
+		list = renderDashboard(missionState, worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, sessions, selectedMissionIdx, selectedDashboardTab, dismissed)
 	case viewIssues:
 		list = renderIssueList(visibleIssues, visibleSelectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList, missionState)
 	case viewPRs:
@@ -302,7 +302,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 
 // renderDashboard renders aggregate operations telemetry. Detailed issue, PR,
 // and worktree records remain in their dedicated views.
-func renderDashboard(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, sessions []domain.Session, selectedMissionIdx int, selectedTab dashboardTab) string {
+func renderDashboard(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, theme styles.Theme, listInner, panelHeight int, focused bool, sessions []domain.Session, selectedMissionIdx int, selectedTab dashboardTab, dismissed map[string]bool) string {
 	var workflows []domain.WorkflowRunRef
 	var agents []domain.AgentRef
 	status := domain.UnknownState
@@ -323,8 +323,8 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 			}
 		}
 	}
-	activeMissions := dashboardMissions(missionState)
-	completedMissions := completedDashboardMissions(missionState)
+	activeMissions := dashboardMissions(missionState, dismissed)
+	completedMissions := completedDashboardMissions(missionState, dismissed)
 	activeWorkflows := len(activeMissions)
 	attentionCount := countAttentionPRs(prs)
 	blocked := countStatuses(workflowStatuses(workflows), domain.WorkflowBlocked, domain.WorkflowFailed) +
@@ -452,24 +452,34 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 	return st.Render(strings.TrimRight(b.String(), "\n"))
 }
 
-func dashboardMissions(state *domain.MissionControlState) []dashboardMission {
-	return dashboardMissionsMatching(state, isActionableWorkflow, true)
+func dashboardMissions(state *domain.MissionControlState, dismissed map[string]bool) []dashboardMission {
+	return dashboardMissionsMatching(state, isActionableWorkflow, true, dismissed)
 }
 
-func completedDashboardMissions(state *domain.MissionControlState) []dashboardMission {
+func completedDashboardMissions(state *domain.MissionControlState, dismissed map[string]bool) []dashboardMission {
 	return dashboardMissionsMatching(state, func(workflow domain.WorkflowRunRef) bool {
-		return strings.EqualFold(workflow.Status, domain.WorkflowSucceeded)
-	}, false)
+		if !strings.EqualFold(workflow.Status, domain.WorkflowSucceeded) {
+			return false
+		}
+		if dismissed == nil {
+			return false
+		}
+		runID := workflow.RunID
+		if runID == "" {
+			runID = workflow.WorkflowID
+		}
+		return dismissed[runID]
+	}, false, nil)
 }
 
-func dashboardMissionsForTab(state *domain.MissionControlState, tab dashboardTab) []dashboardMission {
+func dashboardMissionsForTab(state *domain.MissionControlState, tab dashboardTab, dismissed map[string]bool) []dashboardMission {
 	if tab == dashboardTabCompleted {
-		return completedDashboardMissions(state)
+		return completedDashboardMissions(state, dismissed)
 	}
-	return dashboardMissions(state)
+	return dashboardMissions(state, dismissed)
 }
 
-func dashboardMissionsMatching(state *domain.MissionControlState, includeWorkflow func(domain.WorkflowRunRef) bool, includeWorkItems bool) []dashboardMission {
+func dashboardMissionsMatching(state *domain.MissionControlState, includeWorkflow func(domain.WorkflowRunRef) bool, includeWorkItems bool, dismissed map[string]bool) []dashboardMission {
 	if state == nil {
 		return nil
 	}
@@ -481,6 +491,9 @@ func dashboardMissionsMatching(state *domain.MissionControlState, includeWorkflo
 		}
 		for _, workflow := range item.LinkedWorkflows {
 			if !includeWorkflow(workflow) {
+				continue
+			}
+			if isDismissed(workflow, dismissed) {
 				continue
 			}
 			mission := missionFromWorkflow(workflow, item)
@@ -502,6 +515,9 @@ func dashboardMissionsMatching(state *domain.MissionControlState, includeWorkflo
 		if !includeWorkflow(workflow) {
 			continue
 		}
+		if isDismissed(workflow, dismissed) {
+			continue
+		}
 		if _, ok := seenRuns[workflowIdentity(workflow)]; ok {
 			continue
 		}
@@ -514,6 +530,17 @@ func dashboardMissionsMatching(state *domain.MissionControlState, includeWorkflo
 		})
 	}
 	return missions
+}
+
+func isDismissed(workflow domain.WorkflowRunRef, dismissed map[string]bool) bool {
+	if dismissed == nil || !strings.EqualFold(workflow.Status, domain.WorkflowSucceeded) {
+		return false
+	}
+	runID := workflow.RunID
+	if runID == "" {
+		runID = workflow.WorkflowID
+	}
+	return runID != "" && dismissed[runID]
 }
 
 func missionFromWorkflow(workflow domain.WorkflowRunRef, item domain.WorkItem) dashboardMission {
@@ -676,7 +703,7 @@ func isActiveMission(item domain.WorkItem) bool {
 
 func isActionableWorkflow(workflow domain.WorkflowRunRef) bool {
 	switch strings.ToLower(workflow.Status) {
-	case domain.WorkflowQueued, domain.WorkflowRunning, domain.WorkflowBlocked, domain.WorkflowFailed:
+	case domain.WorkflowQueued, domain.WorkflowRunning, domain.WorkflowBlocked, domain.WorkflowFailed, domain.WorkflowSucceeded:
 		return true
 	default:
 		return false

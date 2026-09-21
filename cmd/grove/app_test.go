@@ -1638,6 +1638,7 @@ func TestModel_DashboardVOpensMissionInspector(t *testing.T) {
 func TestModel_DashboardCompletedTabOpensCompletedMission(t *testing.T) {
 	m := NewModel()
 	m.view = viewDashboard
+	m.dismissedWorkflows = map[string]bool{"run-done": true}
 	m.missionState = &domain.MissionControlState{
 		WorkflowRuns: []domain.WorkflowRunRef{
 			{WorkflowID: "run-live", RunID: "run-live", Title: "Implement issue #42", Status: domain.WorkflowRunning},

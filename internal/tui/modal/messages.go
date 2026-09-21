@@ -97,6 +97,7 @@ const (
 	ContextActionOpenGitHub = "open-github"
 	ContextActionInspect    = "inspect-mission"
 	ContextActionRetryRun   = "retry-workflow"
+	ContextActionMarkDone   = "mark-done"
 	ContextActionRemoveRun  = "remove-workflow"
 	ContextActionSyncGitHub = "sync-github"
 )

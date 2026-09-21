@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"context"
 	"errors"
 	"fmt"
@@ -163,7 +164,7 @@ func checkForUpdateCmd() tea.Cmd {
 }
 
 func (m *Model) jumpToSelectedMission() (tea.Model, tea.Cmd) {
-	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 	if len(missions) == 0 {
 		m.statusErr = "No active workflow selected"
 		return m, clearErrorCmd()
@@ -177,7 +178,7 @@ func (m *Model) jumpToSelectedMission() (tea.Model, tea.Cmd) {
 
 func (m *Model) jumpToMissionRun(runID string) (tea.Model, tea.Cmd) {
 	for _, tab := range []dashboardTab{dashboardTabActive, dashboardTabCompleted} {
-		for i, mission := range dashboardMissionsForTab(m.missionState, tab) {
+		for i, mission := range dashboardMissionsForTab(m.missionState, tab, m.dismissedWorkflows) {
 			if mission.workflow.RunID == runID || mission.workflow.WorkflowID == runID {
 				m.dashboardTab = tab
 				m.selectedMissionIdx = i
@@ -219,7 +220,7 @@ func (m *Model) jumpToMission(mission dashboardMission) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) openSelectedMissionInspector() (tea.Model, tea.Cmd) {
-	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 	if len(missions) == 0 {
 		m.statusErr = "No active workflow selected"
 		return m, clearErrorCmd()
@@ -240,8 +241,44 @@ func (m *Model) openSelectedMissionInspector() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) dismissSelectedWorkflow() (tea.Model, tea.Cmd) {
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
+	if len(missions) == 0 {
+		m.statusErr = "No workflow selected"
+		return m, clearErrorCmd()
+	}
+	if m.selectedMissionIdx < 0 || m.selectedMissionIdx >= len(missions) {
+		m.selectedMissionIdx = 0
+	}
+	workflow := missions[m.selectedMissionIdx]
+	if !strings.EqualFold(workflow.workflow.Status, domain.WorkflowSucceeded) {
+		m.statusErr = "Only succeeded workflows can be marked done"
+		return m, clearErrorCmd()
+	}
+	runID := workflow.workflow.RunID
+	if runID == "" {
+		runID = workflow.workflow.WorkflowID
+	}
+	if runID == "" {
+		m.statusErr = "Workflow has no run ID"
+		return m, clearErrorCmd()
+	}
+	m.dismissedWorkflows[runID] = true
+	if err := saveDismissedWorkflows(m.dismissedWorkflows); err != nil {
+		m.statusErr = fmt.Sprintf("Failed to save: %v", err)
+		return m, clearErrorCmd()
+	}
+	m.statusMsg = "Workflow marked as done"
+	// Keep selection in bounds
+	newMissions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
+	if m.selectedMissionIdx >= len(newMissions) {
+		m.selectedMissionIdx = max(0, len(newMissions)-1)
+	}
+	return m, clearMsgCmd()
+}
+
 func (m *Model) confirmSelectedWorkflowRemoval() (tea.Model, tea.Cmd) {
-	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 	if len(missions) == 0 {
 		m.statusErr = "No workflow selected"
 		return m, clearErrorCmd()
@@ -259,7 +296,7 @@ func (m *Model) confirmSelectedWorkflowRemoval() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) retrySelectedWorkflow() (tea.Model, tea.Cmd) {
-	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+	missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 	if len(missions) == 0 {
 		m.statusErr = "No workflow selected"
 		return m, clearErrorCmd()
@@ -538,6 +575,48 @@ func clearMsgCmd() tea.Cmd {
 	})
 }
 
+const dismissedWorkflowsFile = "dismissed.json"
+
+func dismissedWorkflowsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return filepath.Join(home, ".grove", dismissedWorkflowsFile)
+}
+
+func loadDismissedWorkflows() map[string]bool {
+	data, err := os.ReadFile(dismissedWorkflowsPath())
+	if err != nil {
+		return make(map[string]bool)
+	}
+	var ids []string
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return make(map[string]bool)
+	}
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
+}
+
+func saveDismissedWorkflows(dismissed map[string]bool) error {
+	ids := make([]string, 0, len(dismissed))
+	for id := range dismissed {
+		ids = append(ids, id)
+	}
+	data, err := json.MarshalIndent(ids, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := dismissedWorkflowsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
 // debouncedRenderCmd schedules a debouncedRenderMsg after delay.
 func debouncedRenderCmd(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(t time.Time) tea.Msg {
@@ -662,6 +741,10 @@ type Model struct {
 	fuzzySelIdx  int                   // selected result index
 	fuzzyLoading bool                  // true while the search index is being built
 
+	// dismissedWorkflows tracks succeeded workflows the user has marked as
+	// done. The key is the workflow RunID (or WorkflowID).
+	dismissedWorkflows map[string]bool
+
 	// healthChecker fetches runtime snapshots for Herdr/Sandcastle session
 	// health checks. nil when not initialised (tests, standalone mode).
 	healthChecker sessionHealthChecker
@@ -704,11 +787,12 @@ func NewModel() *Model {
 	}
 
 	return &Model{
-		Config:      cfg,
-		themeIdx:    themeIdx,
-		statusErr:   configErr,
-		focused:     panelList,
-		insideHerdr: os.Getenv("HERDR_ENV") != "",
+		Config:             cfg,
+		themeIdx:           themeIdx,
+		statusErr:          configErr,
+		focused:            panelList,
+		insideHerdr:        os.Getenv("HERDR_ENV") != "",
+		dismissedWorkflows: loadDismissedWorkflows(),
 		fuzzyInput: func() textinput.Model {
 			ti := textinput.New()
 			ti.Placeholder = "Search worktrees, issues, PRs, files..."
@@ -895,7 +979,7 @@ func (m *Model) handleListClick(msg tea.MouseMsg, layout mouseUILayout, doubleCl
 			return m, nil
 		}
 		visibleRow := (contentRow - dashboardFirstMissionRow) / 2
-		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 		start := 0
 		if m.selectedMissionIdx >= 5 {
 			start = m.selectedMissionIdx - 4
@@ -1206,6 +1290,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.view == viewDashboard {
 					return m.confirmSelectedWorkflowRemoval()
 				}
+			case "m", "M":
+				if m.view == viewDashboard && m.dashboardTab == dashboardTabActive {
+					return m.dismissSelectedWorkflow()
+				}
 			case "[", "]":
 				if m.view == viewDashboard {
 					if msg.String() == "[" {
@@ -1465,7 +1553,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case missionControlUpdatedMsg:
 		m.missionState = &msg.state
-		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab)
+		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 		if len(missions) == 0 {
 			m.selectedMissionIdx = 0
 		} else if m.selectedMissionIdx >= len(missions) {
@@ -1646,7 +1734,7 @@ func (m *Model) View() string {
 			return &m.sandcastleSnapshot.Integration
 		}
 		return nil
-	}(), m.missionState, actionIdx, m.selectedMissionIdx, int(m.dashboardTab))
+	}(), m.missionState, m.dismissedWorkflows, actionIdx, m.selectedMissionIdx, int(m.dashboardTab))
 
 	w, h := m.width, m.height
 	if w <= 0 {
@@ -2944,6 +3032,8 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		return m.openSelectedMissionInspector()
 	case modal.ContextActionRetryRun:
 		return m.retrySelectedWorkflow()
+	case modal.ContextActionMarkDone:
+		return m.dismissSelectedWorkflow()
 	case modal.ContextActionRemoveRun:
 		return m.confirmSelectedWorkflowRemoval()
 	case modal.ContextActionOpen:
@@ -2999,7 +3089,7 @@ func (m *Model) availableContextActions() []contextActionOption {
 		m.prs,
 		m.selectedPRIdx,
 		m.sessions,
-		dashboardActionContext{state: m.missionState, tab: m.dashboardTab, selected: m.selectedMissionIdx},
+		dashboardActionContext{state: m.missionState, tab: m.dashboardTab, selected: m.selectedMissionIdx, dismissed: m.dismissedWorkflows},
 	))
 }
 
@@ -3012,9 +3102,10 @@ func withGlobalContextActions(actions []contextActionOption) []contextActionOpti
 }
 
 type dashboardActionContext struct {
-	state    *domain.MissionControlState
-	tab      dashboardTab
-	selected int
+	state      *domain.MissionControlState
+	tab        dashboardTab
+	selected   int
+	dismissed  map[string]bool
 }
 
 func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session, dashboard ...dashboardActionContext) []contextActionOption {
@@ -3067,15 +3158,18 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 			{icon: "◎", label: "Inspect workflow", action: modal.ContextActionInspect},
 		}
 		if len(dashboard) > 0 {
-			missions := dashboardMissionsForTab(dashboard[0].state, dashboard[0].tab)
+			missions := dashboardMissionsForTab(dashboard[0].state, dashboard[0].tab, dashboard[0].dismissed)
 			if len(missions) > 0 {
 				selected := dashboard[0].selected
 				if selected < 0 || selected >= len(missions) {
 					selected = 0
 				}
-				if strings.EqualFold(missions[selected].workflow.Status, domain.WorkflowFailed) {
-					actions = append(actions, contextActionOption{icon: "↻", label: "Retry workflow", action: modal.ContextActionRetryRun})
-				}
+			if strings.EqualFold(missions[selected].workflow.Status, domain.WorkflowFailed) {
+				actions = append(actions, contextActionOption{icon: "↻", label: "Retry workflow", action: modal.ContextActionRetryRun})
+			}
+			if strings.EqualFold(missions[selected].workflow.Status, domain.WorkflowSucceeded) {
+				actions = append(actions, contextActionOption{icon: "✓", label: "Mark done", action: modal.ContextActionMarkDone})
+			}
 				label := "Remove workflow"
 				if isWorkflowActive(missions[selected].workflow) {
 					label = "Stop and remove workflow"
@@ -3259,7 +3353,7 @@ func (m *Model) moveDown() {
 	default: // panelList
 		switch m.view {
 		case viewDashboard:
-			if m.selectedMissionIdx < len(dashboardMissionsForTab(m.missionState, m.dashboardTab))-1 {
+			if m.selectedMissionIdx < len(dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows))-1 {
 				m.selectedMissionIdx++
 			}
 		case viewIssues:

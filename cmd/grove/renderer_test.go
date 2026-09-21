@@ -192,15 +192,15 @@ func TestDashboardMissions_ShowsActionableRunsWithReadableTitles(t *testing.T) {
 		},
 	}
 
-	missions := dashboardMissions(state)
+	missions := dashboardMissions(state, nil)
 
-	require.Len(t, missions, 2)
+	require.Len(t, missions, 3)
 	assert.Equal(t, "Implement issue #42", missions[0].label)
 	assert.Equal(t, "Repair CI #17", missions[1].label)
+	assert.Equal(t, "Review pull request #9", missions[2].label)
 
-	completed := completedDashboardMissions(state)
-	require.Len(t, completed, 1)
-	assert.Equal(t, "Review pull request #9", completed[0].label)
+	completed := completedDashboardMissions(state, nil)
+	require.Len(t, completed, 0)
 }
 
 func TestRenderDashboard_CompletedTabShowsCompletedRuns(t *testing.T) {
@@ -213,6 +213,7 @@ func TestRenderDashboard_CompletedTabShowsCompletedRuns(t *testing.T) {
 			{WorkflowID: "run-done", Title: "Review pull request #9", Status: domain.WorkflowSucceeded},
 		},
 	}
+	model.dismissedWorkflows = map[string]bool{"run-done": true}
 
 	view := model.View()
 
