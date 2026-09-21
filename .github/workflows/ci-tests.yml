@@ -23,13 +23,10 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: 22
 
       - name: Install Sandcastle dependencies
-        run: npm ci --prefix runtime/sandcastle
-
-      - name: Install Sandcastle dependencies
-        run: npm ci --prefix runtime/sandcastle
+        run: cd runtime/sandcastle && npm ci
 
       - name: Run tests
         run: make test
