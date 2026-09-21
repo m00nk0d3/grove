@@ -841,7 +841,7 @@ test("assertAgentSettled rejects blocked and unknown agents", () => {
   );
 });
 
-test("review verdicts are validated and formatted in detail", async () => {
+test("review verdicts are validated and formatted in detail", () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-verdict-"));
   const verdictPath = path.join(root, "verdict.json");
   try {
@@ -857,7 +857,7 @@ test("review verdicts are validated and formatted in detail", async () => {
         residualRisks: [],
       }),
     );
-    const verdict = await readJsonArtifactWithRetry(verdictPath);
+    const verdict = readReviewVerdict(verdictPath);
     assert.equal(verdict.verdict, "blockers");
     const report = formatReviewVerdict(verdict, 2);
     assert.match(report, /🚧 Review Cycle 2: BLOCKERS FOUND/);
@@ -870,7 +870,7 @@ test("review verdicts are validated and formatted in detail", async () => {
   }
 });
 
-test("review verdicts normalize a single validation string", async () => {
+test("review verdicts normalize a single validation string", () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-verdict-"));
   const verdictPath = path.join(root, "verdict.json");
   try {
@@ -886,16 +886,15 @@ test("review verdicts normalize a single validation string", async () => {
         residualRisks: [],
       }),
     );
-    const verdict = await readJsonArtifactWithRetry(verdictPath);
+    const verdict = readReviewVerdict(verdictPath);
     assert.deepEqual(verdict.validation, ["go test ./...: passed."]);
   } catch (error) {
     throw new Error(
       `PR review verdict invalid: ${error instanceof Error ? error.message : String(error)}`
     );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
-} finally {
-  fs.rmSync(root, { recursive: true, force: true });
-}
 });
 
 test("review continuation accepts only explicit affirmative answers", () => {

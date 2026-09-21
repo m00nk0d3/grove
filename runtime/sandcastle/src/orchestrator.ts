@@ -23,11 +23,11 @@ import {
   confirmStartPrReview,
   formatReviewVerdict,
   postReviewComment,
+  readJsonArtifactWithRetry,
   readReviewVerdict,
   REVIEW_BATCH_SIZE,
 } from "./review-loop.js";
-import { type ReviewVerdict, readJsonArtifactWithRetry, readReviewVerdict } from "./review-loop.js";
-const MAX_JSON_READ_RETRIES = 3;
+import { type ReviewVerdict } from "./review-loop.js";
 import {
   assertModeOverrideCompatible,
   detectRepo,
@@ -108,58 +108,6 @@ export function runValidationWithRepair(
       `Validation still fails after one implementation repair attempt: ${failure}`,
     );
   }
-}
-
-export async function readJsonArtifactWithRetry(
-  path: string,
-  maxRetries: number = MAX_JSON_READ_RETRIES,
-): Promise<unknown> {
-  if (!fs.existsSync(path)) {
-    throw new Error(`JSON artifact not found: ${path}`);
-  }
-
-  let lastError: Error | null = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const content = fs.readFileSync(path, "utf8");
-      
-      // Strip markdown fences and comments
-      let jsonContent = content.trim();
-      if (/^(```\s*json?\s*)/.test(jsonContent)) {
-        const startIdx = jsonContent.indexOf("```") + 3;
-        jsonContent = jsonContent.slice(startIdx);
-      }
-      if (/\n\s*\n\s*```/.test(jsonContent)) {
-        const endIdx = jsonContent.lastIndexOf("```");
-        jsonContent = jsonContent.slice(0, endIdx).trim();
-      }
-      jsonContent = jsonContent.replace(/<!--[\s\S]*?-->/g, "");
-
-      return JSON.parse(jsonContent);
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      console.log(
-        `\x1b[33m[JSON Validation]\x1b[0m Attempt ${attempt}/${maxRetries} failed to read valid JSON from ${path}: ${lastError.message}`,
-      );
-      
-      if (attempt < maxRetries) {
-        // Don't retry on missing file or permission errors
-        const parseErr = lastError as Error;
-        if (parseErr.message.includes("not found") || 
-            parseErr.message.includes("ENOENT") ||
-            parseErr.message.includes("EACCES")) {
-          throw lastError;
-        }
-        
-        // Retry after short delay for transient issues
-        console.log(`\x1b[36m[JSON Validation]\x1b[0m Waiting before retry...`);
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-    }
-  }
-
-  throw lastError ?? new Error(`Failed to read valid JSON from ${path} after ${maxRetries} attempts.`);
 }
 
 export function createLeanReport(
@@ -903,13 +851,9 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             }
           },
         );
-        let verdict: ReviewVerdict | undefined;
+        let verdict: ReviewVerdict;
         try {
-          const parsed = await readJsonArtifactWithRetry(verdictPath);
-          if (!parsed) {
-            throw new Error("PR review verdict is empty.");
-          }
-          verdict = parsed;
+          verdict = await readJsonArtifactWithRetry(verdictPath);
         } catch (error) {
           throw new Error(
             `PR review verdict invalid after cycle ${cycle}. The agent must produce valid, complete JSON.`
