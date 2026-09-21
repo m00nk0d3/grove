@@ -155,7 +155,7 @@ export function runSpecialistInPane(options: SpecialistOptions): void {
     onPaneChanged,
   } = options;
   const launch = getAgentLaunchConfig();
-  const effectivePrompt =
+  let effectivePrompt =
     `Authoritative working directory: ${targetDir}\n` +
     "Perform all repository inspection, Git commands, validation, and edits " +
     "in that worktree. Do not substitute another checkout.\n" +
@@ -163,7 +163,7 @@ export function runSpecialistInPane(options: SpecialistOptions): void {
     "valid existing work, then continue from the current state.\n" +
     promptText;
   if (launch.backend === "opencode") {
-    effectivePrompt += `
+    effectivePrompt = effectivePrompt + `
 
 IMPORTANT: All required artifacts must be written to absolute filesystem paths.
 For OpenCode agents, use bash commands like: echo '{"..."}' > "/absolute/path/to/file.json"
