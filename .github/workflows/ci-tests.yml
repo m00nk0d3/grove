@@ -25,15 +25,13 @@ jobs:
         with:
           node-version: '22.x'
           cache: npm
-          cache-dependency-path: runtime/sandcastle/package.json
 
-      # Clear npm cache to prevent using stale Node versions
+      # Clear npm cache to prevent using stale versions
       - name: Clear npm cache
         run: npm cache clean --force
 
-      # Ensure package-lock.json exists before running npm ci
-      - name: Check for package-lock.json
-        run: test -f runtime/sandcastle/package-lock.json || echo "Note: No lock file, using fresh install"
+      - name: Install Sandcastle dependencies
+        run: npm ci --prefix runtime/sandcastle || npm install --prefix runtime/sandcastle
 
       - name: Install Sandcastle dependencies
         run: npm ci --prefix runtime/sandcastle
