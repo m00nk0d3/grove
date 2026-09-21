@@ -173,6 +173,7 @@ install_wrapper review pr-review.js
 install_wrapper resolve conflict-resolver.js
 install_wrapper ci ci-fix.js
 install_wrapper clean cleanup.js
+install_wrapper address address-review.js
 
 echo ""
 echo "✓ grove v$VERSION installed to $INSTALL_DIR/$BINARY"

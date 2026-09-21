@@ -114,6 +114,7 @@ try {
         "resolve" = "conflict-resolver.js"
         "ci" = "ci-fix.js"
         "clean" = "cleanup.js"
+        "address" = "address-review.js"
     }
     foreach ($command in $commands.GetEnumerator()) {
         $wrapper = "@`"$NodeDir\node.exe`" `"$packageRoot\$($command.Value)`" %*"

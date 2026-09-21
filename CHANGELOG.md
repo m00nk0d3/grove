@@ -5,6 +5,185 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Claude Code agent backend** — `default_agent = "claude"` launches workflow
+  specialists through Claude Code instead of OpenCode or Pi, using Herdr's
+  existing `claude` agent kind. Artifact instructions use the native `Write`
+  tool rather than shell redirection, and no local model server is required.
+  Configurable via `AGENT_FLOW_CLAUDE_MODEL`,
+  `AGENT_FLOW_CLAUDE_PERMISSION_MODE`, and `AGENT_FLOW_CLAUDE_TOOLS`.
+- **`address` workflow: act on review feedback left on your pull request** —
+  Grove could review someone else's pull request but had nothing for the
+  reverse. `address <pr>` collects the unresolved review threads, the
+  "changes requested" review bodies, and the pull request comments, checks out
+  the pull request branch, and makes the changes the reviewers asked for before
+  validating, committing, and pushing.
+  - Feedback the author cannot act on is filtered out: resolved threads and
+    their own comments. Outdated threads are included but labelled, so the
+    agent checks the current code instead of redoing landed work.
+  - Nothing is written to the conversation. Replying to reviewers and resolving
+    threads stays with the author, and the agent reports what it did for each
+    item, including what it chose not to change.
+  - A pull request whose feedback is only questions produces no commit and says
+    so, rather than inventing a change to look productive.
+  - **Suggested changes** are extracted from the comment that carries them and
+    shown as the reviewer's literal replacement for the lines the thread sits
+    on. They are never truncated, and the agent is told to apply them as
+    written unless they are wrong or unsafe.
+  - **A review body is not truncated to a paragraph.** A reviewer who leaves no
+    line comments puts the whole review in the body, where several thousand
+    characters of findings is ordinary, so review bodies carry a much larger
+    budget than the shorter remarks left on a line or under the pull request.
+  - **An approved pull request is still addressed.** Only open/closed state
+    gates the workflow, and review bodies are collected whatever their state,
+    so a reviewer who approves and still leaves notes is not discarded. The run
+    warns when pushing may dismiss an existing approval.
+  - **`--continue` resumes a run whose delivery gate failed.** The pull request
+    branch can only be checked out in one worktree, so a failed validation
+    leaves its changes there and every retry is refused. Rerunning with
+    `--continue` picks that work up, and the agent is told to finish it rather
+    than start again. Without the flag the refusal stands, because the changes
+    may equally be the author's own.
+  - **A failing delivery gate is handed back to the agent until it passes.**
+    The gate runs the repository own tests and waits for them, and a failure
+    caused by the agent change is the agent to fix. The output is returned to
+    it, the gate is re-run, and this repeats up to two repair attempts, because
+    a first fix often reveals the next failure behind it. The agent is told to
+    reproduce the failure itself, to distinguish its own breakage from what was
+    already broken on the branch, and never to weaken a test to get past the
+    gate. If it still fails, the command stops with the real output and names
+    the worktree to rerun with `--continue`.
+  - Available from the pull request Actions panel as "Address review feedback".
+- **Shorter workflows for the same review coverage** — the full workflow ran 18
+  steps; it now runs 13, and the lean workflow 12, without dropping a single
+  check:
+  - **One `planning` stage** replaces `issue-analysis`, `repository-scout`, and
+    `architecture`. Those were a pipeline rather than independent reviews —
+    each agent booted a pane and re-read the issue and repository to produce a
+    handoff only the next one consumed. The merged stage still writes the same
+    three artifacts, so every downstream stage is unchanged. **Two fewer agent
+    runs per issue.**
+  - **Git bookkeeping is no longer tracked as workflow stages.** `cleanup`
+    folds into `delivery`, `push` and `pr` become one `publish`, and
+    `publish-review` completes `review`. These never spawned an agent; they
+    only added rows to mission control.
+  - Workflow checkpoints are now version 6. Older checkpoints keep the
+    completed steps that still line up from the start and rerun the rest;
+    every stage is safe to repeat.
+
+- **Conditional review specialists** — workflows gained four review stages that
+  run only when the diff contains something they review, so an ordinary change
+  costs what it did before:
+  - `security-audit` — authorization coverage, untrusted input, secrets,
+    transport and browser protections, sensitive data. Audits only and hands
+    blockers back to the implementation specialist.
+  - `database-review` — destructive migrations, additive-only compliance,
+    backfills, index and cascade impact, rollback cost.
+  - `api-contract-review` — an interface change staying consistent across every
+    layer that declares, produces, or consumes it.
+  - `documentation` — updates the documentation the repository's own rules
+    require, and leaves generated changelogs to the release tooling.
+- **Multi-stack repositories are identified and validated per project** — stack
+  detection recognised only Go and Python and fell back to TypeScript, so a
+  .NET repository was handed a "Senior TypeScript Engineer" persona, and a
+  repository holding several stacks was validated as though it held one.
+  Detection now reports every project it finds, with the directory that owns
+  it:
+  - **C# / .NET is recognised** by `*.sln`, `*.slnx`, or `*.csproj`, at the
+    repository root or below it.
+  - **Validation runs in each project's own directory**, and only for the
+    projects the diff touches; an unattributable change validates all of them.
+    Previously a single command ran at the repository root, which failed with
+    `MSB1003` whenever the solution lived in a subdirectory.
+  - **The implementation persona names every stack and its directory**, so a
+    mixed repository no longer claims to be a single language.
+- **Issue status reflects the GitHub project board** — the issues view reported
+  progress purely from local state (a worktree whose branch contains
+  `issue-<N>`, or a local workflow run), so work tracked on GitHub by anyone
+  else always read as "Open". Grove now reads the Projects v2 `Status` field and
+  displays it in the board's own wording, falling back to the local worktree
+  signal for issues that are on no board. Requires the `read:project` token
+  scope; without it the previous local-only behaviour applies unchanged.
+
+### Fixed
+
+- **Same-repository pull requests are no longer rejected as forks** — `gh pr
+  view` returns `headRepository.nameWithOwner` as an empty string, unlike
+  `gh pr list`, and the fork guard compared that empty value with the current
+  checkout and refused every pull request with "comes from a fork". The head
+  repository is now rebuilt from its owner and name, `isCrossRepository`
+  decides on its own when the head repository cannot be identified, and a real
+  fork is still refused. This affected `ci` as well as the new `address`.
+- **A prompt Herdr did not see start no longer fails the stage** — Herdr accepts
+  and delivers a prompt, then requires the agent to be observed working or
+  blocked within a fixed five seconds, reporting `agent_prompt_stalled`
+  otherwise. A large prompt, or an agent that simply takes a moment to begin,
+  misses that window even though the instruction landed. Grove now waits for
+  the turn the agent has already started rather than re-sending the prompt,
+  which would hand it the same work twice.
+- **An agent that needs a person no longer fails the workflow** — when an agent
+  stops for something only a person can give (a permission decision, a
+  credential, a judgement call), Herdr reports `agent_blocked` and the stage
+  used to end there. Grove now focuses that agent's pane, says what it is
+  waiting for, and resumes on its own once the agent is idle again. The wait is
+  bounded by `AGENT_FLOW_HUMAN_INPUT_TIMEOUT_MS` (default 15 minutes); setting
+  it to `0` restores the previous fail-fast behaviour. Unrelated failures are
+  still raised immediately. The wait is reported to Grove, so a stage waiting
+  on a person shows as `blocked` on the dashboard and counts toward its BLOCKED
+  indicator instead of looking like a slow stage, with the agent's summary
+  naming the pane to answer in.
+- **Claude agents no longer block on the workspace trust dialog** — Claude Code
+  asks for confirmation the first time it runs in a directory and records the
+  answer per exact path, so trusting a repository does not extend to its
+  worktrees. Every workflow creates a new worktree, and pull request review
+  creates one per review, so the agent started and then blocked on its first
+  prompt with `agent_blocked ... requires interactive input`. Grove now records
+  that trust for the worktree before launching a Claude agent. The entry is
+  written only when the existing configuration parses, through a temporary file
+  and a rename, and any failure leaves the file untouched and logs a warning
+  rather than failing the workflow. Note that the permission mode does not
+  affect this: `bypassPermissions` still shows the dialog.
+- **Conditional review verdicts are written inside the worktree** — the
+  security, database, and API contract specialists wrote their verdict to the
+  Git common directory, which is outside the agent's working directory and
+  needs separate approval under Claude. They now write under `.agent/`, which
+  is already removed at delivery.
+- **Transient agent startup failures no longer fail the step** — an agent that
+  is still blocked when `herdr agent start` returns (for example while its
+  splash or notice screen is on the terminal) is now given a bounded wait to
+  reach an idle state. The original startup error is surfaced only if the agent
+  never settles.
+- **Issue assignees are no longer discarded by the cache** — `github_issues`
+  already had an `assignees` column, but the upsert never wrote it and the read
+  never selected it, so any issue served from cache reported no assignees.
+  Assignees now round-trip.
+- **Issue bodies are cached** — the cache had no `body` column, so cached issues
+  rendered as "(no description)" until the next live sync.
+- **Issue state reflects GitHub** — the upsert hardcoded an empty `state`.
+  `gh issue list` now requests `state` and the value is persisted.
+- **Workflow branch slugs no longer push worktrees past the Windows path
+  limit** — `slugifyIssueTitle` cut the title at a hard 60 characters, mid-word,
+  producing branch and worktree directory names long enough that deeply nested
+  files exceeded the 260-character limit and failed the checkout part-way
+  through. Slugs are now capped at 40 characters and cut on a word boundary,
+  and `imp` warns before creating a worktree when `core.longpaths` is not
+  enabled on Windows.
+- **The same repository is no longer cached twice** — the repository path is
+  derived from both `os.Getwd()` and `git worktree list`, which disagree on path
+  separators on Windows, so each repository was cached under two keys. Cache
+  keys are now normalized, including in the staleness check.
+
+### Changed
+
+- Agent backend validation is centralised in `resolveAgentBackend`, replacing
+  the per-call `pi`/`opencode` ternaries in workflow telemetry so unknown
+  backends fail fast with a consistent error.
+- The completion-artifact retry path now covers every non-Pi backend instead of
+  OpenCode alone, and its guidance adapts to the active backend.
+
 ## [v0.7.1] - 2026-09-20
 
 ### Fixed

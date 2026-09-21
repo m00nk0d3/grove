@@ -77,6 +77,7 @@ const (
 	WorkflowKindReview    = "review"
 	WorkflowKindResolve   = "resolve"
 	WorkflowKindCI        = "ci"
+	WorkflowKindAddress   = "address"
 	WorkflowKindClean     = "clean"
 )
 

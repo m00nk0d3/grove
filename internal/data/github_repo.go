@@ -4,10 +4,22 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/m00nk0d3/grove/internal/exec"
 )
+
+// NormalizeRepoPath returns a canonical form of a repository path for use as a
+// cache key. Grove derives the repository path from both os.Getwd() and
+// `git worktree list`, which disagree on path separators on Windows; without
+// normalization the same repository is cached twice under two spellings.
+func NormalizeRepoPath(repoPath string) string {
+	if repoPath == "" {
+		return ""
+	}
+	return filepath.Clean(filepath.FromSlash(repoPath))
+}
 
 // GitHubRepository persists and retrieves GitHub PR and Issue data from SQLite.
 // All reads and writes are scoped to repoPath so that nexus instances run from
@@ -20,7 +32,7 @@ type GitHubRepository struct {
 // NewGitHubRepository creates a new GitHubRepository backed by the given DB,
 // scoped to repoPath (typically the result of os.Getwd() at startup).
 func NewGitHubRepository(db *DB, repoPath string) *GitHubRepository {
-	return &GitHubRepository{db: db, repoPath: repoPath}
+	return &GitHubRepository{db: db, repoPath: NormalizeRepoPath(repoPath)}
 }
 
 // UpsertPRs inserts or replaces all provided pull requests in the cache.
@@ -155,6 +167,15 @@ func (r *GitHubRepository) UpsertIssues(issues []domain.Issue) error {
 			return fmt.Errorf("upsert issues: marshal labels for issue %d: %w", issue.Number, err)
 		}
 
+		assigneeLogins := issue.Assignees
+		if assigneeLogins == nil {
+			assigneeLogins = []string{}
+		}
+		assignees, err := json.Marshal(assigneeLogins)
+		if err != nil {
+			return fmt.Errorf("upsert issues: marshal assignees for issue %d: %w", issue.Number, err)
+		}
+
 		subNums := issue.SubIssueNumbers
 		if subNums == nil {
 			subNums = []int{}
@@ -170,15 +191,19 @@ func (r *GitHubRepository) UpsertIssues(issues []domain.Issue) error {
 		}
 
 		_, err = r.db.Conn.Exec(`
-			INSERT INTO github_issues (number, repo_path, title, state, labels, parent_number, sub_issue_numbers, synced_at)
-			VALUES (?, ?, ?, '', ?, ?, ?, CURRENT_TIMESTAMP)
+			INSERT INTO github_issues (number, repo_path, title, body, state, project_status, labels, assignees, parent_number, sub_issue_numbers, synced_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 			ON CONFLICT(number, repo_path) DO UPDATE SET
 				title              = excluded.title,
+				body               = excluded.body,
+				state              = excluded.state,
+				project_status     = excluded.project_status,
 				labels             = excluded.labels,
+				assignees          = excluded.assignees,
 				parent_number      = excluded.parent_number,
 				sub_issue_numbers  = excluded.sub_issue_numbers,
 				synced_at          = CURRENT_TIMESTAMP
-		`, issue.Number, r.repoPath, issue.Title, string(labels), parentNum, string(subNumsJSON))
+		`, issue.Number, r.repoPath, issue.Title, issue.Body, issue.State, issue.ProjectStatus, string(labels), string(assignees), parentNum, string(subNumsJSON))
 		if err != nil {
 			return fmt.Errorf("upsert issues: %w", err)
 		}
@@ -189,7 +214,7 @@ func (r *GitHubRepository) UpsertIssues(issues []domain.Issue) error {
 // GetIssues returns all cached issues for this repository.
 func (r *GitHubRepository) GetIssues() ([]domain.Issue, error) {
 	rows, err := r.db.Conn.Query(`
-		SELECT number, title, labels, parent_number, sub_issue_numbers
+		SELECT number, title, body, state, project_status, labels, assignees, parent_number, sub_issue_numbers
 		FROM github_issues
 		WHERE repo_path = ?
 		ORDER BY number
@@ -202,16 +227,31 @@ func (r *GitHubRepository) GetIssues() ([]domain.Issue, error) {
 	var issues []domain.Issue
 	for rows.Next() {
 		var issue domain.Issue
+		var body, state, projectStatus, assigneesJSON sql.NullString
 		var labelsJSON string
 		var parentNum sql.NullInt64
 		var subNumsJSON string
 
-		if err := rows.Scan(&issue.Number, &issue.Title, &labelsJSON, &parentNum, &subNumsJSON); err != nil {
+		if err := rows.Scan(&issue.Number, &issue.Title, &body, &state, &projectStatus, &labelsJSON, &assigneesJSON, &parentNum, &subNumsJSON); err != nil {
 			return nil, fmt.Errorf("get issues: scan row: %w", err)
 		}
 
+		issue.Body = body.String
+		issue.State = state.String
+		issue.ProjectStatus = projectStatus.String
+
 		if err := json.Unmarshal([]byte(labelsJSON), &issue.Labels); err != nil {
 			return nil, fmt.Errorf("get issues: parse labels for issue %d: %w", issue.Number, err)
+		}
+
+		if assigneesJSON.Valid && assigneesJSON.String != "" {
+			var logins []string
+			if err := json.Unmarshal([]byte(assigneesJSON.String), &logins); err != nil {
+				return nil, fmt.Errorf("get issues: parse assignees for issue %d: %w", issue.Number, err)
+			}
+			if len(logins) > 0 {
+				issue.Assignees = logins
+			}
 		}
 
 		if parentNum.Valid {

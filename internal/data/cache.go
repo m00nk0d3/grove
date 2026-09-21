@@ -21,7 +21,7 @@ const (
 func IsCacheStale(db *DB, table CacheTable, ttl time.Duration, repoPath string) (bool, error) {
 	var raw sql.NullString
 	query := fmt.Sprintf("SELECT MAX(synced_at) FROM %s WHERE repo_path = ?", table)
-	if err := db.Conn.QueryRow(query, repoPath).Scan(&raw); err != nil {
+	if err := db.Conn.QueryRow(query, NormalizeRepoPath(repoPath)).Scan(&raw); err != nil {
 		return true, fmt.Errorf("is cache stale %s: %w", table, err)
 	}
 	if !raw.Valid || raw.String == "" {

@@ -5,14 +5,18 @@ import {
   assertModeOverrideCompatible,
   FULL_WORKFLOW_STEPS,
   getAgentLaunchConfig,
+  getClaudeAgentArgs,
   getPiAgentArgs,
   getVerificationCommand,
+  planVerification,
   LEAN_WORKFLOW_STEPS,
   loadWorkflowState,
   parseCliArgs,
   PI_COMPACTION_GUARD_PATH,
+  resolveAgentBackend,
   slugifyIssueTitle,
   synchronizeDefaultBranch,
+  warnIfWindowsPathLimitLikely,
 } from "./workflow-utils.js";
 import compactionGuard, {
   buildCompactionRecoveryMessage,
@@ -20,6 +24,8 @@ import compactionGuard, {
 import {
   buildCompletionRetryPrompt,
   findMissingCompletionArtifacts,
+  promptAgent,
+  startAgentWithReadinessRecovery,
   waitForPiAgentSettled,
 } from "./herdr-specialist.js";
 import {
@@ -33,8 +39,40 @@ import {
   explicitClassification,
   parseIssueMetadata,
 } from "./issue-classifier.js";
-import { detectStack } from "./stack-detector.js";
-import { getImplementationPrompt, SPECIALISTS } from "./specialists.js";
+import {
+  detectStack,
+  detectStackProjects,
+  findDotNetProject,
+  type StackProject,
+} from "./stack-detector.js";
+import {
+  collectChangedFiles,
+  selectConditionalSpecialists,
+} from "./specialist-gating.js";
+import {
+  ensureClaudeWorkspaceTrust,
+  trustKeyFor,
+} from "./claude-trust.js";
+import {
+  headRepositoryOf,
+  validateFixablePullRequest,
+} from "./ci-fix.js";
+import {
+  countFeedback,
+  countSuggestions,
+  extractSuggestions,
+  formatFeedback,
+  parseAddressArgs,
+  parseFeedbackResponse,
+  selectActionableFeedback,
+  validateWithRepair,
+} from "./address-review.js";
+import {
+  buildImplementationPersona,
+  getImplementationPrompt,
+  SPECIALISTS,
+} from "./specialists.js";
+
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -45,6 +83,13 @@ import {
   readLeanReportEvidence,
   runValidationWithRepair,
 } from "./orchestrator.js";
+
+const TS_PERSONA = buildImplementationPersona([
+  { stack: "TYPESCRIPT", root: "", marker: "package.json" },
+]);
+const GO_PERSONA = buildImplementationPersona([
+  { stack: "GO", root: "", marker: "go.mod" },
+]);
 
 test("parseCliArgs accepts an issue number", () => {
   assert.deepEqual(parseCliArgs(["42"]), {
@@ -92,11 +137,36 @@ test("parseCliArgs rejects unsafe and malformed values", () => {
 test("slugifyIssueTitle creates safe, bounded branch components", () => {
   assert.equal(
     slugifyIssueTitle("Fix OAuth callback: don't lose query params!"),
-    "fix-oauth-callback-don-t-lose-query-params",
+    "fix-oauth-callback-don-t-lose-query",
   );
   assert.equal(slugifyIssueTitle("  Crème brûlée  "), "creme-brulee");
   assert.equal(slugifyIssueTitle("🚀"), "issue");
-  assert.equal(slugifyIssueTitle("a".repeat(80)), "a".repeat(60));
+  // A single word longer than the budget still has to be cut.
+  assert.equal(slugifyIssueTitle("a".repeat(80)), "a".repeat(40));
+});
+
+test("slugifyIssueTitle truncates on word boundaries to bound worktree paths", () => {
+  const title =
+    "feat(agent portal): KPI evolution selector at target group granularity";
+
+  const slug = slugifyIssueTitle(title);
+  assert.equal(slug, "feat-agent-portal-kpi-evolution-selector");
+  assert.ok(slug.length <= 40, `slug too long: ${slug.length}`);
+  assert.ok(!slug.endsWith("-"), "slug must not end with a separator");
+  // The previous hard character cut ended this title mid-word, at "-gra".
+  assert.ok(!/-gra$/.test(slug), `slug was cut mid-word: ${slug}`);
+
+  assert.equal(slugifyIssueTitle(title, 20), "feat-agent-portal");
+});
+
+test("warnIfWindowsPathLimitLikely never breaks the workflow", () => {
+  // `git config --get` exits non-zero when the key is unset.
+  assert.doesNotThrow(() =>
+    warnIfWindowsPathLimitLikely("/repo", () => {
+      throw new Error("exit status 1");
+    }),
+  );
+  assert.doesNotThrow(() => warnIfWindowsPathLimitLikely("/repo", () => "true"));
 });
 
 test("getPiAgentArgs uses LM Studio defaults and supports overrides", () => {
@@ -305,6 +375,131 @@ test("getAgentLaunchConfig defaults to OpenCode with a Pi override", () => {
   );
 });
 
+test("getClaudeAgentArgs uses Claude Code defaults and supports overrides", () => {
+  const defaultArgs = getClaudeAgentArgs({});
+  assert.equal(defaultArgs[0], "--");
+  assert.deepEqual(defaultArgs.slice(1, 3), ["--permission-mode", "acceptEdits"]);
+  assert.equal(defaultArgs[3], "--append-system-prompt");
+  assert.match(defaultArgs[4], /continuity contract/);
+  assert.deepEqual(defaultArgs.slice(5), [
+    "--allowedTools",
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Glob",
+    "Grep",
+  ]);
+
+  const overrideArgs = getClaudeAgentArgs({
+    AGENT_FLOW_CLAUDE_MODEL: "claude-opus-5",
+    AGENT_FLOW_CLAUDE_PERMISSION_MODE: "plan",
+    AGENT_FLOW_CLAUDE_TOOLS: "Read, Bash ,Write",
+  });
+  assert.deepEqual(overrideArgs.slice(0, 5), [
+    "--",
+    "--model",
+    "claude-opus-5",
+    "--permission-mode",
+    "plan",
+  ]);
+  assert.deepEqual(overrideArgs.slice(-4), [
+    "--allowedTools",
+    "Read",
+    "Bash",
+    "Write",
+  ]);
+});
+
+test("getAgentLaunchConfig supports the Claude Code backend", () => {
+  assert.deepEqual(
+    getAgentLaunchConfig({ AGENT_FLOW_AGENT_BACKEND: "claude" }),
+    {
+      backend: "claude",
+      kind: "claude",
+      label: "Claude Code",
+      args: getClaudeAgentArgs({}),
+      needsLmStudioEnv: false,
+    },
+  );
+  assert.equal(
+    getAgentLaunchConfig({
+      AGENT_FLOW_AGENT_BACKEND: "claude",
+      AGENT_FLOW_CLAUDE_MODEL: "claude-opus-5",
+    }).label,
+    "Claude Code (claude-opus-5)",
+  );
+});
+
+test("resolveAgentBackend validates the configured backend", () => {
+  assert.equal(resolveAgentBackend({}), "opencode");
+  assert.equal(
+    resolveAgentBackend({ AGENT_FLOW_AGENT_BACKEND: "claude" }),
+    "claude",
+  );
+  assert.equal(resolveAgentBackend({ AGENT_FLOW_AGENT_BACKEND: "pi" }), "pi");
+  assert.throws(
+    () => resolveAgentBackend({ AGENT_FLOW_AGENT_BACKEND: "unknown" }),
+    /Unsupported AGENT_FLOW_AGENT_BACKEND/,
+  );
+});
+
+test("agent startup recovers from a transient not-ready failure", () => {
+  const startArgs = ["agent", "start", "af-role-1-2", "--kind", "claude"];
+
+  const calls: string[][] = [];
+  startAgentWithReadinessRecovery("af-role-1-2", startArgs, (_command, args) => {
+    calls.push(args);
+    return "";
+  });
+  assert.deepEqual(calls, [startArgs], "a clean start must not wait");
+
+  const recoveredCalls: string[][] = [];
+  startAgentWithReadinessRecovery("af-role-1-2", startArgs, (_command, args) => {
+    recoveredCalls.push(args);
+    if (recoveredCalls.length === 1) {
+      throw new Error("agent af-role-1-2 is blocked during startup");
+    }
+    return "";
+  });
+  assert.deepEqual(recoveredCalls[1], [
+    "agent",
+    "wait",
+    "af-role-1-2",
+    "--until",
+    "idle",
+    "--timeout",
+    "120000",
+  ]);
+
+  assert.throws(
+    () =>
+      startAgentWithReadinessRecovery("af-role-1-2", startArgs, (_c, args) => {
+        if (args[1] === "start") {
+          throw new Error("agent af-role-1-2 is blocked during startup");
+        }
+        throw new Error("timed out waiting for idle");
+      }),
+    /blocked during startup/,
+    "a failed wait must surface the original startup error",
+  );
+});
+
+test("completion retry guidance matches the active backend", () => {
+  assert.match(
+    buildCompletionRetryPrompt(["Missing artifact"], "claude"),
+    /Write tool/,
+  );
+  assert.match(
+    buildCompletionRetryPrompt(["Missing artifact"], "opencode"),
+    /echo '\{"key":"value"\}'/,
+  );
+  assert.match(
+    buildCompletionRetryPrompt(["Missing artifact"]),
+    /echo '\{"key":"value"\}'/,
+  );
+});
+
 test("synchronizeDefaultBranch fast-forwards with only Sandcastle state untracked", () => {
   const calls: Array<{ command: string; args: string[] }> = [];
   const responses = new Map([
@@ -376,29 +571,55 @@ test("getVerificationCommand returns deterministic stack checks", () => {
 });
 
 test("lean workflow tracks three agent stages before the delivery gate", () => {
+  // The conditional specialists sit between verification and cleanup in both
+  // modes; each one decides from the diff whether it has anything to review.
   assert.deepEqual(LEAN_WORKFLOW_STEPS, [
     "lean-planning",
     "lean-implementation",
     "lean-review",
     "verification",
-    "cleanup",
+    "security-audit",
+    "database-review",
+    "api-contract-review",
+    "documentation",
     "delivery",
     "report",
-    "push",
-    "pr",
+    "publish",
     "review",
-    "publish-review",
   ]);
-  assert.deepEqual(FULL_WORKFLOW_STEPS.slice(0, 8), [
-    "issue-analysis",
-    "repository-scout",
-    "architecture",
+  assert.deepEqual(FULL_WORKFLOW_STEPS, [
+    "planning",
     "tests",
     "implementation",
     "verification",
+    "security-audit",
+    "database-review",
+    "api-contract-review",
     "adversarial-review",
-    "cleanup",
+    "documentation",
+    "delivery",
+    "report",
+    "publish",
+    "review",
   ]);
+
+  // Every step is an agent stage or a gate that owns its own bookkeeping;
+  // Git plumbing is folded into the stage it belongs to rather than tracked
+  // as a stage of its own.
+  for (const retired of [
+    "issue-analysis",
+    "repository-scout",
+    "architecture",
+    "cleanup",
+    "push",
+    "pr",
+    "publish-review",
+  ]) {
+    assert.ok(
+      !(FULL_WORKFLOW_STEPS as readonly string[]).includes(retired),
+      `${retired} should no longer be a tracked step`,
+    );
+  }
 });
 
 test("worktree state compares content across resumed and staged changes", () => {
@@ -446,7 +667,7 @@ test("every specialist enforces the shared file-size standard", () => {
   const prompts = [
     SPECIALISTS.LEAN_PLANNER("42", "owner/repo", ".agent/issue-42/LEAN_PLAN.md"),
     SPECIALISTS.LEAN_IMPLEMENTER(
-      "TYPESCRIPT",
+      TS_PERSONA,
       "42",
       "owner/repo",
       ".agent/issue-42/LEAN_PLAN.md",
@@ -457,12 +678,9 @@ test("every specialist enforces the shared file-size standard", () => {
       ".agent/issue-42/LEAN_PLAN.md",
       ".agent-lean-verification.json",
     ),
-    SPECIALISTS.ISSUE_ANALYST("42", "owner/repo", ".agent/REQUIREMENTS.md"),
-    SPECIALISTS.REPOSITORY_SCOUT(
-      ".agent/REQUIREMENTS.md",
-      ".agent/CONTEXT.md",
-    ),
-    SPECIALISTS.ARCHITECT(
+    SPECIALISTS.PLANNER(
+      "42",
+      "owner/repo",
       ".agent/REQUIREMENTS.md",
       ".agent/CONTEXT.md",
       ".agent/PLAN.md",
@@ -474,7 +692,7 @@ test("every specialist enforces the shared file-size standard", () => {
       ".agent/PLAN.md",
     ),
     getImplementationPrompt(
-      "TYPESCRIPT",
+      TS_PERSONA,
       "42",
       ".agent/REQUIREMENTS.md",
       ".agent/CONTEXT.md",
@@ -487,7 +705,7 @@ test("every specialist enforces the shared file-size standard", () => {
     ),
     SPECIALISTS.REVIEWER("42", ".agent/REQUIREMENTS.md"),
     SPECIALISTS.IMPLEMENTER_VALIDATION_FIXES(
-      "TYPESCRIPT",
+      TS_PERSONA,
       "42",
       "owner/repo",
       ".agent/PLAN.md",
@@ -529,7 +747,7 @@ test("lean specialists have distinct planning, implementation, and review contra
     ".agent/issue-42/LEAN_PLAN.md",
   );
   const prompt = SPECIALISTS.LEAN_IMPLEMENTER(
-    "TYPESCRIPT",
+    TS_PERSONA,
     "42",
     "owner/repo",
     ".agent/issue-42/LEAN_PLAN.md",
@@ -571,7 +789,7 @@ test("implementation sessions are stable per repository issue", () => {
 
 test("review blockers are handed back to the implementation specialist", () => {
   const fixer = SPECIALISTS.IMPLEMENTER_REVIEW_FIXES(
-    "GO",
+    GO_PERSONA,
     "42",
     "owner/repo",
     ".agent/LEAN_PLAN.md",
@@ -806,7 +1024,7 @@ test("issue metadata parsing and explicit classifications are transparent", () =
 
 test("resume rejects an override that conflicts with persisted mode", () => {
   const state = {
-    version: 5 as const,
+    version: 6 as const,
     repo: "owner/repo",
     issueNum: "42",
     issueTitle: "Test",
@@ -931,122 +1149,70 @@ test("approved verdicts are posted as detailed PR review comments", () => {
   });
 });
 
-test("version 2 checkpoints migrate to resumable review state", () => {
+test("legacy checkpoints migrate to the current step list", () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-state-"));
   const statePath = path.join(root, "issue-42.json");
-  try {
-    fs.writeFileSync(
-      statePath,
-      JSON.stringify({
-        version: 2,
-        repo: "owner/repo",
-        issueNum: "42",
-        issueTitle: "Test issue",
-        branchName: "agent/test-42",
-        baseCommit: "abc123",
-        completedSteps: ["issue-analysis", "repository-scout"],
-      }),
-    );
-    const state = loadWorkflowState(statePath);
-    assert.equal(state?.version, 5);
-    assert.equal(state?.reviewCyclesCompleted, 0);
-    assert.equal(state?.approved, false);
-    assert.equal(state?.mode, "full");
-    assert.equal(state?.modeSource, "migration");
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
+  const write = (value: unknown) =>
+    fs.writeFileSync(statePath, JSON.stringify(value));
+  const base = {
+    repo: "owner/repo",
+    issueNum: "42",
+    issueTitle: "Test issue",
+    branchName: "agent/test-42",
+    baseCommit: "abc123",
+  };
 
-test("version 3 checkpoints preserve the full workflow on migration", () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-v3-state-"));
-  const statePath = path.join(root, "issue-43.json");
   try {
-    fs.writeFileSync(
-      statePath,
-      JSON.stringify({
-        version: 3,
-        repo: "owner/repo",
-        issueNum: "43",
-        issueTitle: "Existing workflow",
-        branchName: "agent/existing-43",
-        baseCommit: "def456",
-        completedSteps: ["issue-analysis", "repository-scout", "architecture"],
-        reviewCyclesCompleted: 0,
-        approved: false,
-      }),
-    );
-    const state = loadWorkflowState(statePath);
-    assert.equal(state?.version, 5);
+    // Planning used to be three stages. Those names no longer exist, so the
+    // work is replanned rather than silently treated as done.
+    write({
+      ...base,
+      version: 2,
+      completedSteps: ["issue-analysis", "repository-scout"],
+    });
+    let state = loadWorkflowState(statePath);
+    assert.equal(state?.version, 6);
     assert.equal(state?.mode, "full");
-    assert.equal(state?.modeSource, "migration");
-    assert.match(state?.modeReason ?? "", /version 3/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("version 4 lean checkpoints conservatively rerun all three lean stages", () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-v4-state-"));
-  const statePath = path.join(root, "issue-44.json");
-  try {
-    fs.writeFileSync(
-      statePath,
-      JSON.stringify({
-        version: 4,
-        repo: "owner/repo",
-        issueNum: "44",
-        issueTitle: "Small docs fix",
-        branchName: "agent/small-docs-fix-44",
-        baseCommit: "123abc",
-        completedSteps: ["implementation", "verification"],
-        reviewCyclesCompleted: 0,
-        approved: false,
-        mode: "lean",
-        modeReason: "label 'docs' indicates a small documentation or maintenance change",
-        modeSource: "automatic",
-      }),
-    );
-    const state = loadWorkflowState(statePath);
-    assert.equal(state?.version, 5);
-    assert.equal(state?.mode, "lean");
     assert.equal(state?.modeSource, "migration");
     assert.deepEqual(state?.completedSteps, []);
-    assert.match(state?.modeReason ?? "", /conservatively rerunning all three lean stages/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
+    assert.equal(state?.reviewCyclesCompleted, 0);
+    assert.equal(state?.approved, false);
 
-test("version 4 full checkpoints preserve completed full-mode steps", () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-v4-full-state-"));
-  const statePath = path.join(root, "issue-45.json");
-  try {
-    fs.writeFileSync(
-      statePath,
-      JSON.stringify({
-        version: 4,
-        repo: "owner/repo",
-        issueNum: "45",
-        issueTitle: "Large behavior change",
-        branchName: "agent/large-behavior-change-45",
-        baseCommit: "456def",
-        completedSteps: ["issue-analysis", "repository-scout", "architecture"],
-        reviewCyclesCompleted: 0,
-        approved: false,
-        mode: "full",
-        modeReason: "scope spans multiple components",
-        modeSource: "automatic",
-      }),
-    );
-    const state = loadWorkflowState(statePath);
-    assert.equal(state?.version, 5);
-    assert.equal(state?.mode, "full");
+    // Steps that still line up from the start are kept, so a checkpoint only
+    // reruns the stages it can no longer account for.
+    write({
+      ...base,
+      version: 5,
+      mode: "lean",
+      modeReason: "single focused change",
+      modeSource: "automatic",
+      completedSteps: ["lean-planning", "lean-implementation", "cleanup"],
+      reviewCyclesCompleted: 0,
+      approved: false,
+    });
+    state = loadWorkflowState(statePath);
+    assert.equal(state?.version, 6);
+    assert.equal(state?.mode, "lean");
     assert.deepEqual(state?.completedSteps, [
-      "issue-analysis",
-      "repository-scout",
-      "architecture",
+      "lean-planning",
+      "lean-implementation",
     ]);
+    assert.match(state?.modeReason ?? "", /rerunning stages after/);
+
+    // A checkpoint already on the current list is returned untouched.
+    const current = {
+      ...base,
+      version: 6,
+      mode: "full" as const,
+      modeReason: "scope spans multiple components",
+      modeSource: "automatic" as const,
+      completedSteps: ["planning", "tests"],
+      reviewCyclesCompleted: 0,
+      approved: false,
+    };
+    write(current);
+    state = loadWorkflowState(statePath);
+    assert.deepEqual(state?.completedSteps, ["planning", "tests"]);
     assert.equal(state?.modeReason, "scope spans multiple components");
     assert.equal(state?.modeSource, "automatic");
   } finally {
@@ -1054,6 +1220,32 @@ test("version 4 full checkpoints preserve completed full-mode steps", () => {
   }
 });
 
+test("a checkpoint whose steps are not a prefix of its mode is rejected", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-state-"));
+  const statePath = path.join(root, "issue-42.json");
+  try {
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        repo: "owner/repo",
+        issueNum: "42",
+        issueTitle: "Test issue",
+        branchName: "agent/test-42",
+        baseCommit: "abc123",
+        version: 6,
+        mode: "full",
+        modeReason: "scope spans multiple components",
+        modeSource: "automatic",
+        completedSteps: ["tests", "planning"],
+        reviewCyclesCompleted: 0,
+        approved: false,
+      }),
+    );
+    assert.throws(() => loadWorkflowState(statePath), /Invalid workflow checkpoint/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 test("detectStack recognizes Go, Python, and defaults to TypeScript", () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-test-"));
   try {
@@ -1065,4 +1257,662 @@ test("detectStack recognizes Go, Python, and defaults to TypeScript", () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("detectStack recognizes a .NET solution nested below the repository root", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-test-"));
+  try {
+    // A .NET repository commonly keeps its solution in backend/ or src/, with
+    // a JavaScript frontend beside it; without this the repository looks like
+    // plain TypeScript and gets `npm test` as its verification command.
+    fs.mkdirSync(path.join(root, "backend"));
+    fs.writeFileSync(path.join(root, "backend", "App.sln"), "");
+    assert.equal(detectStack(root), "CSHARP");
+    assert.equal(findDotNetProject(root), "backend/App.sln");
+
+    // `dotnet test` resolves from the working directory, so the solution has
+    // to be named or the run fails with MSB1003.
+    assert.deepEqual(getVerificationCommand("CSHARP", root), {
+      command: "dotnet",
+      args: ["test", "backend/App.sln"],
+    });
+
+    // A solution wins over a bare project so every test project is covered.
+    fs.writeFileSync(path.join(root, "backend", "App.csproj"), "");
+    assert.equal(findDotNetProject(root), "backend/App.sln");
+
+    // With no directory to inspect, fall back to the bare command.
+    assert.deepEqual(getVerificationCommand("CSHARP"), {
+      command: "dotnet",
+      args: ["test"],
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectStack ignores build output when looking for a .NET project", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-test-"));
+  try {
+    fs.mkdirSync(path.join(root, "node_modules"));
+    fs.writeFileSync(path.join(root, "node_modules", "Vendored.csproj"), "");
+    assert.equal(detectStack(root), "TYPESCRIPT");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a multi-stack repository is identified as every stack it contains", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-test-"));
+  try {
+    fs.mkdirSync(path.join(root, "backend"));
+    fs.mkdirSync(path.join(root, "frontend"));
+    fs.writeFileSync(path.join(root, "backend", "App.sln"), "");
+    fs.writeFileSync(path.join(root, "frontend", "package.json"), "{}");
+
+    assert.deepEqual(detectStackProjects(root), [
+      { stack: "CSHARP", root: "backend", marker: "backend/App.sln" },
+      {
+        stack: "TYPESCRIPT",
+        root: "frontend",
+        marker: "frontend/package.json",
+      },
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("validation runs each project where it lives, chosen by the diff", () => {
+  const projects: StackProject[] = [
+    { stack: "CSHARP", root: "backend", marker: "backend/App.sln" },
+    { stack: "TYPESCRIPT", root: "frontend", marker: "frontend/package.json" },
+  ];
+
+  // A backend-only change must not be "validated" by the frontend's tests.
+  assert.deepEqual(
+    planVerification(projects, ["backend/src/Api/AgentController.cs"]).map(
+      (task) => task.label,
+    ),
+    ["dotnet test App.sln (in backend)"],
+  );
+
+  assert.deepEqual(
+    planVerification(projects, ["frontend/src/KpiTray.tsx"]).map(
+      (task) => task.label,
+    ),
+    ["npm test (in frontend)"],
+  );
+
+  // A change spanning both trees has to satisfy both.
+  assert.deepEqual(
+    planVerification(projects, [
+      "backend/src/Api/AgentController.cs",
+      "frontend/src/KpiTray.tsx",
+    ]).map((task) => task.label),
+    ["dotnet test App.sln (in backend)", "npm test (in frontend)"],
+  );
+
+  // Unattributable changes are validated everywhere rather than guessed at.
+  assert.equal(planVerification(projects, ["README.md"]).length, 2);
+  assert.equal(planVerification(projects, []).length, 2);
+
+  // No recognised project keeps the historical repository-root default.
+  assert.deepEqual(planVerification([], ["src/index.ts"]), [
+    {
+      stack: "TYPESCRIPT",
+      command: "npm",
+      args: ["test"],
+      root: "",
+      label: "npm test",
+    },
+  ]);
+});
+
+test("the implementation persona names every stack it may have to edit", () => {
+  const single = buildImplementationPersona([
+    { stack: "CSHARP", root: "", marker: "App.sln" },
+  ]);
+  assert.match(single, /Senior \.NET Engineer/);
+  assert.doesNotMatch(single, /more than one stack/);
+
+  const mixed = buildImplementationPersona([
+    { stack: "CSHARP", root: "backend", marker: "backend/App.sln" },
+    { stack: "TYPESCRIPT", root: "frontend", marker: "frontend/package.json" },
+  ]);
+  assert.match(mixed, /more than one stack/);
+  assert.match(mixed, /backend: CSHARP/);
+  assert.match(mixed, /frontend: TYPESCRIPT/);
+  assert.match(mixed, /Senior \.NET Engineer/);
+  assert.match(mixed, /Senior TypeScript Engineer/);
+});
+
+test("a blocked agent is handed to a person instead of failing the stage", () => {
+  const blocked = () => {
+    throw new Error(
+      'herdr exited with status 1: {"error":{"code":"agent_blocked","message":"agent af-reviewer is blocked and requires interactive input"}}',
+    );
+  };
+
+  // The person answers, the agent goes idle, and the prompt is delivered.
+  const calls: string[][] = [];
+  let answered = false;
+  const output = promptAgent("af-reviewer", "review this", {
+    extraArgs: ["--wait"],
+    runner: (_command, args) => {
+      calls.push(args);
+      if (args[1] === "wait") {
+        answered = true;
+        return "";
+      }
+      if (args[1] === "prompt" && !answered) {
+        blocked();
+      }
+      return "delivered";
+    },
+  });
+  assert.equal(output, "delivered");
+  assert.deepEqual(
+    calls.map((args) => args.slice(0, 2).join(" ")),
+    ["agent prompt", "agent focus", "agent wait", "agent prompt"],
+    "the pane is focused, waited on, then the prompt is retried",
+  );
+  assert.ok(calls[2].includes("idle"));
+
+  // Nobody answers: the original block is surfaced, not the wait failure.
+  assert.throws(
+    () =>
+      promptAgent("af-reviewer", "review this", {
+        runner: (_command, args) => {
+          if (args[1] === "wait") throw new Error("timed out waiting for idle");
+          if (args[1] === "focus") return "";
+          return blocked() as unknown as string;
+        },
+      }),
+    /agent_blocked/,
+  );
+
+  // Opting out restores fail-fast, and unrelated failures are never swallowed.
+  assert.throws(
+    () => promptAgent("af-reviewer", "x", { timeoutMs: 0, runner: blocked }),
+    /agent_blocked/,
+  );
+  assert.throws(
+    () =>
+      promptAgent("af-reviewer", "x", {
+        runner: () => {
+          throw new Error("herdr: no such agent");
+        },
+      }),
+    /no such agent/,
+  );
+});
+
+test("Claude workspace trust is recorded before an agent launches", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-trust-"));
+  const configPath = path.join(root, ".claude.json");
+  const worktree = path.join(root, "worktrees", "issue-42");
+  fs.mkdirSync(worktree, { recursive: true });
+  try {
+    // Anything else in the file, including credentials, must survive untouched.
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        oauthAccount: { accountUuid: "keep-me" },
+        projects: {
+          "C:/already/trusted": { hasTrustDialogAccepted: true, other: 1 },
+        },
+      }),
+    );
+
+    assert.equal(ensureClaudeWorkspaceTrust(worktree, configPath), "recorded");
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    assert.deepEqual(written.oauthAccount, { accountUuid: "keep-me" });
+    assert.deepEqual(written.projects["C:/already/trusted"], {
+      hasTrustDialogAccepted: true,
+      other: 1,
+    });
+    assert.equal(
+      written.projects[trustKeyFor(worktree)].hasTrustDialogAccepted,
+      true,
+    );
+    // Claude keys projects with forward slashes on every platform.
+    assert.ok(!trustKeyFor(worktree).includes("\\"));
+
+    // Recording twice must not rewrite the file or lose sibling fields.
+    assert.equal(
+      ensureClaudeWorkspaceTrust(worktree, configPath),
+      "already-trusted",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude workspace trust never rewrites a config it cannot understand", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-trust-"));
+  const configPath = path.join(root, ".claude.json");
+  try {
+    // A missing config is left for Claude to create.
+    assert.equal(ensureClaudeWorkspaceTrust(root, configPath), "skipped");
+
+    // Unparseable content is preserved byte for byte rather than replaced.
+    const corrupt = '{"projects": {oops';
+    fs.writeFileSync(configPath, corrupt);
+    assert.equal(ensureClaudeWorkspaceTrust(root, configPath), "skipped");
+    assert.equal(fs.readFileSync(configPath, "utf8"), corrupt);
+
+    fs.writeFileSync(configPath, JSON.stringify(["not", "an", "object"]));
+    assert.equal(ensureClaudeWorkspaceTrust(root, configPath), "skipped");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("conditional specialists are selected from the changed files", () => {
+  const withDocs = (changedFiles: string[]) =>
+    selectConditionalSpecialists({
+      changedFiles,
+      hasDocumentationSurface: true,
+    });
+
+  assert.deepEqual(
+    withDocs(["frontend/src/components/KpiTray.tsx"]),
+    ["documentation"],
+    "an ordinary UI change must not pay for audits it does not need",
+  );
+
+  assert.deepEqual(
+    withDocs([
+      "backend/src/Infrastructure/Migrations/20260101_AddColumn.cs",
+    ]).sort(),
+    ["database-review", "documentation"],
+  );
+
+  assert.ok(
+    withDocs(["backend/src/API/Controllers/AuthController.cs"]).includes(
+      "security-audit",
+    ),
+  );
+  assert.ok(
+    withDocs(["backend/src/API/Controllers/AuthController.cs"]).includes(
+      "api-contract-review",
+    ),
+  );
+
+  assert.deepEqual(
+    withDocs(["docs/adr/0001-thing.md", "README.md"]),
+    [],
+    "a documentation-only diff must not trigger the documentation stage",
+  );
+
+  assert.deepEqual(withDocs([]), [], "an empty diff selects nothing");
+
+  assert.deepEqual(
+    selectConditionalSpecialists({
+      changedFiles: ["src/index.ts"],
+      hasDocumentationSurface: false,
+    }),
+    [],
+    "a repository with nowhere to document anything skips the stage",
+  );
+});
+
+test("changed files are collected from tracked edits and untracked additions", () => {
+  const calls: string[][] = [];
+  const files = collectChangedFiles("/repo", (_command, args) => {
+    calls.push(args);
+    return args[0] === "diff" ? "src/a.ts\nsrc/b.ts" : "src/c.ts";
+  });
+
+  assert.deepEqual(files, ["src/a.ts", "src/b.ts", "src/c.ts"]);
+  assert.deepEqual(calls, [
+    ["diff", "--name-only", "HEAD"],
+    ["ls-files", "--others", "--exclude-standard"],
+  ]);
+
+  // A repository without a HEAD commit must not fail the workflow.
+  assert.deepEqual(
+    collectChangedFiles("/repo", () => {
+      throw new Error("fatal: bad revision 'HEAD'");
+    }),
+    [],
+  );
+});
+
+test("address parses its arguments and rejects anything else", () => {
+  assert.equal(parseAddressArgs(["1160"]).prNumber, "1160");
+  for (const args of [[], ["0"], ["abc"], ["1160", "extra"], ["owner/repo"]]) {
+    assert.throws(() => parseAddressArgs(args), /Usage: address/);
+  }
+});
+
+test("review feedback is parsed and narrowed to what the author can act on", () => {
+  const raw = JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: [
+              {
+                path: "src/Api.cs",
+                line: 42,
+                isResolved: false,
+                isOutdated: false,
+                comments: { nodes: [{ author: { login: "alice" }, body: "Guard this null", url: "u1" }] },
+              },
+              {
+                path: "src/Old.cs",
+                line: 7,
+                isResolved: false,
+                isOutdated: true,
+                comments: { nodes: [{ author: { login: "bob" }, body: "Rename it", url: "u2" }] },
+              },
+              {
+                path: "src/Done.cs",
+                line: 1,
+                isResolved: true,
+                isOutdated: false,
+                comments: { nodes: [{ author: { login: "alice" }, body: "Settled", url: "u3" }] },
+              },
+              {
+                path: "src/Mine.cs",
+                line: 3,
+                isResolved: false,
+                isOutdated: false,
+                comments: { nodes: [{ author: { login: "me" }, body: "note to self", url: "u4" }] },
+              },
+            ],
+          },
+          reviews: {
+            nodes: [
+              { author: { login: "alice" }, body: "Needs work", state: "CHANGES_REQUESTED", url: "r1" },
+              { author: { login: "bob" }, body: "LGTM", state: "APPROVED", url: "r2" },
+            ],
+          },
+          comments: {
+            nodes: [
+              { author: { login: "carol" }, body: "Why this approach?", url: "c1" },
+              { author: { login: "me" }, body: "because", url: "c2" },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  const selected = selectActionableFeedback(parseFeedbackResponse(raw), "me");
+
+  assert.deepEqual(
+    selected.threads.map((thread) => thread.path),
+    ["src/Api.cs", "src/Old.cs"],
+    "resolved threads and the author's own threads are dropped; outdated ones are kept",
+  );
+  assert.deepEqual(
+    selected.reviews.map((review) => [review.author, review.state]),
+    [
+      ["alice", "CHANGES_REQUESTED"],
+      ["bob", "APPROVED"],
+    ],
+    "an approving reviewer who still wrote notes is not discarded",
+  );
+  assert.deepEqual(
+    selected.comments.map((comment) => comment.author),
+    ["carol"],
+    "the author's own comments are not feedback to act on",
+  );
+  assert.equal(countFeedback(selected), 5);
+
+  const formatted = formatFeedback(selected);
+  assert.match(formatted, /src\/Api\.cs:42/);
+  assert.match(formatted, /OUTDATED/, "outdated threads must be labelled for the agent");
+  assert.match(formatted, /Changes requested/);
+  assert.match(formatted, /Other review notes/);
+  assert.match(formatted, /Why this approach\?/);
+  assert.doesNotMatch(formatted, /note to self/);
+});
+
+test("an empty pull request yields no feedback to act on", () => {
+  const empty = parseFeedbackResponse(JSON.stringify({ data: { repository: { pullRequest: {} } } }));
+  assert.equal(countFeedback(selectActionableFeedback(empty, "me")), 0);
+});
+
+test("a same-repo pull request is not mistaken for a fork", () => {
+  // `gh pr view` returns headRepository.nameWithOwner as an empty string,
+  // which the old comparison read as "not this repository".
+  const sameRepo = {
+    number: 1160,
+    title: "Some PR",
+    url: "u",
+    headRefName: "agent/feat-x-1082",
+    headRefOid: "abc",
+    isCrossRepository: false,
+    state: "OPEN",
+    headRepository: { name: "OPSupervisor", nameWithOwner: "" },
+    headRepositoryOwner: { login: "TP-Software-Development" },
+  };
+
+  assert.equal(headRepositoryOf(sameRepo), "TP-Software-Development/OPSupervisor");
+  assert.doesNotThrow(() =>
+    validateFixablePullRequest(sameRepo, "TP-Software-Development/OPSupervisor", "address"),
+  );
+
+  // A real fork must still be refused, by either signal.
+  assert.throws(
+    () =>
+      validateFixablePullRequest(
+        { ...sameRepo, isCrossRepository: true },
+        "TP-Software-Development/OPSupervisor",
+      ),
+    /comes from a fork/,
+  );
+  assert.throws(
+    () =>
+      validateFixablePullRequest(
+        { ...sameRepo, headRepositoryOwner: { login: "someone-else" } },
+        "TP-Software-Development/OPSupervisor",
+      ),
+    /comes from a fork/,
+  );
+
+  // An unidentifiable head repository falls back to isCrossRepository alone.
+  assert.doesNotThrow(() =>
+    validateFixablePullRequest(
+      { ...sameRepo, headRepository: null, headRepositoryOwner: null },
+      "TP-Software-Development/OPSupervisor",
+    ),
+  );
+
+  assert.throws(
+    () =>
+      validateFixablePullRequest(
+        { ...sameRepo, state: "CLOSED" },
+        "TP-Software-Development/OPSupervisor",
+      ),
+    /is closed/,
+  );
+});
+
+test("suggested changes are surfaced as the reviewer's literal replacement", () => {
+  const body =
+    "This reads better inverted:\n\n```suggestion\nif (value == null) {\n  return fallback;\n}\n```\n\nup to you";
+
+  assert.deepEqual(extractSuggestions(body), [
+    "if (value == null) {\n  return fallback;\n}",
+  ]);
+  assert.deepEqual(extractSuggestions("no suggestion here"), []);
+
+  const feedback = selectActionableFeedback(
+    {
+      threads: [
+        {
+          path: "src/Api.cs",
+          line: 42,
+          isResolved: false,
+          isOutdated: false,
+          comments: [{ author: "alice", body, url: "u1" }],
+        },
+      ],
+      reviews: [],
+      comments: [],
+    },
+    "me",
+  );
+
+  assert.equal(countSuggestions(feedback), 1);
+  const formatted = formatFeedback(feedback);
+  assert.match(formatted, /SUGGESTED CHANGE/);
+  assert.match(
+    formatted,
+    /if \(value == null\) \{\n {2}return fallback;\n\}/,
+    "the proposed code must appear verbatim, not truncated or paraphrased",
+  );
+});
+
+test("a suggestion longer than the truncation limit is never cut", () => {
+  const long = Array.from({ length: 200 }, (_, i) => `line ${i};`).join("\n");
+  const feedback: Parameters<typeof formatFeedback>[0] = {
+    threads: [
+      {
+        path: "src/Big.cs",
+        line: 1,
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          { author: "alice", body: "```suggestion\n" + long + "\n```", url: "u" },
+        ],
+      },
+    ],
+    reviews: [],
+    comments: [],
+  };
+  const formatted = formatFeedback(feedback);
+  assert.match(formatted, /line 199;/);
+  assert.doesNotMatch(formatted, /truncated/);
+});
+
+test("a long review body survives; shorter remarks are still bounded", () => {
+  // Reviewers who leave no line comments put the whole review in the body,
+  // and several thousand characters of findings is ordinary.
+  const longReview = "F".repeat(6000);
+  const longComment = "C".repeat(6000);
+
+  const formatted = formatFeedback({
+    threads: [],
+    reviews: [{ author: "alice", body: longReview, state: "APPROVED", url: "r" }],
+    comments: [{ author: "bob", body: longComment, url: "c" }],
+  });
+
+  assert.ok(
+    formatted.includes("F".repeat(6000)),
+    "a 6000-character review body must reach the agent intact",
+  );
+  assert.ok(
+    !formatted.includes("C".repeat(3001)),
+    "a pull request comment is still bounded",
+  );
+  assert.match(formatted, /truncated; read the full text on GitHub/);
+});
+
+test("a stalled prompt waits for the turn instead of re-sending it", () => {
+  // Herdr delivers the prompt, then fails if it does not observe the agent
+  // start within five seconds. Re-sending would duplicate the instruction.
+  const calls: string[][] = [];
+  const output = promptAgent("af-responder", "address this feedback", {
+    extraArgs: ["--wait", "--timeout", "1800000"],
+    settleTimeoutMs: 1800000,
+    runner: (_command, args) => {
+      calls.push(args);
+      if (args[1] === "prompt") {
+        throw new Error(
+          'herdr exited with status 1: {"error":{"code":"agent_prompt_stalled","message":"agent prompt produced no observed working or blocked state within 5000 ms; current status is idle"}}',
+        );
+      }
+      return "settled";
+    },
+  });
+
+  assert.equal(output, "settled");
+  assert.deepEqual(
+    calls.map((args) => args.slice(0, 2).join(" ")),
+    ["agent prompt", "agent wait"],
+    "the prompt must not be sent twice",
+  );
+  assert.deepEqual(calls[1], ["agent", "wait", "af-responder", "--timeout", "1800000"]);
+  assert.ok(
+    !calls[1].includes("--until"),
+    "a stalled turn may end idle, done or blocked",
+  );
+});
+
+test("address accepts --continue to pick up a failed run's worktree", () => {
+  assert.deepEqual(parseAddressArgs(["1163"]), {
+    prNumber: "1163",
+    resume: false,
+  });
+  assert.deepEqual(parseAddressArgs(["1163", "--continue"]), {
+    prNumber: "1163",
+    resume: true,
+  });
+  assert.deepEqual(parseAddressArgs(["--continue", "1163"]), {
+    prNumber: "1163",
+    resume: true,
+  });
+  for (const args of [[], ["--continue"], ["abc", "--continue"]]) {
+    assert.throws(() => parseAddressArgs(args), /Usage: address/);
+  }
+});
+
+test("address keeps handing a failing gate back until it passes", () => {
+  const roles: string[] = [];
+  let attempts = 0;
+  // Fails twice, then passes — a first fix often reveals the next failure.
+  const verify = () => {
+    attempts += 1;
+    if (attempts < 3) throw new Error(`dotnet test exited with status 1: ${attempts} failed`);
+  };
+
+  validateWithRepair(
+    process.cwd(),
+    "owner/repo",
+    "1163",
+    "persona",
+    (role) => roles.push(role),
+    verify,
+  );
+
+  assert.equal(attempts, 3, "the gate is re-run after every repair");
+  assert.deepEqual(roles, [
+    "review-responder-validation-fix-1",
+    "review-responder-validation-fix-2",
+  ]);
+});
+
+test("address gives up with the real failure and points at the worktree", () => {
+  const roles: string[] = [];
+  assert.throws(
+    () =>
+      validateWithRepair(
+        process.cwd(),
+        "owner/repo",
+        "1163",
+        "persona",
+        (role) => roles.push(role),
+        () => {
+          throw new Error("dotnet test exited with status 1: Backend.Tests crashed");
+        },
+      ),
+    (error: Error) =>
+      /still fails after 2 repair attempts/.test(error.message) &&
+      /Backend\.Tests crashed/.test(error.message) &&
+      /--continue/.test(error.message),
+  );
+  assert.equal(roles.length, 2, "bounded: it does not retry forever");
+});
+
+test("address does not call the agent when the gate passes first time", () => {
+  const roles: string[] = [];
+  validateWithRepair(process.cwd(), "owner/repo", "1163", "persona", (role) => roles.push(role), () => {});
+  assert.deepEqual(roles, []);
 });

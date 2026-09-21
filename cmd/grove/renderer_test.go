@@ -739,7 +739,7 @@ func TestRenderContextPanel_PRContext(t *testing.T) {
 				{Number: 1, Title: "Some PR", Branch: "main", Author: "dev", State: "OPEN"},
 			},
 			prIdx:  0,
-			wantIn: []string{"+4 more actions"},
+			wantIn: []string{"+5 more actions"},
 		},
 	}
 

@@ -3,8 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { resolveAgentBackend } from "./workflow-utils.js";
 
-export type WorkflowKind = "imp" | "review" | "resolve" | "ci" | "clean";
+export type WorkflowKind = "imp" | "review" | "resolve" | "ci" | "clean" | "address";
 export type WorkflowStatus = "queued" | "running" | "blocked" | "succeeded" | "failed";
 
 export interface RuntimeStep {
@@ -78,6 +79,8 @@ function titleFor(kind: WorkflowKind, target: number | null): string {
       return `Resolve conflicts${suffix}`;
     case "ci":
       return `Repair CI${suffix}`;
+    case "address":
+      return `Address review feedback${suffix}`;
     case "clean":
       return "Clean merged worktrees";
   }
@@ -110,8 +113,7 @@ export function createWorkflow(
     repo: gitOutput(cwd, ["rev-parse", "--show-toplevel"]) || path.resolve(cwd),
     worktree_path: cwd,
     branch: gitOutput(cwd, ["branch", "--show-current"]),
-    default_agent:
-      process.env.AGENT_FLOW_AGENT_BACKEND === "pi" ? "pi" : "opencode",
+    default_agent: resolveAgentBackend(),
     current_step: "Queued",
     progress: { completed: 0, total: 1, percent: 0 },
     github: {

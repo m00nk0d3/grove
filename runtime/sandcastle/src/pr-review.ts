@@ -4,7 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runSpecialistInPane } from "./herdr-specialist.js";
-import { runTrackedWorkflow } from "./runtime-state.js";
+import {
+  runTrackedWorkflow,
+  updateTrackedWorkflow,
+} from "./runtime-state.js";
 import {
   buildPullRequestReviewPrompt,
   chooseReviewPostAction,
@@ -16,6 +19,7 @@ import {
   detectRepo,
   getWorkflowStatePath,
   requireCleanWorktree,
+  resolveAgentBackend,
   runCommand,
 } from "./workflow-utils.js";
 
@@ -187,6 +191,26 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     `pr-${prNumber}-${metadata.headRefOid.slice(0, 8)}-review.md`,
   );
   let specialistPaneId: string | null = null;
+  const reportReviewAgent = (
+    status: "working" | "blocked",
+    summary: string,
+  ): void => {
+    updateTrackedWorkflow({
+      status: status === "blocked" ? "blocked" : "running",
+      agents: specialistPaneId
+        ? [
+            {
+              id: `${process.env.GROVE_WORKFLOW_RUN_ID ?? "review"}:pull-request-reviewer`,
+              kind: resolveAgentBackend(),
+              name: "pull-request-reviewer",
+              status,
+              summary,
+              pane_id: specialistPaneId,
+            },
+          ]
+        : [],
+    });
+  };
 
   console.log(`\x1b[32m[Pull Request]\x1b[0m ${repo}#${prNumber}: ${metadata.title}`);
   console.log(`\x1b[36m[Worktree]\x1b[0m ${worktreePath}`);
@@ -208,7 +232,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       },
       onPaneChanged: (paneId) => {
         specialistPaneId = paneId;
+        reportReviewAgent("working", `Reviewing pull request #${prNumber}`);
       },
+      // A review waiting on a person should read as waiting on the dashboard.
+      onAgentStatus: (status, summary) => reportReviewAgent(status, summary),
     });
   } finally {
     if (specialistPaneId) {
