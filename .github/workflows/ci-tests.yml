@@ -10,7 +10,7 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-
+    
     steps:
       - uses: actions/checkout@v4
 
@@ -20,5 +20,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Install golangci-lint for lint checks
+      - name: Install golangci-lint
+        run: |
+          GOBIN=$HOME/go/bin
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$GOBIN" 1.64
+
       - name: Run tests
         run: make test
+        
+      - name: Run lint
+        run: make lint
