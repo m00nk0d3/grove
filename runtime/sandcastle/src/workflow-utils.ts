@@ -585,5 +585,27 @@ export function verifyWorktree(stack: TechStack, targetDir: string): void {
     `\x1b[36m[Validation]\x1b[0m ${verification.command} ${verification.args.join(" ")}`,
   );
   runCommand(verification.command, verification.args, { cwd: targetDir });
+  // Strip trailing whitespace from all tracked files before diff --check
+  const changedFiles = runCommand(
+    "git",
+    ["diff", "--name-only", "HEAD"],
+    { cwd: targetDir },
+  );
+  if (changedFiles) {
+    for (const file of changedFiles.split("\n").filter(Boolean)) {
+      try {
+        const absPath = path.join(targetDir, file);
+        if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+          const content = fs.readFileSync(absPath, "utf8");
+          const cleaned = content.replace(/[ \t]+$/gm, "");
+          if (cleaned !== content) {
+            fs.writeFileSync(absPath, cleaned);
+          }
+        }
+      } catch {
+        // Skip files that can't be read (e.g. binary files)
+      }
+    }
+  }
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
 }
