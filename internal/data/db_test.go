@@ -237,5 +237,7 @@ func TestNewDB_SchemaVersionsTracked(t *testing.T) {
 		"005_add_repo_path_to_github_cache.sql",
 		"006_add_runtime_refs_to_active_sessions.sql",
 		"007_add_pr_attention.sql",
+		"008_add_issue_body_and_normalize_cache.sql",
+		"009_add_issue_project_status.sql",
 	}, filenames)
 }

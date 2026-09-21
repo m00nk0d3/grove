@@ -6,7 +6,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseWorktrees } from "./cleanup.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
-import { detectStack } from "./stack-detector.js";
 import { runTrackedWorkflow } from "./runtime-state.js";
 import {
   detectRepo,
@@ -15,7 +14,7 @@ import {
   verifyWorktree,
 } from "./workflow-utils.js";
 
-interface PullRequestMetadata {
+export interface PullRequestMetadata {
   number: number;
   title: string;
   url: string;
@@ -23,7 +22,19 @@ interface PullRequestMetadata {
   headRefOid: string;
   isCrossRepository: boolean;
   state: string;
-  headRepository: { nameWithOwner: string };
+  headRepository: { name?: string; nameWithOwner?: string } | null;
+  headRepositoryOwner?: { login?: string } | null;
+}
+
+// `gh pr view` returns headRepository.nameWithOwner as an empty string, unlike
+// `gh pr list`, so the head repository has to be rebuilt from its owner and
+// name before it can be compared with the current checkout.
+export function headRepositoryOf(metadata: PullRequestMetadata): string {
+  const combined = metadata.headRepository?.nameWithOwner?.trim();
+  if (combined) return combined;
+  const owner = metadata.headRepositoryOwner?.login?.trim();
+  const name = metadata.headRepository?.name?.trim();
+  return owner && name ? `${owner}/${name}` : "";
 }
 
 export interface PullRequestCheck {
@@ -44,17 +55,23 @@ export function parseCiArgs(args: string[]): string {
 export function validateFixablePullRequest(
   metadata: PullRequestMetadata,
   repo: string,
+  commandName = "ci",
 ): void {
   if (metadata.state !== "OPEN") {
     throw new Error(`Pull request #${metadata.number} is ${metadata.state.toLowerCase()}.`);
   }
+  // isCrossRepository is the authoritative answer. The name comparison only
+  // rejects a head repository we could actually identify, so a missing one
+  // does not masquerade as a fork.
+  const headRepository = headRepositoryOf(metadata);
   if (
     metadata.isCrossRepository ||
-    metadata.headRepository.nameWithOwner.toLowerCase() !== repo.toLowerCase()
+    (headRepository !== "" &&
+      headRepository.toLowerCase() !== repo.toLowerCase())
   ) {
     throw new Error(
       `Pull request #${metadata.number} comes from a fork. ` +
-        "The ci command only pushes branches owned by this repository.",
+        `The ${commandName} command only pushes branches owned by this repository.`,
     );
   }
 }
@@ -140,7 +157,7 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     "--repo",
     repo,
     "--json",
-    "number,title,url,headRefName,headRefOid,isCrossRepository,state,headRepository",
+    "number,title,url,headRefName,headRefOid,isCrossRepository,state,headRepository,headRepositoryOwner",
   ]);
   const value = JSON.parse(output) as Partial<PullRequestMetadata>;
   if (
@@ -185,13 +202,17 @@ function readFailedChecks(repo: string, prNumber: string): PullRequestCheck[] {
   return parseFailedChecks(result.stdout);
 }
 
-function safePathComponent(value: string): string {
+export function safePathComponent(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function prepareWorktree(
+// The worktree is keyed by the pull request branch, so a second workflow on
+// the same pull request reuses the checkout the first one made.
+export function prepareWorktree(
   repoRoot: string,
   metadata: PullRequestMetadata,
+  subdirectory = "ci",
+  allowDirty = false,
 ): string {
   const worktrees = parseWorktrees(
     runCommand("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot }),
@@ -206,7 +227,7 @@ function prepareWorktree(
         `Existing worktree is not at the PR head ${metadata.headRefOid}: ${existing.path}`,
       );
     }
-    const ciRoot = path.join(repoRoot, ".sandcastle", "ci");
+    const ciRoot = path.join(repoRoot, ".sandcastle", subdirectory);
     const relativeToCiRoot = path.relative(ciRoot, existing.path);
     const isCiWorktree =
       relativeToCiRoot !== "" &&
@@ -215,9 +236,21 @@ function prepareWorktree(
       !path.isAbsolute(relativeToCiRoot);
     if (
       runCommand("git", ["status", "--porcelain"], { cwd: existing.path }) !== "" &&
-      !isCiWorktree
+      !isCiWorktree &&
+      !allowDirty
     ) {
-      throw new Error(`Existing PR worktree has uncommitted changes: ${existing.path}`);
+      // Git allows one worktree per branch, so this checkout is the only place
+      // the pull request branch can be worked on, and the uncommitted changes
+      // may equally be someone's work in progress or an earlier run of this
+      // command that failed its delivery gate. Refusing by default is right;
+      // --continue is how the caller says which it is.
+      throw new Error(
+        `The worktree for this pull request has uncommitted changes, so ${subdirectory} will not touch it:\n` +
+          `  ${existing.path}\n` +
+          "Git allows only one worktree per branch, so there is nowhere else to check it out.\n" +
+          `If that work is your own, commit or stash it first. If it is an earlier ${subdirectory} run ` +
+          `that failed, rerun with --continue to pick it up.`,
+      );
     }
     return existing.path;
   }
@@ -225,11 +258,11 @@ function prepareWorktree(
   const worktreePath = path.join(
     repoRoot,
     ".sandcastle",
-    "ci",
+    subdirectory,
     `pr-${metadata.number}-${safePathComponent(metadata.headRefName)}`,
   );
   if (fs.existsSync(worktreePath)) {
-    throw new Error(`Unregistered CI worktree path already exists: ${worktreePath}`);
+    throw new Error(`Unregistered worktree path already exists: ${worktreePath}`);
   }
 
   const localBranchExists =
@@ -370,7 +403,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     );
   }
 
-  verifyWorktree(detectStack(targetDir), targetDir);
+  verifyWorktree(targetDir);
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
   runCommand("git", ["add", "-A"], { cwd: targetDir });
   runCommand(

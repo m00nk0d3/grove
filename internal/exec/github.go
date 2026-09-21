@@ -88,7 +88,7 @@ func NewIssueCommandWithRunner(repoPath string, runner commandRunner) *IssueComm
 
 // ListOpenIssues returns all open GitHub issues via `gh issue list`.
 func (c *IssueCommand) ListOpenIssues() ([]domain.Issue, error) {
-	output, err := c.runner(c.repoPath, "issue", "list", "--json", "number,title,body,labels,assignees", "--state", "open", "--limit", "100")
+	output, err := c.runner(c.repoPath, "issue", "list", "--json", "number,title,body,labels,assignees,state", "--state", "open", "--limit", "100")
 	if err != nil {
 		return nil, fmt.Errorf("list open issues: %w", err)
 	}
@@ -111,11 +111,12 @@ type ghAssignee struct {
 	Login string `json:"login"`
 }
 
-// ghIssue is the JSON shape returned by `gh issue list --json number,title,body,labels,assignees`.
+// ghIssue is the JSON shape returned by `gh issue list --json number,title,body,labels,assignees,state`.
 type ghIssue struct {
 	Number    int          `json:"number"`
 	Title     string       `json:"title"`
 	Body      string       `json:"body"`
+	State     string       `json:"state"`
 	Labels    []ghLabel    `json:"labels"`
 	Assignees []ghAssignee `json:"assignees"`
 }
@@ -143,6 +144,7 @@ func parseIssueList(raw string) ([]domain.Issue, error) {
 			Number:    g.Number,
 			Title:     g.Title,
 			Body:      g.Body,
+			State:     g.State,
 			Labels:    labels,
 			Assignees: assignees,
 		})
@@ -167,6 +169,100 @@ func (c *IssueCommand) GetRepoOwnerAndName() (string, string, error) {
 		return "", "", fmt.Errorf("parse repo owner and name: %w", err)
 	}
 	return result.Owner.Login, result.Name, nil
+}
+
+// projectStatusRank orders Projects v2 status values by how much active work they
+// imply. An issue can appear on several boards whose vocabularies differ, so the
+// rank decides which board's value is reported. Unrecognised values (including
+// terminal ones such as "Done") rank lowest and are only used when nothing else
+// is available.
+func projectStatusRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "in progress", "in-progress", "doing", "started", "in development":
+		return 5
+	case "in review", "review", "in qa", "qa":
+		return 4
+	case "blocked", "on hold":
+		return 3
+	case "ready", "todo", "to do", "next":
+		return 2
+	case "backlog", "triage", "icebox":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// FetchIssueProjectStatus fetches the GitHub Projects v2 "Status" field for open
+// issues in a single bulk GraphQL call. Values are returned with the board's own
+// wording (for example "In progress" or "Backlog") rather than normalised, so the
+// UI shows what the board actually says.
+//
+// Returns nil, nil on any API error — project status is optional enrichment and
+// reading it requires the read:project token scope, which may not be granted.
+func (c *IssueCommand) FetchIssueProjectStatus(owner, repo string) (map[int]string, error) {
+	query := `query($owner: String!, $repo: String!) {
+		repository(owner: $owner, name: $repo) {
+			issues(states: OPEN, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+				nodes {
+					number
+					projectItems(first: 5) {
+						nodes {
+							fieldValueByName(name: "Status") {
+								... on ProjectV2ItemFieldSingleSelectValue { name }
+							}
+						}
+					}
+				}
+			}
+		}
+	}`
+	output, err := c.runner(c.repoPath, "api", "graphql",
+		"-F", "owner="+owner,
+		"-F", "repo="+repo,
+		"-f", "query="+query,
+	)
+	if err != nil {
+		return nil, nil // graceful fallback
+	}
+	var resp struct {
+		Data struct {
+			Repository struct {
+				Issues struct {
+					Nodes []struct {
+						Number       int `json:"number"`
+						ProjectItems struct {
+							Nodes []struct {
+								FieldValueByName struct {
+									Name string `json:"name"`
+								} `json:"fieldValueByName"`
+							} `json:"nodes"`
+						} `json:"projectItems"`
+					} `json:"nodes"`
+				} `json:"issues"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(output), &resp); err != nil {
+		return nil, nil // graceful fallback
+	}
+	result := make(map[int]string)
+	for _, issue := range resp.Data.Repository.Issues.Nodes {
+		best := ""
+		for _, item := range issue.ProjectItems.Nodes {
+			name := item.FieldValueByName.Name
+			if name == "" {
+				continue
+			}
+			if best == "" || projectStatusRank(name) > projectStatusRank(best) {
+				best = name
+			}
+		}
+		if best != "" {
+			result[issue.Number] = best
+		}
+	}
+	return result, nil
 }
 
 // FetchIssueHierarchy fetches sub-issue relationships for open issues in a single

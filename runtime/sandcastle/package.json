@@ -10,7 +10,8 @@
     "clean": "dist/cleanup.js",
     "resolve": "dist/conflict-resolver.js",
     "ci": "dist/ci-fix.js",
-    "grove-sandcastle": "dist/sandcastle.js"
+    "grove-sandcastle": "dist/sandcastle.js",
+    "address": "dist/address-review.js"
   },
   "files": [
     "dist",

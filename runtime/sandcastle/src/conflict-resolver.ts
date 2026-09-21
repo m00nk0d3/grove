@@ -7,7 +7,6 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseWorktrees } from "./cleanup.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
-import { detectStack } from "./stack-detector.js";
 import { runTrackedWorkflow } from "./runtime-state.js";
 import {
   detectRepo,
@@ -289,7 +288,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (currentHead !== originalHead) {
     throw new Error("The conflict resolver committed changes unexpectedly.");
   }
-  verifyWorktree(detectStack(targetDir), targetDir);
+  verifyWorktree(targetDir);
   runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
 
   console.log("\n## ✅ Resolution Ready\n");

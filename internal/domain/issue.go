@@ -10,6 +10,8 @@ type Issue struct {
 	Number          int
 	Title           string
 	Body            string
+	State           string // GitHub issue state, e.g. "OPEN" or "CLOSED"
+	ProjectStatus   string // Projects v2 "Status" field, in the board's own wording; empty when the issue is on no board
 	Labels          []string
 	Assignees       []string
 	ParentNumber    *int  // nil if this is a top-level issue

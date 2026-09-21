@@ -2,6 +2,7 @@ package data
 
 import (
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 
@@ -137,6 +138,68 @@ func TestGitHubRepository_UpsertAndGetIssues(t *testing.T) {
 	got := byNumber(issues)
 	assert.Equal(t, input[0], got[10])
 	assert.Equal(t, input[1], got[11])
+}
+
+func TestGitHubRepository_UpsertAndGetIssues_RoundTripsBodyStateAssignees(t *testing.T) {
+	repo := NewGitHubRepository(newTestDB(t), "/repo/nexus")
+
+	input := []domain.Issue{
+		{
+			Number:    10,
+			Title:     "Fix the bug",
+			Body:      "Steps to reproduce:\n1. Run it\n2. Watch it fail",
+			State:     "OPEN",
+			Labels:    []string{"bug"},
+			Assignees: []string{"alice", "bob"},
+
+			ProjectStatus: "In progress",
+		},
+		{Number: 11, Title: "Unassigned", State: "OPEN", Labels: []string{}},
+	}
+
+	require.NoError(t, repo.UpsertIssues(input))
+
+	issues, err := repo.GetIssues()
+	require.NoError(t, err)
+	require.Len(t, issues, 2)
+
+	assert.Equal(t, input[0], issues[0], "body, state, assignees and project status must survive the cache")
+	assert.Empty(t, issues[1].Assignees, "an unassigned issue must not gain assignees")
+	assert.Equal(t, "OPEN", issues[1].State)
+	assert.Empty(t, issues[1].ProjectStatus, "an issue on no board must have no project status")
+}
+
+func TestGitHubRepository_RepoPathSeparatorsAreNormalized(t *testing.T) {
+	db := newTestDB(t)
+
+	// Grove derives the repo path from os.Getwd() and from `git worktree list`,
+	// which disagree on separators on Windows; both spellings must hit one
+	// cache entry. Only Windows treats a backslash as a separator, so the
+	// mixed-spelling case is checked there and a redundant-element path
+	// stands in everywhere else.
+	first, second := "/repo/nexus", "/repo/./nexus/"
+	if runtime.GOOS == "windows" {
+		first, second = "C:/repo/nexus", `C:\repo\nexus`
+	}
+
+	forward := NewGitHubRepository(db, first)
+	require.NoError(t, forward.UpsertIssues([]domain.Issue{
+		{Number: 10, Title: "Only cached once", State: "OPEN", Labels: []string{}},
+	}))
+
+	backslash := NewGitHubRepository(db, second)
+	issues, err := backslash.GetIssues()
+	require.NoError(t, err)
+	require.Len(t, issues, 1, "both path spellings must resolve to the same cache key")
+	assert.Equal(t, 10, issues[0].Number)
+
+	var rows int
+	require.NoError(t, db.Conn.QueryRow("SELECT COUNT(*) FROM github_issues").Scan(&rows))
+	assert.Equal(t, 1, rows, "the same repository must not be cached twice")
+
+	stale, err := IsCacheStale(db, CacheTableIssues, time.Hour, first)
+	require.NoError(t, err)
+	assert.False(t, stale, "staleness checks must use the same normalized key as writes")
 }
 
 func TestGitHubRepository_UpsertAndGetIssues_WithHierarchy(t *testing.T) {

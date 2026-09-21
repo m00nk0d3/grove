@@ -1,0 +1,21 @@
+run:
+  timeout: 10m
+  
+issues:
+  exclude-use-default: true
+  exclude-dirs:
+    - vendor
+    - runtime/sandcastle
+
+linters:
+  disable-all: true
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - unused
+    - errcheck
+    
+  settings:
+    typecheck:
+      disabled: true

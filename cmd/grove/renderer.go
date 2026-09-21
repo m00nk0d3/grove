@@ -907,10 +907,16 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 			if body == "" {
 				body = "(no description)"
 			}
+			// The text reports GitHub's view of the issue; the filled dot marks
+			// that this machine has a worktree for it.
 			statusText := "Open"
+			if iss.ProjectStatus != "" {
+				statusText = iss.ProjectStatus
+			} else if issueHasWorktree(iss.Number, worktrees) {
+				statusText = "In Progress"
+			}
 			statusDot := "●"
 			if issueHasWorktree(iss.Number, worktrees) {
-				statusText = "In Progress"
 				statusDot = "◉"
 			}
 			assigneesStr := formatAssignees(iss.Assignees)
@@ -1265,9 +1271,14 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 	statusValues := make([]string, len(visible))
 	for i, row := range visible {
 		issue := row.issue
+		// Precedence: a live Grove workflow, then the issue's GitHub project
+		// board status in the board's own wording, then a local worktree.
 		status := "Open"
 		if len(missionStates) > 0 {
 			status = issueWorkflowStatus(issue.Number, missionStates[0])
+		}
+		if status == "Open" && issue.ProjectStatus != "" {
+			status = issue.ProjectStatus
 		}
 		if status == "Open" && issueHasWorktree(issue.Number, worktrees) {
 			status = "In Progress"
@@ -1283,7 +1294,7 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 		entries[i] = rowEntry{
 			num:    fmt.Sprintf(" %-4d", issue.Number),
 			title:  titleCell,
-			status: status,
+			status: truncateStr(status, statusColW),
 			assign: truncateStr(formatAssignees(issue.Assignees), assignColW),
 			labels: truncateStr(strings.Join(issue.Labels, " "), labelsColW),
 		}

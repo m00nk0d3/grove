@@ -12,6 +12,7 @@ import {
   type RuntimeWorkflow,
   type WorkflowKind,
 } from "./runtime-state.js";
+import { AGENT_BACKENDS, isAgentBackend } from "./workflow-utils.js";
 
 const VERSION = "0.1.0";
 
@@ -79,7 +80,7 @@ export function resolveWorkflowCommand(
   issue: string | undefined,
   pullRequest: string | undefined,
 ): { kind: WorkflowKind; targetArgs: string[] } {
-  const kinds: WorkflowKind[] = ["imp", "review", "resolve", "ci", "clean"];
+  const kinds: WorkflowKind[] = ["imp", "review", "resolve", "ci", "clean", "address"];
   if (!kinds.includes(requestedKind as WorkflowKind)) {
     throw new Error(`unsupported workflow kind "${requestedKind}"`);
   }
@@ -88,7 +89,7 @@ export function resolveWorkflowCommand(
     throw new Error("imp workflow requires --issue <number>");
   }
   if (
-    ["review", "resolve", "ci"].includes(kind) &&
+    ["review", "resolve", "ci", "address"].includes(kind) &&
     (!pullRequest || !/^[1-9][0-9]*$/.test(pullRequest))
   ) {
     throw new Error(`${kind} workflow requires --pr <number>`);
@@ -116,8 +117,10 @@ function workflowStart(cwd: string, args: string[]): void {
     issue,
     pullRequest,
   );
-  if (!["opencode", "pi"].includes(agent)) {
-    throw new Error(`unsupported agent "${agent}"; expected opencode or pi`);
+  if (!isAgentBackend(agent)) {
+    throw new Error(
+      `unsupported agent "${agent}"; expected one of ${AGENT_BACKENDS.join(", ")}`,
+    );
   }
 
   const runID = `run_${randomUUID()}`;
@@ -197,7 +200,7 @@ function main(args = process.argv.slice(2)): void {
     return workflowStart(cwd, args.slice(2));
   }
   throw new Error(
-    "Usage: grove-sandcastle status|workflow list|workflow get <id>|workflow remove <id> [--stop]|workflow start --kind <imp|review|resolve|ci|clean> [--issue <number>|--pr <number>]",
+    "Usage: grove-sandcastle status|workflow list|workflow get <id>|workflow remove <id> [--stop]|workflow start --kind <imp|review|resolve|ci|clean|address> [--issue <number>|--pr <number>]",
   );
 }
 

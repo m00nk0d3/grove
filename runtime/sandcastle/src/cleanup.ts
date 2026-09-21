@@ -67,6 +67,7 @@ export function buildCleanupPlan(
   protectedPaths: string[],
   defaultBranch: string,
   isClean: (worktreePath: string) => boolean,
+  openPullRequestBranches: string[] = [],
 ): CleanupPlan {
   const mergedByBranch = new Map(
     mergedPullRequests.map((pullRequest) => [
@@ -77,6 +78,13 @@ export function buildCleanupPlan(
   const mergedByNumber = new Map(
     mergedPullRequests.map((pullRequest) => [pullRequest.number, pullRequest]),
   );
+  // A branch name can carry many pull requests over its life. Release tooling
+  // reuses a single branch for every release, so a name whose earlier pull
+  // requests merged may right now be hosting an open one. Deleting that branch
+  // makes GitHub close the open pull request, so a head ref with an open pull
+  // request is never a cleanup candidate, whatever merged on the same name
+  // before it.
+  const openBranches = new Set(openPullRequestBranches);
   const protectedPathSet = new Set(protectedPaths.map((item) => path.resolve(item)));
   const skipped: string[] = [];
   const worktreeCandidates: CleanupWorktree[] = [];
@@ -85,6 +93,13 @@ export function buildCleanupPlan(
   for (const worktree of worktrees) {
     if (protectedPathSet.has(path.resolve(worktree.path))) {
       if (worktree.branch) protectedWorktreeBranches.add(worktree.branch);
+      continue;
+    }
+    if (worktree.branch && openBranches.has(worktree.branch)) {
+      skipped.push(
+        `Branch has an open pull request: ${worktree.branch}`,
+      );
+      protectedWorktreeBranches.add(worktree.branch);
       continue;
     }
     const pullRequest = worktree.branch
@@ -109,6 +124,7 @@ export function buildCleanupPlan(
       (branch) =>
         branch !== defaultBranch &&
         !protectedWorktreeBranches.has(branch) &&
+        !openBranches.has(branch) &&
         mergedByBranch.has(branch),
     )
     .map((branch) => ({
@@ -120,6 +136,7 @@ export function buildCleanupPlan(
       (branch) =>
         branch !== defaultBranch &&
         !protectedWorktreeBranches.has(branch) &&
+        !openBranches.has(branch) &&
         mergedByBranch.has(branch),
     )
     .map((branch) => ({
@@ -133,6 +150,44 @@ export function buildCleanupPlan(
     remoteBranches: remoteBranchCandidates,
     skipped,
   };
+}
+
+// The head refs of every open pull request. These are the branches that must
+// survive cleanup: deleting one closes its pull request.
+export function parseOpenPullRequestBranches(output: string): string[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    // Better to protect nothing extra than to guess; the merged-only filter
+    // still applies, and the caller fails loudly if gh itself errored.
+    return [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) =>
+      item && typeof item === "object" && typeof item.headRefName === "string"
+        ? item.headRefName
+        : "",
+    )
+    .filter((branch) => branch !== "");
+}
+
+function readOpenPullRequestBranches(repo: string): string[] {
+  return parseOpenPullRequestBranches(
+    runCommand("gh", [
+      "pr",
+      "list",
+      "--repo",
+      repo,
+      "--state",
+      "open",
+      "--limit",
+      "1000",
+      "--json",
+      "headRefName",
+    ]),
+  );
 }
 
 function readMergedPullRequests(repo: string): MergedPullRequest[] {
@@ -268,6 +323,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     defaultBranch,
     (worktreePath) =>
       runCommand("git", ["status", "--porcelain"], { cwd: worktreePath }) === "",
+    readOpenPullRequestBranches(repo),
   );
 
   printPlan(plan);

@@ -5,9 +5,23 @@ import { createHash } from "node:crypto";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { SPECIALISTS, getImplementationPrompt } from "./specialists.js";
-import { detectStack, TechStack } from "./stack-detector.js";
+import {
+  SPECIALISTS,
+  buildImplementationPersona,
+  getImplementationPrompt,
+} from "./specialists.js";
+import {
+  detectStack,
+  detectStackProjects,
+  TechStack,
+} from "./stack-detector.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
+import {
+  collectChangedFiles,
+  hasDocumentationSurface,
+  selectConditionalSpecialists,
+  type ConditionalSpecialist,
+} from "./specialist-gating.js";
 import {
   runTrackedWorkflow,
   updateTrackedWorkflow,
@@ -24,6 +38,7 @@ import {
   formatReviewVerdict,
   postReviewComment,
   readJsonArtifactWithRetry,
+  readAuditVerdict,
   readReviewVerdict,
   REVIEW_BATCH_SIZE,
 } from "./review-loop.js";
@@ -32,17 +47,20 @@ import {
   assertModeOverrideCompatible,
   detectRepo,
   FULL_WORKFLOW_STEPS,
-  getVerificationCommand,
+  planVerification,
   getWorkflowStatePath,
   loadWorkflowState,
   LEAN_WORKFLOW_STEPS,
   parseCliArgs,
   requireCleanWorktree,
+  resolveAgentBackend,
   runCommand,
   saveWorkflowState,
   slugifyIssueTitle,
   synchronizeDefaultBranch,
   verifyWorktree,
+  warnIfWindowsPathLimitLikely,
+  type CommandRunner,
   type WorkflowState,
   type WorkflowStep,
 } from "./workflow-utils.js";
@@ -85,6 +103,94 @@ export function implementationSessionId(repo: string, issueNum: string): string 
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// The reporter has read the whole diff, so it is the one stage that can say
+// what the change did rather than what the issue asked for. Its title is only
+// used when it is a single usable line; anything else falls back to the issue
+// title, which is at least accurate.
+const MAX_PR_TITLE_LENGTH = 100;
+
+export function readPullRequestTitle(
+  titlePath: string,
+  fallback: string,
+): string {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(titlePath, "utf8");
+  } catch {
+    return fallback;
+  }
+  const title = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+    // A model asked for "one line, no quotes" occasionally supplies quotes,
+    // a Markdown heading, or a bullet anyway.
+    ?.replace(/^#+\s*/, "")
+    .replace(/^[-*]\s*/, "")
+    .replace(/^["'`]|["'`]$/g, "")
+    .trim();
+
+  if (!title || title.length > MAX_PR_TITLE_LENGTH) {
+    return fallback;
+  }
+  // A title that just restates the task tells a changelog reader nothing.
+  if (/^(resolve|implement|fix)\s+(issue\s*)?#?\d+$/i.test(title)) {
+    return fallback;
+  }
+  return title;
+}
+
+// The delivery commit is made before the reporter exists, so it carries a
+// placeholder subject. Release tooling builds its changelog from commit
+// subjects, which is how a release ends up listing "resolve #1086" instead of
+// what shipped. Rewriting the subject is only safe while the commit has never
+// left this machine, so anything that cannot prove that leaves it alone.
+const PLACEHOLDER_SUBJECT = /^(fix|feat|chore)(\([^)]*\))?: resolve #\d+$/i;
+
+export function retitleDeliveryCommit(
+  targetDir: string,
+  branchName: string,
+  title: string,
+  runner: CommandRunner = runCommand,
+): "retitled" | "skipped" {
+  try {
+    const onRemote = runner(
+      "git",
+      ["ls-remote", "--heads", "origin", branchName],
+      { cwd: targetDir },
+    ).trim();
+    if (onRemote !== "") {
+      return "skipped"; // published already; rewriting would diverge
+    }
+  } catch {
+    return "skipped"; // cannot prove it is unpushed, so do not touch it
+  }
+
+  let subject: string;
+  let body: string;
+  try {
+    subject = runner("git", ["log", "-1", "--format=%s"], {
+      cwd: targetDir,
+    }).trim();
+    body = runner("git", ["log", "-1", "--format=%b"], { cwd: targetDir }).trim();
+  } catch {
+    return "skipped";
+  }
+
+  // Only the placeholder is replaced. A subject someone wrote deliberately,
+  // or one already retitled by an earlier run, is left as it is.
+  if (!PLACEHOLDER_SUBJECT.test(subject) || subject === title) {
+    return "skipped";
+  }
+
+  const args = ["commit", "--amend", "-m", title];
+  if (body) {
+    args.push("-m", body); // keep the trailers the delivery commit carried
+  }
+  runner("git", args, { cwd: targetDir });
+  return "retitled";
+}
+
 export function runValidationWithRepair(
   validate: () => void,
   repair: (failure: string) => void,
@@ -124,7 +230,9 @@ export function createLeanReport(
     ["diff", "--name-status", baseCommit, "HEAD"],
     { cwd: targetDir },
   );
-  const verification = getVerificationCommand(stack);
+  const verification = planVerification(detectStackProjects(targetDir), [])
+    .map((task) => task.label)
+    .join(" && ");
   const head = runCommand("git", ["rev-parse", "--short", "HEAD"], {
     cwd: targetDir,
   });
@@ -159,7 +267,7 @@ ${files.join("\n")}
 
 ## 🧪 Validation
 ${bullets(evidence.validation)}
-- Orchestrator delivery gate passed: \`${verification.command} ${verification.args.join(" ")}\`
+- Orchestrator delivery gate passed: \`${verification}\`
 - Orchestrator delivery gate passed: \`git diff --check\`
 
 ## 🎯 Acceptance Criteria
@@ -313,7 +421,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       : classifyIssue(issueMetadata);
     const issueSlug = slugifyIssueTitle(issueMetadata.title);
     state = {
-      version: 5,
+      version: 7,
       repo,
       issueNum,
       issueTitle: issueMetadata.title,
@@ -342,6 +450,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   console.log(`\x1b[32m[Target Repository]\x1b[0m ${repo} | Issue #${issueNum}`);
   console.log(`\x1b[34m[Workflow Mode]\x1b[0m ${modeReport}`);
   console.log(`\x1b[36m[Sandcastle]\x1b[0m Creating isolated worktree...`);
+  warnIfWindowsPathLimitLikely(repoRoot);
   const worktree = await createWorktree({
     branchStrategy: { type: "branch", branch: branchName },
     cwd: repoRoot,
@@ -387,6 +496,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     }
 
     const stack: TechStack = detectStack(targetDir);
+    const persona = buildImplementationPersona(detectStackProjects(targetDir));
     const requirementsPath = `${agentDir}/REQUIREMENTS.md`;
     const contextPath = `${agentDir}/CONTEXT.md`;
     const planPath = `${agentDir}/PLAN.md`;
@@ -398,6 +508,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const reportPath = path.join(
       path.dirname(statePath),
       `issue-${issueNum}-implementation-report.md`,
+    );
+    const prTitlePath = path.join(
+      path.dirname(statePath),
+      `issue-${issueNum}-pr-title.txt`,
     );
     const reviewReportPath = path.join(
       path.dirname(statePath),
@@ -412,6 +526,31 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         `\x1b[33m[Resume]\x1b[0m Continuing after ${state.completedSteps.at(-1)}.`,
       );
     }
+
+    // Mission control reads the workflow's own status and its agents', so a
+    // stage waiting for a person has to be reported as blocked on both for the
+    // dashboard to surface it instead of showing a long-running stage.
+    const reportAgent = (
+      role: string,
+      status: "working" | "blocked",
+      summary: string,
+    ): void => {
+      updateTrackedWorkflow({
+        status: status === "blocked" ? "blocked" : "running",
+        agents: specialistPaneId
+          ? [
+              {
+                id: `${process.env.GROVE_WORKFLOW_RUN_ID ?? "workflow"}:${role}`,
+                kind: resolveAgentBackend(),
+                name: role,
+                status,
+                summary,
+                pane_id: specialistPaneId,
+              },
+            ]
+          : [],
+      });
+    };
 
     const runSpecialist = (
       role: string,
@@ -430,24 +569,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         completionValidator,
         onPaneChanged: (paneId) => {
           specialistPaneId = paneId;
-          updateTrackedWorkflow({
-            agents: paneId
-              ? [
-                  {
-                    id: `${process.env.GROVE_WORKFLOW_RUN_ID ?? "workflow"}:${role}`,
-                    kind:
-                      process.env.AGENT_FLOW_AGENT_BACKEND === "pi"
-                        ? "pi"
-                        : "opencode",
-                    name: role,
-                    status: "working",
-                    summary: `Executing ${role} stage`,
-                    pane_id: paneId,
-                  },
-                ]
-              : [],
-          });
+          reportAgent(role, "working", `Executing ${role} stage`);
         },
+        // A stage waiting on a person should read as waiting, not as slow.
+        onAgentStatus: (status, summary) => reportAgent(role, status, summary),
       });
     };
 
@@ -503,18 +628,22 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     };
 
     const verifyWithRepair = (handoffPath: string): void => {
-      const verification = getVerificationCommand(stack);
+      // Name every command the gate runs, so a repair in a multi-stack
+      // repository knows which project it has to make pass.
+      const verification = planVerification(detectStackProjects(targetDir), [])
+        .map((task) => task.label)
+        .join(" && ");
       runValidationWithRepair(
-        () => verifyWorktree(stack, targetDir),
+        () => verifyWorktree(targetDir),
         (failure) =>
           runSpecialist(
             `${stack.toLowerCase()}-validation-repair`,
             SPECIALISTS.IMPLEMENTER_VALIDATION_FIXES(
-              stack,
+              persona,
               issueNum,
               repo,
               handoffPath,
-              `${verification.command} ${verification.args.join(" ")}`,
+              verification,
               failure,
             ),
             [],
@@ -524,12 +653,133 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       );
     };
 
+    // Review specialists whose subject matter appears in only some diffs.
+    // Selecting them from the changed files keeps an ordinary issue at the cost
+    // it has today, while a migration or an authorization change still gets the
+    // dedicated pass it warrants. The selection is computed once, after the
+    // implementation has settled.
+    let conditionalSelection: ConditionalSpecialist[] | null = null;
+    const selectedSpecialists = (): ConditionalSpecialist[] => {
+      if (conditionalSelection === null) {
+        conditionalSelection = selectConditionalSpecialists({
+          changedFiles: collectChangedFiles(targetDir),
+          hasDocumentationSurface: hasDocumentationSurface(targetDir),
+        });
+        console.log(
+          conditionalSelection.length > 0
+            ? `\x1b[36m[Specialists]\x1b[0m Diff selects: ${conditionalSelection.join(", ")}`
+            : "\x1b[36m[Specialists]\x1b[0m No conditional specialists apply to this diff.",
+        );
+      }
+      return conditionalSelection;
+    };
+
+    // One review covering whichever concerns the diff raises. Three separate
+    // stages meant three agent runs, three pane boots and three re-reads of
+    // the same diff for what is one pass over one change.
+    const runDomainReview = (handoffPath: string): void => {
+      runStep("domain-review", () => {
+        const domains = selectedSpecialists().filter(
+          (specialist) => specialist !== "documentation",
+        );
+        if (domains.length === 0) {
+          console.log(
+            "[33m[Specialists][0m Skipping domain-review: the diff raises none of its concerns.",
+          );
+          return;
+        }
+        console.log(
+          `[36m[Specialists][0m Domain review covering: ${domains.join(", ")}`,
+        );
+        // Keep the verdict inside the worktree: Claude needs approval to write
+        // outside its working directory, and .agent/ is removed at delivery.
+        const verdictRelativePath = `${agentDir
+          .split(path.sep)
+          .join("/")}/domain-review-verdict.json`;
+        const verdictPath = path.join(targetDir, verdictRelativePath);
+        fs.mkdirSync(path.dirname(verdictPath), { recursive: true });
+
+        for (let cycle = 1; cycle <= REVIEW_BATCH_SIZE; cycle += 1) {
+          fs.rmSync(verdictPath, { force: true });
+          const stateBefore = captureWorktreeState(
+            targetDir,
+            verdictRelativePath,
+          );
+          runSpecialist(
+            `domain-review-${cycle}`,
+            SPECIALISTS.DOMAIN_REVIEWER(issueNum, repo, verdictPath, domains),
+            [verdictPath],
+            () => {
+              readAuditVerdict(verdictPath, "domain-review");
+            },
+          );
+          if (
+            captureWorktreeState(targetDir, verdictRelativePath) !== stateBefore
+          ) {
+            throw new Error(
+              "The domain reviewer modified the implementation instead of reporting blockers.",
+            );
+          }
+          if (readAuditVerdict(verdictPath, "domain-review").verdict === "approved") {
+            return;
+          }
+          console.log(
+            `[33m[domain-review][0m Blockers reported in cycle ${cycle}; returning control to the implementation specialist.`,
+          );
+          runSpecialist(
+            `${stack.toLowerCase()}-domain-review-fix-${cycle}`,
+            SPECIALISTS.IMPLEMENTER_REVIEW_FIXES(
+              persona,
+              issueNum,
+              repo,
+              handoffPath,
+              verdictPath,
+            ),
+            [],
+            undefined,
+            implementerSessionId,
+          );
+          verifyWithRepair(handoffPath);
+        }
+        throw new Error(
+          `The domain reviewer still reports blockers after ${REVIEW_BATCH_SIZE} implementation cycles.`,
+        );
+      });
+    };
+
+    const runDocumentationStage = (handoffPath: string): void => {
+      runStep("documentation", () => {
+        if (!selectedSpecialists().includes("documentation")) {
+          console.log(
+            "\x1b[33m[Specialists]\x1b[0m Skipping documentation: the diff changes nothing this repository documents.",
+          );
+          return;
+        }
+        runSpecialist(
+          "documentation-specialist",
+          SPECIALISTS.DOCUMENTATION_SPECIALIST(issueNum, repo, issueTitle),
+        );
+        verifyWithRepair(handoffPath);
+      });
+    };
+
+    const removeAgentArtifacts = (): void => {
+      fs.rmSync(path.join(targetDir, agentDir), { recursive: true, force: true });
+      const parentAgentDir = path.join(targetDir, ".agent");
+      if (
+        fs.existsSync(parentAgentDir) &&
+        fs.readdirSync(parentAgentDir).length === 0
+      ) {
+        fs.rmdirSync(parentAgentDir);
+      }
+    };
+
     const commitChanges = (subject: string): void => {
       const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
       if (!status) {
         throw new Error("The workflow produced no changes to commit.");
       }
-      verifyWorktree(stack, targetDir);
+      verifyWorktree(targetDir);
       runCommand("git", ["add", "-A"], { cwd: targetDir });
       runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
       runCommand(
@@ -547,25 +797,21 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     };
 
     if (state.mode === "full") {
-      runStep("issue-analysis", () =>
+      runStep("planning", () =>
         runSpecialist(
-          "issue-analyst",
-          SPECIALISTS.ISSUE_ANALYST(issueNum, repo, requirementsPath),
-          [path.join(targetDir, requirementsPath)],
-        ),
-      );
-      runStep("repository-scout", () =>
-        runSpecialist(
-          "repository-scout",
-          SPECIALISTS.REPOSITORY_SCOUT(requirementsPath, contextPath),
-          [path.join(targetDir, contextPath)],
-        ),
-      );
-      runStep("architecture", () =>
-        runSpecialist(
-          "architect",
-          SPECIALISTS.ARCHITECT(requirementsPath, contextPath, planPath),
-          [path.join(targetDir, planPath)],
+          "planner",
+          SPECIALISTS.PLANNER(
+            issueNum,
+            repo,
+            requirementsPath,
+            contextPath,
+            planPath,
+          ),
+          [
+            path.join(targetDir, requirementsPath),
+            path.join(targetDir, contextPath),
+            path.join(targetDir, planPath),
+          ],
         ),
       );
       runStep("tests", () =>
@@ -583,7 +829,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         runSpecialist(
           `${stack.toLowerCase()}-implementer`,
           getImplementationPrompt(
-            stack,
+            persona,
             issueNum,
             requirementsPath,
             contextPath,
@@ -601,20 +847,8 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
         verifyWithRepair(planPath);
       });
-      runStep("adversarial-review", () => {
-        runSpecialist(
-          "reviewer",
-          SPECIALISTS.REVIEWER(issueNum, requirementsPath),
-        );
-        verifyWithRepair(planPath);
-      });
-      runStep("cleanup", () => {
-        fs.rmSync(path.join(targetDir, agentDir), { recursive: true, force: true });
-        const parentAgentDir = path.join(targetDir, ".agent");
-        if (fs.existsSync(parentAgentDir) && fs.readdirSync(parentAgentDir).length === 0) {
-          fs.rmdirSync(parentAgentDir);
-        }
-      });
+      runDomainReview(planPath);
+      runDocumentationStage(planPath);
     } else {
       runStep("lean-planning", () => {
         const stateBefore = captureWorktreeState(targetDir, leanPlanPath);
@@ -638,7 +872,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       runStep("lean-implementation", () =>
         runSpecialist(
           `${stack.toLowerCase()}-lean-implementer`,
-          SPECIALISTS.LEAN_IMPLEMENTER(stack, issueNum, repo, leanPlanPath),
+          SPECIALISTS.LEAN_IMPLEMENTER(persona, issueNum, repo, leanPlanPath),
           [],
           undefined,
           implementerSessionId,
@@ -686,7 +920,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           runSpecialist(
             `${stack.toLowerCase()}-lean-implementer-fix-${cycle}`,
             SPECIALISTS.IMPLEMENTER_REVIEW_FIXES(
-              stack,
+              persona,
               issueNum,
               repo,
               leanPlanPath,
@@ -702,15 +936,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
       });
       runStep("verification", () => verifyWithRepair(leanPlanPath));
-      runStep("cleanup", () => {
-        fs.rmSync(path.join(targetDir, agentDir), { recursive: true, force: true });
-        const parentAgentDir = path.join(targetDir, ".agent");
-        if (fs.existsSync(parentAgentDir) && fs.readdirSync(parentAgentDir).length === 0) {
-          fs.rmdirSync(parentAgentDir);
-        }
-      });
+      runDomainReview(leanPlanPath);
+      runDocumentationStage(leanPlanPath);
     }
     runStep("delivery", () => {
+      // Planning artifacts are scaffolding for the agents, not deliverables.
+      removeAgentArtifacts();
       const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
       const head = runCommand("git", ["rev-parse", "HEAD"], { cwd: targetDir });
       if (!status && head !== state.baseCommit) {
@@ -724,6 +955,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     });
     runStep("report", () => {
       fs.rmSync(reportPath, { force: true });
+      fs.rmSync(prTitlePath, { force: true });
       if (state.mode === "full") {
         runSpecialist(
           "implementation-reporter",
@@ -733,8 +965,9 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             issueTitle,
             state.baseCommit,
             reportPath,
+            prTitlePath,
           ),
-          [reportPath],
+          [reportPath, prTitlePath],
         );
       } else {
         fs.writeFileSync(
@@ -757,11 +990,21 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       requireCleanWorktree(targetDir);
       console.log(`\n\x1b[36m[Implementation Report]\x1b[0m\n${fs.readFileSync(reportPath, "utf8")}`);
     });
-    runStep("push", () => {
+    runStep("publish", () => {
+      // The reporter names what the change did; the issue title only says what
+      // was asked for, which reads as boilerplate in a changelog.
+      const pullRequestTitle = readPullRequestTitle(prTitlePath, issueTitle);
+      console.log(`[35m[GitHub][0m Title: ${pullRequestTitle}`);
+      if (
+        retitleDeliveryCommit(targetDir, branchName, pullRequestTitle) ===
+        "retitled"
+      ) {
+        console.log(
+          "[36m[Git][0m Retitled the delivery commit so the changelog reads usefully.",
+        );
+      }
       console.log(`\x1b[33m[Git]\x1b[0m Pushing branch ${branchName}...`);
       runCommand("git", ["push", "-u", "origin", branchName], { cwd: targetDir });
-    });
-    runStep("pr", () => {
       console.log(`\x1b[35m[GitHub]\x1b[0m Opening pull request...`);
       prUrl = runCommand(
         "gh",
@@ -794,7 +1037,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             "--head",
             branchName,
             "--title",
-            issueTitle,
+            pullRequestTitle,
             "--body-file",
             reportPath,
           ],
@@ -803,7 +1046,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       } else {
         runCommand(
           "gh",
-          ["pr", "edit", prUrl, "--title", issueTitle, "--body-file", reportPath],
+          ["pr", "edit", prUrl, "--title", pullRequestTitle, "--body-file", reportPath],
           { cwd: targetDir },
         );
       }
@@ -872,7 +1115,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         runSpecialist(
           `${stack.toLowerCase()}-implementer-fix-${cycle}`,
           SPECIALISTS.IMPLEMENTER_REVIEW_FIXES(
-            stack,
+            persona,
             issueNum,
             repo,
             state.mode === "lean" ? leanPlanPath : planPath,
@@ -890,10 +1133,8 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           `\n\x1b[33m[PR Review Fixes Applied]\x1b[0m A fresh reviewer will verify cycle ${cycle + 1}.`,
         );
       }
-      state.completedSteps.push("review");
-      saveWorkflowState(statePath, state);
-    }
-    if (!state.completedSteps.includes("publish-review")) {
+      // Publishing the verdict completes the review; it is the same stage,
+      // not a separate one.
       if (!state.approved || !state.finalVerdict) {
         throw new Error("Cannot publish a PR review without an approved verdict.");
       }
@@ -908,7 +1149,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           `\x1b[33m[Not Posted]\x1b[0m Review preserved at ${reviewReportPath}`,
         );
       }
-      state.completedSteps.push("publish-review");
+      state.completedSteps.push("review");
       saveWorkflowState(statePath, state);
     }
     workflowSucceeded = true;

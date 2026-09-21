@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildCleanupPlan,
   executeCleanup,
+  parseOpenPullRequestBranches,
   parseWorktrees,
   type MergedPullRequest,
 } from "./cleanup.js";
@@ -128,4 +129,56 @@ test("executeCleanup removes worktrees before local branches", () => {
     },
     { command: "git", args: ["worktree", "prune"] },
   ]);
+});
+
+test("a branch whose earlier releases merged is spared while a release is open", () => {
+  // Release tooling reuses one branch for every release. Four merged release
+  // pull requests put that name in the merged map while an open one is live
+  // on it; deleting the branch would make GitHub close that open request.
+  const releaseBranch = "release-please--branches--main--components--App";
+  const plan = buildCleanupPlan(
+    [
+      { path: "/repo/.sandcastle/worktrees/release", branch: releaseBranch, locked: false },
+      { path: "/repo/.sandcastle/worktrees/done", branch: "feat/done", locked: false },
+    ],
+    [releaseBranch, "feat/done"],
+    [releaseBranch, "feat/done"],
+    [
+      { number: 773, headRefName: releaseBranch, url: "u773" },
+      { number: 828, headRefName: releaseBranch, url: "u828" },
+      { number: 900, headRefName: "feat/done", url: "u900" },
+    ],
+    [],
+    "main",
+    () => true,
+    [releaseBranch],
+  );
+
+  assert.deepEqual(
+    plan.remoteBranches.map((branch) => branch.branch),
+    ["feat/done"],
+    "the open release branch must never be pushed for deletion",
+  );
+  assert.deepEqual(
+    plan.branches.map((branch) => branch.branch),
+    ["feat/done"],
+  );
+  assert.deepEqual(
+    plan.worktrees.map((worktree) => worktree.branch),
+    ["feat/done"],
+  );
+  assert.ok(
+    plan.skipped.some((reason) => reason.includes(releaseBranch)),
+    "and the reason is reported rather than silently skipped",
+  );
+});
+
+test("open pull request head refs are parsed, and bad output protects nothing extra", () => {
+  assert.deepEqual(
+    parseOpenPullRequestBranches('[{"headRefName":"a"},{"headRefName":"b"}]'),
+    ["a", "b"],
+  );
+  assert.deepEqual(parseOpenPullRequestBranches("[]"), []);
+  assert.deepEqual(parseOpenPullRequestBranches("not json"), []);
+  assert.deepEqual(parseOpenPullRequestBranches('[{"other":1}]'), []);
 });

@@ -45,7 +45,7 @@ func TestCacheTTL_SkipsCliIfFresh(t *testing.T) {
 				require.NoError(t, err)
 				// Manually set synced_at to 2 hours ago.
 				old := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02 15:04:05")
-				_, err = db.Conn.Exec("UPDATE github_prs SET synced_at = ? WHERE repo_path = '/repo/nexus'", old)
+				_, err = db.Conn.Exec("UPDATE github_prs SET synced_at = ? WHERE repo_path = ?", old, NormalizeRepoPath("/repo/nexus"))
 				require.NoError(t, err)
 			},
 			ttl:       time.Hour,

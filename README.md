@@ -53,7 +53,7 @@ In short: if you work on multiple features simultaneously, Grove removes the glu
 | Requirement | Notes |
 |---|---|
 | [Git](https://git-scm.com/) | Must be in `PATH` |
-| [GitHub CLI (`gh`)](https://cli.github.com/) | Run `gh auth login` before first use |
+| [GitHub CLI (`gh`)](https://cli.github.com/) | Run `gh auth login` before first use. For project board status, also grant the `read:project` scope: `gh auth refresh -h github.com -s read:project` |
 | Go 1.25+ | Only needed if building from source |
 | Node.js 22+ | Only needed when building the Sandcastle runtime from source |
 
@@ -195,6 +195,9 @@ theme = "digital-noir"
 enabled = true
 binary = "grove-sandcastle"
 poll_interval_seconds = 5
+
+# Agent backend used for workflow specialists.
+# Options: "opencode", "pi", "claude"
 default_agent = "opencode"
 
 [worktrees]
@@ -238,11 +241,118 @@ The right-hand **Actions** panel updates with the current selection. Press
 **`a`** to focus it, use **`j`/`k`** to select an action, and press **Enter**:
 
 - Issues can start `imp`.
-- Pull requests can start `review`, `ci`, or `resolve`.
+- Pull requests can start `review`, `address`, `ci`, or `resolve`.
 - Worktrees and the dashboard can start `clean`.
+
+`address` works the other way round from `review`: instead of reviewing someone
+else's pull request, it takes the feedback left on **yours** — unresolved review
+threads, "changes requested" review bodies, and pull request comments — and
+makes the code changes they ask for. It checks out the pull request branch,
+works through each item, validates, then commits and pushes.
+
+A reviewer's **suggested change** is their literal replacement for the lines the
+thread sits on, so it is passed through verbatim — never truncated — and applied
+as written unless it is wrong. An **approved** pull request is still fair game:
+notes left alongside an approval count as feedback, and the run warns you when
+pushing might dismiss that approval.
+
+It does not write to the conversation. Replying to reviewers and resolving
+threads stays with you, and the agent's final response lists what it did for
+each item, including anything it deliberately did not change and why. Threads
+marked outdated are shown to the agent as outdated, so it checks the current
+code rather than redoing work that has already landed.
 
 Sandcastle owns agent selection and process launching. Grove supplies context,
 opens the workflow in Herdr, and displays runtime status.
+
+### Review Specialists
+
+After the implementation is verified, a workflow runs additional review stages —
+but only the ones the diff calls for, so an ordinary change is no slower than
+before. The review audits only, and hands blockers back to the implementation
+specialist rather than fixing them itself.
+
+| Concern | Raised when the diff touches | Reviews |
+| --- | --- | --- |
+| security | auth, roles, policies, sessions, middleware, CORS, secrets, app settings | Authorization coverage, untrusted input, leaked credentials, transport and browser protections, sensitive data |
+| database | migrations, `.sql`, schema definitions, entities, seed routines | Destructive operations, additive-only compliance, backfills, index and cascade impact, rollback cost |
+| API contract | controllers, routes, handlers, endpoints, DTOs, API clients | An interface change staying consistent across every layer that declares, produces, or consumes it |
+
+Whichever concerns a diff raises are reviewed together in one `domain-review`
+stage, each against its own checklist, so three concerns cost one agent run
+rather than three.
+
+The `documentation` stage follows the repository's stated obligations, and
+leaves a generated changelog to the release tooling that owns it.
+
+### Stack Detection
+
+Grove identifies **every** stack in the repository, not just one. Each project
+is found by its marker file, searching the repository root and up to two levels
+below it, and a directory that owns a project is not searched again — so a
+solution's individual projects and a workspace's packages do not each count.
+
+| Marker | Stack | Validated with |
+| --- | --- | --- |
+| `go.mod` | Go | `go test ./...` |
+| `pyproject.toml` or `requirements.txt` | Python | `python -m pytest` |
+| `*.sln`, `*.slnx`, or `*.csproj` | .NET | `dotnet test <solution>` |
+| `package.json` | TypeScript | `npm test` |
+
+Two things follow from this in a repository holding more than one stack:
+
+- **Validation runs per project, where the project lives**, and only for the
+  projects the diff actually touches. A backend-only change runs the backend's
+  tests; a change spanning both trees runs both. A change that cannot be
+  attributed to any project validates all of them rather than guessing.
+- **The implementation persona names every stack and the directory that owns
+  it**, so the agent follows the conventions of whichever tree it is editing
+  instead of being told the repository is one language.
+
+For example, a repository with `backend/App.sln` and `frontend/package.json`
+validates a backend change with `dotnet test App.sln` run inside `backend/`,
+and a frontend change with `npm test` run inside `frontend/`.
+
+### Agent Backends
+
+Every workflow launches its specialists through the same backend, selected by
+`default_agent` in `config.toml` and forwarded to Herdr as the agent kind.
+
+| Backend | Requires | Notes |
+| --- | --- | --- |
+| `opencode` | OpenCode, LM Studio (default model) | Default. Writes artifacts with shell redirection. |
+| `pi` | Pi, LM Studio or Bonsai | Uses the compaction guard extension for context continuity. |
+| `claude` | [Claude Code](https://claude.com/claude-code) | Writes artifacts with its native `Write` tool. No local model server needed. |
+
+The backend is passed to the workflow process as `AGENT_FLOW_AGENT_BACKEND`.
+Each backend reads its own optional overrides:
+
+| Variable | Backend | Default |
+| --- | --- | --- |
+| `AGENT_FLOW_OPENCODE_MODEL` | `opencode` | `lmstudio/qwen/qwen3.5-9b` |
+| `AGENT_FLOW_OPENCODE_AGENT` | `opencode` | `build` |
+| `AGENT_FLOW_PI_PROVIDER` | `pi` | `lm-studio` |
+| `AGENT_FLOW_PI_MODEL` | `pi` | `qwen/qwen3.5-9b` |
+| `AGENT_FLOW_CLAUDE_MODEL` | `claude` | the Claude Code session default |
+| `AGENT_FLOW_CLAUDE_PERMISSION_MODE` | `claude` | `acceptEdits` |
+| `AGENT_FLOW_CLAUDE_TOOLS` | `claude` | `Read,Write,Edit,Bash,Glob,Grep` |
+| `AGENT_FLOW_HUMAN_INPUT_TIMEOUT_MS` | all | `900000` (15 minutes) |
+
+### When an Agent Needs You
+
+An agent can stop for something only a person can decide — a permission prompt,
+a credential, a judgement call. Rather than failing the stage, Grove focuses
+that agent's Herdr pane and waits:
+
+```
+[Input Needed] af-pull-request-reviewer-1160-49 is waiting for a person.
+Answer it in its Herdr pane; the workflow resumes on its own once the agent is
+idle again (waiting up to 900s).
+```
+
+Answer in the pane and the workflow carries on by itself. Set
+`AGENT_FLOW_HUMAN_INPUT_TIMEOUT_MS=0` to fail immediately instead, for
+unattended runs where nobody is watching.
 
 ---
 

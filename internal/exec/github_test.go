@@ -102,7 +102,7 @@ func TestListOpenIssues_PassesCorrectArgs(t *testing.T) {
 	_, err := cmd.ListOpenIssues()
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"issue", "list", "--json", "number,title,body,labels,assignees", "--state", "open", "--limit", "100"}, capturedArgs)
+	assert.Equal(t, []string{"issue", "list", "--json", "number,title,body,labels,assignees,state", "--state", "open", "--limit", "100"}, capturedArgs)
 }
 
 func TestListOpenIssues_MapsDomainsCorrectly(t *testing.T) {
@@ -243,6 +243,65 @@ func TestEnrichHierarchyFromBodies_ParentNotInSlice_ChildStillGetsParentNumber(t
 
 	require.NotNil(t, issues[0].ParentNumber)
 	assert.Equal(t, 61, *issues[0].ParentNumber)
+}
+
+// ---------------------------------------------------------------------------
+// FetchIssueProjectStatus
+// ---------------------------------------------------------------------------
+
+func TestFetchIssueProjectStatus_ReturnsBoardWordingVerbatim(t *testing.T) {
+	// Boards disagree on capitalisation and vocabulary, so the value must be
+	// passed through untouched rather than normalised.
+	raw := `{"data":{"repository":{"issues":{"nodes":[
+		{"number":1150,"projectItems":{"nodes":[{"fieldValueByName":{"name":"In progress"}}]}},
+		{"number":1152,"projectItems":{"nodes":[{"fieldValueByName":{"name":"Backlog"}}]}},
+		{"number":1160,"projectItems":{"nodes":[]}}
+	]}}}}`
+
+	runner := func(_ string, args ...string) (string, error) { return raw, nil }
+	cmd := NewIssueCommandWithRunner("/repo", runner)
+
+	status, err := cmd.FetchIssueProjectStatus("owner", "repo")
+
+	require.NoError(t, err)
+	assert.Equal(t, "In progress", status[1150])
+	assert.Equal(t, "Backlog", status[1152])
+	assert.NotContains(t, status, 1160, "an issue on no board must not get a status")
+}
+
+func TestFetchIssueProjectStatus_MultipleBoards_PrefersMostActive(t *testing.T) {
+	raw := `{"data":{"repository":{"issues":{"nodes":[
+		{"number":10,"projectItems":{"nodes":[
+			{"fieldValueByName":{"name":"Backlog"}},
+			{"fieldValueByName":{"name":"In Progress"}}
+		]}},
+		{"number":11,"projectItems":{"nodes":[
+			{"fieldValueByName":{"name":"In review"}},
+			{"fieldValueByName":{"name":"Ready"}}
+		]}}
+	]}}}}`
+
+	runner := func(_ string, args ...string) (string, error) { return raw, nil }
+	cmd := NewIssueCommandWithRunner("/repo", runner)
+
+	status, err := cmd.FetchIssueProjectStatus("owner", "repo")
+
+	require.NoError(t, err)
+	assert.Equal(t, "In Progress", status[10])
+	assert.Equal(t, "In review", status[11])
+}
+
+func TestFetchIssueProjectStatus_RunnerError_ReturnsNilNil(t *testing.T) {
+	// Missing the read:project scope must degrade silently, not break the sync.
+	runner := func(_ string, _ ...string) (string, error) {
+		return "", assert.AnError
+	}
+	cmd := NewIssueCommandWithRunner("/repo", runner)
+
+	status, err := cmd.FetchIssueProjectStatus("owner", "repo")
+
+	require.NoError(t, err)
+	assert.Nil(t, status)
 }
 
 // ---------------------------------------------------------------------------

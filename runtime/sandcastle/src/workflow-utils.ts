@@ -2,7 +2,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { TechStack } from "./stack-detector.js";
+import {
+  detectStackProjects,
+  findDotNetProject,
+  type StackProject,
+  type TechStack,
+} from "./stack-detector.js";
 import type {
   WorkflowMode,
   WorkflowModeSource,
@@ -14,21 +19,20 @@ export interface CliOptions {
   modeOverride: WorkflowMode | null;
 }
 
+// Steps are agent stages first and bookkeeping second. Git and filesystem work
+// that costs nothing is folded into the stage it belongs to rather than shown
+// as a workflow stage of its own.
 export const FULL_WORKFLOW_STEPS = [
-  "issue-analysis",
-  "repository-scout",
-  "architecture",
+  "planning",
   "tests",
   "implementation",
   "verification",
-  "adversarial-review",
-  "cleanup",
+  "domain-review",
+  "documentation",
   "delivery",
   "report",
-  "push",
-  "pr",
+  "publish",
   "review",
-  "publish-review",
 ] as const;
 
 export const LEAN_WORKFLOW_STEPS = [
@@ -36,24 +40,12 @@ export const LEAN_WORKFLOW_STEPS = [
   "lean-implementation",
   "lean-review",
   "verification",
-  "cleanup",
+  "domain-review",
+  "documentation",
   "delivery",
   "report",
-  "push",
-  "pr",
+  "publish",
   "review",
-  "publish-review",
-] as const;
-
-const LEGACY_WORKFLOW_STEPS = [
-  "planner",
-  "tdd",
-  "implementation",
-  "review",
-  "cleanup",
-  "git",
-  "push",
-  "pr",
 ] as const;
 
 export type WorkflowStep =
@@ -61,7 +53,7 @@ export type WorkflowStep =
   | (typeof LEAN_WORKFLOW_STEPS)[number];
 
 export interface WorkflowState {
-  version: 5;
+  version: 7;
   repo: string;
   issueNum: string;
   issueTitle: string;
@@ -91,7 +83,13 @@ export type CommandRunner = (
   options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ) => string;
 
-export type AgentBackend = "opencode" | "pi";
+export type AgentBackend = "opencode" | "pi" | "claude";
+
+export const AGENT_BACKENDS: readonly AgentBackend[] = [
+  "opencode",
+  "pi",
+  "claude",
+];
 
 export interface AgentLaunchConfig {
   backend: AgentBackend;
@@ -104,11 +102,13 @@ export interface AgentLaunchConfig {
 const DEFAULT_PI_PROVIDER = "lm-studio";
 const DEFAULT_PI_MODEL = "qwen/qwen3.5-9b";
 const DEFAULT_OPENCODE_MODEL = "lmstudio/qwen/qwen3.5-9b";
+const DEFAULT_CLAUDE_PERMISSION_MODE = "acceptEdits";
+const DEFAULT_CLAUDE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
 export const PI_COMPACTION_GUARD_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "pi-compaction-guard.js",
 );
-const PI_CONTINUITY_PROMPT =
+const AGENT_CONTINUITY_PROMPT =
   "Agent-flow continuity contract: context compaction is lossy. After any " +
   "compaction, follow the injected recovery message, treat the exact original " +
   "assignment and filesystem/Git state as authoritative, re-read durable " +
@@ -129,16 +129,62 @@ export function getPiAgentArgs(
     "--extension",
     PI_COMPACTION_GUARD_PATH,
     "--append-system-prompt",
-    PI_CONTINUITY_PROMPT,
+    AGENT_CONTINUITY_PROMPT,
     "--tools",
     "read,bash,edit,write",
   ];
 }
 
+export function getClaudeAgentArgs(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const tools = (env.AGENT_FLOW_CLAUDE_TOOLS ?? "")
+    .split(",")
+    .map((tool) => tool.trim())
+    .filter((tool) => tool.length > 0);
+  const args = ["--"];
+  if (env.AGENT_FLOW_CLAUDE_MODEL) {
+    args.push("--model", env.AGENT_FLOW_CLAUDE_MODEL);
+  }
+  args.push(
+    "--permission-mode",
+    env.AGENT_FLOW_CLAUDE_PERMISSION_MODE ?? DEFAULT_CLAUDE_PERMISSION_MODE,
+    "--append-system-prompt",
+    AGENT_CONTINUITY_PROMPT,
+  );
+  // --allowedTools is variadic, so it must stay last in the argument list.
+  args.push(
+    "--allowedTools",
+    ...(tools.length > 0 ? tools : DEFAULT_CLAUDE_TOOLS),
+  );
+  return args;
+}
+
+export function isAgentBackend(value: string): value is AgentBackend {
+  return (AGENT_BACKENDS as readonly string[]).includes(value);
+}
+
+function unsupportedBackendMessage(value: string): string {
+  const expected = AGENT_BACKENDS.map((backend) => `'${backend}'`).join(", ");
+  return `Unsupported AGENT_FLOW_AGENT_BACKEND '${value}'; expected one of ${expected}.`;
+}
+
+// resolveAgentBackend reports the configured backend without building a full
+// launch config, for callers that only need to label telemetry.
+export function resolveAgentBackend(
+  env: NodeJS.ProcessEnv = process.env,
+): AgentBackend {
+  const backend = env.AGENT_FLOW_AGENT_BACKEND ?? "opencode";
+  if (!isAgentBackend(backend)) {
+    throw new Error(unsupportedBackendMessage(backend));
+  }
+  return backend;
+}
+
 export function getAgentLaunchConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): AgentLaunchConfig {
-  const backend = env.AGENT_FLOW_AGENT_BACKEND ?? "opencode";
+  const backend = resolveAgentBackend(env);
   if (backend === "pi") {
     const provider = env.AGENT_FLOW_PI_PROVIDER ?? DEFAULT_PI_PROVIDER;
     return {
@@ -154,10 +200,15 @@ export function getAgentLaunchConfig(
       needsLmStudioEnv: provider === "lm-studio",
     };
   }
-  if (backend !== "opencode") {
-    throw new Error(
-      `Unsupported AGENT_FLOW_AGENT_BACKEND '${backend}'; expected 'opencode' or 'pi'.`,
-    );
+  if (backend === "claude") {
+    const model = env.AGENT_FLOW_CLAUDE_MODEL;
+    return {
+      backend,
+      kind: "claude",
+      label: model ? `Claude Code (${model})` : "Claude Code",
+      args: getClaudeAgentArgs(env),
+      needsLmStudioEnv: false,
+    };
   }
   const model = env.AGENT_FLOW_OPENCODE_MODEL ?? DEFAULT_OPENCODE_MODEL;
   return {
@@ -179,8 +230,88 @@ export function getAgentLaunchConfig(
   };
 }
 
+export interface VerificationTask {
+  stack: TechStack;
+  command: string;
+  args: string[];
+  /** Directory to run in, relative to the repository root ("" = root). */
+  root: string;
+  label: string;
+}
+
+function taskFor(project: StackProject): VerificationTask {
+  const base = getVerificationCommand(project.stack);
+  const args =
+    project.stack === "CSHARP"
+      ? ["test", project.marker.slice(project.marker.lastIndexOf("/") + 1)]
+      : base.args;
+  const where = project.root ? ` (in ${project.root})` : "";
+  return {
+    stack: project.stack,
+    command: base.command,
+    args,
+    root: project.root,
+    label: `${base.command} ${args.join(" ")}${where}`,
+  };
+}
+
+// planVerification chooses which projects a change has to be validated against.
+// Running every project in a multi-stack repository wastes time and can fail on
+// an unrelated pre-existing break, while running only one silently skips the
+// stack that actually changed.
+export function planVerification(
+  projects: StackProject[],
+  changedFiles: string[],
+): VerificationTask[] {
+  if (projects.length === 0) {
+    // No recognised project: preserve the historical repository-root default.
+    const fallback = getVerificationCommand("TYPESCRIPT");
+    return [
+      {
+        stack: "TYPESCRIPT",
+        command: fallback.command,
+        args: fallback.args,
+        root: "",
+        label: `${fallback.command} ${fallback.args.join(" ")}`,
+      },
+    ];
+  }
+
+  const ownerOf = (file: string): StackProject | undefined => {
+    const normalized = file.replace(/\\/g, "/");
+    let owner: StackProject | undefined;
+    for (const project of projects) {
+      const matches =
+        project.root === "" || normalized.startsWith(`${project.root}/`);
+      // The deepest matching root wins, so frontend/ beats a root project.
+      if (matches && (!owner || project.root.length > owner.root.length)) {
+        owner = project;
+      }
+    }
+    return owner;
+  };
+
+  const affected = new Set<StackProject>();
+  for (const file of changedFiles) {
+    const owner = ownerOf(file);
+    if (owner) {
+      affected.add(owner);
+    }
+  }
+
+  // Nothing attributable — a root-level config or an unknown change — means the
+  // safe answer is to validate everything rather than guess.
+  const selected =
+    affected.size > 0
+      ? projects.filter((project) => affected.has(project))
+      : projects;
+
+  return selected.map(taskFor);
+}
+
 export function getVerificationCommand(
   stack: TechStack,
+  targetDir?: string,
 ): { command: string; args: string[] } {
   switch (stack) {
     case "GO":
@@ -189,6 +320,13 @@ export function getVerificationCommand(
       return { command: "python", args: ["-m", "pytest"] };
     case "TYPESCRIPT":
       return { command: "npm", args: ["test"] };
+    case "CSHARP": {
+      // `dotnet test` resolves a project from the working directory, so a
+      // solution kept below the repository root (backend/App.sln) has to be
+      // named explicitly or the command fails with MSB1003.
+      const project = targetDir ? findDotNetProject(targetDir) : undefined;
+      return { command: "dotnet", args: project ? ["test", project] : ["test"] };
+    }
   }
 }
 
@@ -238,17 +376,71 @@ function usage(): string {
   return "Usage: imp <issue_number> [--lean|--full] OR imp <owner/repo> <issue_number> [--lean|--full] (agent-flow is an alias)";
 }
 
-export function slugifyIssueTitle(title: string): string {
-  const slug = title
+// A worktree repeats its branch slug in its directory name, so every character
+// here is charged against Windows' 260-character path limit for each file in
+// the checkout. Keep the slug short, and cut it on a word boundary so the
+// branch still reads as something a human chose.
+const DEFAULT_SLUG_MAX_LENGTH = 40;
+
+export function slugifyIssueTitle(
+  title: string,
+  maxLength: number = DEFAULT_SLUG_MAX_LENGTH,
+): string {
+  const normalized = title
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/-+$/g, "");
+    .replace(/^-+|-+$/g, "");
+
+  if (normalized.length <= maxLength) {
+    return normalized || "issue";
+  }
+
+  let slug = "";
+  for (const word of normalized.split("-").filter(Boolean)) {
+    const candidate = slug ? `${slug}-${word}` : word;
+    if (candidate.length > maxLength) {
+      break;
+    }
+    slug = candidate;
+  }
+
+  // A first word longer than the budget cannot be kept whole.
+  if (!slug) {
+    slug = normalized.slice(0, maxLength).replace(/-+$/g, "");
+  }
 
   return slug || "issue";
+}
+
+// Windows limits most paths to 260 characters unless long paths are enabled in
+// Git. Git reports the failure once it is already part-way through the
+// checkout, naming only the files it could not write, so warn before creating
+// the worktree where the cause is still obvious.
+export function warnIfWindowsPathLimitLikely(
+  repoRoot: string,
+  runner: CommandRunner = runCommand,
+): void {
+  if (process.platform !== "win32") {
+    return;
+  }
+  let configured = "";
+  try {
+    configured = runner("git", ["config", "--get", "core.longpaths"], {
+      cwd: repoRoot,
+    });
+  } catch {
+    configured = ""; // unset: git exits non-zero
+  }
+  if (configured.trim().toLowerCase() === "true") {
+    return;
+  }
+  console.log(
+    "\x1b[33m[Git]\x1b[0m core.longpaths is not enabled. Checking out deeply " +
+      "nested files can fail on the Windows 260-character path limit. " +
+      "Enable it with: git config --global core.longpaths true",
+  );
 }
 
 export const runCommand: CommandRunner = (
@@ -360,7 +552,7 @@ export function loadWorkflowState(statePath: string): WorkflowState | null {
   };
   const completedSteps = candidate.completedSteps;
   if (
-    ![1, 2, 3, 4, 5].includes(candidate.version ?? 0) ||
+    ![1, 2, 3, 4, 5, 6, 7].includes(candidate.version ?? 0) ||
     typeof candidate.repo !== "string" ||
     typeof candidate.issueNum !== "string" ||
     typeof candidate.issueTitle !== "string" ||
@@ -372,12 +564,13 @@ export function loadWorkflowState(statePath: string): WorkflowState | null {
     throw new Error(`Invalid workflow checkpoint: ${statePath}`);
   }
 
-  if (candidate.version === 5) {
-    if (
-      !["lean", "full"].includes(candidate.mode ?? "") ||
-      typeof candidate.modeReason !== "string" ||
-      !["automatic", "explicit", "migration"].includes(candidate.modeSource ?? "")
-    ) {
+  const hasModeFields =
+    ["lean", "full"].includes(candidate.mode ?? "") &&
+    typeof candidate.modeReason === "string" &&
+    ["automatic", "explicit", "migration"].includes(candidate.modeSource ?? "");
+
+  if (candidate.version === 7) {
+    if (!hasModeFields) {
       throw new Error(`Invalid workflow checkpoint: ${statePath}`);
     }
     const expectedSteps =
@@ -391,100 +584,38 @@ export function loadWorkflowState(statePath: string): WorkflowState | null {
     return candidate as WorkflowState;
   }
 
-  if (candidate.version === 4) {
-    if (
-      !["lean", "full"].includes(candidate.mode ?? "") ||
-      typeof candidate.modeReason !== "string" ||
-      !["automatic", "explicit", "migration"].includes(candidate.modeSource ?? "")
-    ) {
-      throw new Error(`Invalid workflow checkpoint: ${statePath}`);
-    }
-    const previousSteps =
-      candidate.mode === "lean"
-        ? [
-            "implementation",
-            "verification",
-            "delivery",
-            "report",
-            "push",
-            "pr",
-            "review",
-            "publish-review",
-          ]
-        : FULL_WORKFLOW_STEPS;
-    const isModePrefix = completedSteps.every(
-      (step, index) => step === previousSteps[index],
-    );
-    if (!isModePrefix) {
-      throw new Error(`Invalid workflow checkpoint: ${statePath}`);
-    }
-    return {
-      ...(candidate as Omit<WorkflowState, "version" | "completedSteps">),
-      version: 5,
-      completedSteps:
-        candidate.mode === "lean"
-          ? []
-          : (completedSteps as WorkflowStep[]),
-      modeReason:
-        candidate.mode === "lean"
-          ? `${candidate.modeReason}; migrated version 4 lean checkpoint and conservatively rerunning all three lean stages`
-          : candidate.modeReason,
-      modeSource:
-        candidate.mode === "lean"
-          ? "migration"
-          : (candidate.modeSource as WorkflowModeSource),
-    };
+  // Versions 1-6 predate the current step list: planning was three separate
+  // stages, and Git bookkeeping had stages of its own. Rather than guess how a
+  // retired stage maps onto the current one, keep the completed steps that
+  // still line up from the start and rerun the rest. Every stage is safe to
+  // repeat, so rerunning costs time rather than correctness.
+  const mode: WorkflowMode = candidate.mode === "lean" ? "lean" : "full";
+  const expectedSteps =
+    mode === "lean" ? LEAN_WORKFLOW_STEPS : FULL_WORKFLOW_STEPS;
+  const retained: WorkflowStep[] = [];
+  for (const step of completedSteps as unknown as string[]) {
+    if (step !== expectedSteps[retained.length]) break;
+    retained.push(step as WorkflowStep);
   }
-
-  const isCurrentPrefix = completedSteps.every(
-    (step, index) => step === FULL_WORKFLOW_STEPS[index],
-  );
-  if (candidate.version === 2 || candidate.version === 3) {
-    if (!isCurrentPrefix) {
-      throw new Error(`Invalid workflow checkpoint: ${statePath}`);
-    }
-    return {
-      ...(candidate as Omit<
-        WorkflowState,
-        "version" | "mode" | "modeReason" | "modeSource"
-      >),
-      version: 5,
-      reviewCyclesCompleted: candidate.reviewCyclesCompleted ?? 0,
-      approved: candidate.approved ?? false,
-      mode: "full",
-      modeReason: `migrated version ${candidate.version} checkpoint; preserving the legacy full workflow`,
-      modeSource: "migration",
-    };
-  }
-
-  const isLegacyPrefix = completedSteps.every(
-    (step, index) => step === LEGACY_WORKFLOW_STEPS[index],
-  );
-  if (!isLegacyPrefix) {
-    throw new Error(`Invalid workflow checkpoint: ${statePath}`);
-  }
-
-  const migratedSteps: WorkflowStep[] = [];
-  const legacySteps = completedSteps as unknown as string[];
-  if (legacySteps.includes("review")) {
-    migratedSteps.push(...FULL_WORKFLOW_STEPS.slice(0, 7));
-  }
-  if (legacySteps.includes("cleanup")) migratedSteps.push("cleanup");
-  if (legacySteps.includes("git")) migratedSteps.push("delivery");
-  if (legacySteps.includes("push")) migratedSteps.push("push");
-  if (legacySteps.includes("pr")) migratedSteps.push("pr");
+  const resumePoint = retained.length > 0 ? retained[retained.length - 1] : "the start";
 
   return {
     ...(candidate as Omit<
       WorkflowState,
-      "version" | "completedSteps" | "reviewCyclesCompleted" | "approved"
+      | "version"
+      | "completedSteps"
+      | "reviewCyclesCompleted"
+      | "approved"
+      | "mode"
+      | "modeReason"
+      | "modeSource"
     >),
-    version: 5,
-    completedSteps: migratedSteps,
-    reviewCyclesCompleted: 0,
-    approved: false,
-    mode: "full",
-    modeReason: "migrated version 1 checkpoint; preserving the legacy full workflow",
+    version: 7,
+    completedSteps: retained,
+    reviewCyclesCompleted: candidate.reviewCyclesCompleted ?? 0,
+    approved: candidate.approved ?? false,
+    mode,
+    modeReason: `migrated version ${candidate.version} checkpoint; rerunning stages after ${resumePoint}`,
     modeSource: "migration",
   };
 }
@@ -579,12 +710,40 @@ export function requireCleanWorktree(targetDir: string): void {
   }
 }
 
-export function verifyWorktree(stack: TechStack, targetDir: string): void {
-  const verification = getVerificationCommand(stack);
-  console.log(
-    `\x1b[36m[Validation]\x1b[0m ${verification.command} ${verification.args.join(" ")}`,
+// The workflow validates before committing, so the change set is whatever the
+// worktree currently holds: edits to tracked files plus new untracked ones.
+function collectTrackedChanges(targetDir: string): string[] {
+  const files: string[] = [];
+  for (const args of [
+    ["diff", "--name-only", "HEAD"],
+    ["ls-files", "--others", "--exclude-standard"],
+  ]) {
+    try {
+      files.push(
+        ...runCommand("git", args, { cwd: targetDir })
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+      );
+    } catch {
+      // No HEAD or an unreadable index simply yields no attribution, which
+      // makes planVerification validate every project.
+    }
+  }
+  return files;
+}
+
+export function verifyWorktree(targetDir: string, touched?: string[]): void {
+  const tasks = planVerification(
+    detectStackProjects(targetDir),
+    touched ?? collectTrackedChanges(targetDir),
   );
-  runCommand(verification.command, verification.args, { cwd: targetDir });
+  for (const task of tasks) {
+    console.log(`\x1b[36m[Validation]\x1b[0m ${task.label}`);
+    runCommand(task.command, task.args, {
+      cwd: task.root ? path.join(targetDir, task.root) : targetDir,
+    });
+  }
   // Strip trailing whitespace from all tracked files before diff --check
   const changedFiles = runCommand(
     "git",

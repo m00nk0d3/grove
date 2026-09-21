@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1874,6 +1874,19 @@ func (m *Model) syncGitHubCmd(force bool) tea.Cmd {
 						}
 					}
 				}
+
+				// Best-effort Projects v2 status. Requires the read:project
+				// token scope, so an unavailable status is not an error.
+				projectStatus, err := issueCmd.FetchIssueProjectStatus(owner, repo)
+				if err != nil {
+					slog.Debug("project status: fetch failed", "err", err)
+				} else {
+					for i := range issues {
+						if status, ok := projectStatus[issues[i].Number]; ok {
+							issues[i].ProjectStatus = status
+						}
+					}
+				}
 			}
 			// Fallback: parse issue bodies for parent-reference patterns
 			// (catches repos that track hierarchy via body text rather than
@@ -3102,10 +3115,10 @@ func withGlobalContextActions(actions []contextActionOption) []contextActionOpti
 }
 
 type dashboardActionContext struct {
-	state      *domain.MissionControlState
-	tab        dashboardTab
-	selected   int
-	dismissed  map[string]bool
+	state     *domain.MissionControlState
+	tab       dashboardTab
+	selected  int
+	dismissed map[string]bool
 }
 
 func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session, dashboard ...dashboardActionContext) []contextActionOption {
@@ -3126,6 +3139,7 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 		return []contextActionOption{
 			{icon: "↵", label: "Open or checkout worktree", action: modal.ContextActionOpen},
 			{icon: "✓", label: "Review pull request", workflowKind: modal.WorkflowKindReview},
+			{icon: "✎", label: "Address review feedback", workflowKind: modal.WorkflowKindAddress},
 			{icon: "◆", label: "Repair CI", workflowKind: modal.WorkflowKindCI},
 			{icon: "⇄", label: "Resolve conflicts", workflowKind: modal.WorkflowKindResolve},
 			{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
@@ -3164,12 +3178,12 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 				if selected < 0 || selected >= len(missions) {
 					selected = 0
 				}
-			if strings.EqualFold(missions[selected].workflow.Status, domain.WorkflowFailed) {
-				actions = append(actions, contextActionOption{icon: "↻", label: "Retry workflow", action: modal.ContextActionRetryRun})
-			}
-			if strings.EqualFold(missions[selected].workflow.Status, domain.WorkflowSucceeded) {
-				actions = append(actions, contextActionOption{icon: "✓", label: "Mark done", action: modal.ContextActionMarkDone})
-			}
+				if strings.EqualFold(missions[selected].workflow.Status, domain.WorkflowFailed) {
+					actions = append(actions, contextActionOption{icon: "↻", label: "Retry workflow", action: modal.ContextActionRetryRun})
+				}
+				if strings.EqualFold(missions[selected].workflow.Status, domain.WorkflowSucceeded) {
+					actions = append(actions, contextActionOption{icon: "✓", label: "Mark done", action: modal.ContextActionMarkDone})
+				}
 				label := "Remove workflow"
 				if isWorkflowActive(missions[selected].workflow) {
 					label = "Stop and remove workflow"
