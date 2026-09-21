@@ -6,6 +6,9 @@ issues:
   exclude-dirs:
     - vendor
     - runtime/sandcastle
+    - .git
+    - dist/
+    - node_modules
 
 linters:
   disable-all: true
@@ -19,3 +22,14 @@ linters:
   settings:
     typecheck:
       disabled: true
+
+issues:
+  exclude-rules:
+    # Exclude TypeScript files from Go linters
+    - path: 'runtime/sandcastle/src/.*\.ts'
+      linters:
+        - gofmt
+        - goimports
+        - govet
+        - unused
+        - errcheck
