@@ -35,6 +35,14 @@ linters:
         text: "is unused"
         linters:
           - unused
+      - path: cmd/grove/terminal_unix\.go$
+        text: "is unused"
+        linters:
+          - unused
+      - path: internal/mission/control\.go$
+        text: "is unused"
+        linters:
+          - unused
 
 formatters:
   enable:
