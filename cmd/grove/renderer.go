@@ -399,12 +399,15 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 	if selectedMissionIdx >= len(missions) {
 		selectedMissionIdx = max(0, len(missions)-1)
 	}
-	const visibleMissionRows = 5
 	start := 0
-	if selectedMissionIdx >= visibleMissionRows {
-		start = selectedMissionIdx - visibleMissionRows + 1
+	end := len(missions)
+	if panelHeight > 0 {
+		maxItems := panelHeight - 3
+		if maxItems > 0 && selectedMissionIdx >= maxItems {
+			start = selectedMissionIdx - maxItems + 1
+		}
+		end = min(start+maxItems, len(missions))
 	}
-	end := min(start+visibleMissionRows, len(missions))
 	for i := start; i < end; i++ {
 		mission := missions[i]
 		stateStyle := success
@@ -446,7 +449,25 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 		st = theme.MutedBorder(st)
 	}
 	if panelHeight > 0 {
+		content := strings.TrimRight(b.String(), "\n")
+		if len(missions) > 0 {
+			b.WriteString("\n")
+			b.WriteString(muted.Render("────────────────────────────────"))
+			b.WriteString("\n↑↓ navigate  •  [m] dismiss done  •  [x] remove  •  [r] retry")
+		}
+		content = strings.TrimRight(b.String(), "\n")
+		if maxLines := panelHeight + 2; len(strings.Split(content, "\n")) > maxLines {
+			lines := strings.Split(content, "\n")
+			if selectedMissionIdx >= 0 && selectedMissionIdx < len(lines) {
+				start := max(0, selectedMissionIdx-(maxLines/2))
+				end := min(len(lines), start+maxLines)
+				content = strings.Join(lines[start:end], "\n")
+			} else {
+				content = strings.Join(lines[:min(len(lines), maxLines)], "\n")
+			}
+		}
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
+		return st.Render(content)
 	}
 
 	return st.Render(strings.TrimRight(b.String(), "\n"))
