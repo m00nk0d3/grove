@@ -1,4 +1,4 @@
-﻿package updater
+package updater
 
 import (
 	"crypto/sha256"
@@ -305,7 +305,6 @@ func TestInstallCmd(t *testing.T) {
 		assert.Equal(t, "sudo install -m755 /home/user/.cache/grove/grove.staged /usr/bin/grove", cmd)
 	}
 }
-
 
 func TestCleanupOldBinary_RemovesFile(t *testing.T) {
 	dir := t.TempDir()

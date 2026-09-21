@@ -10,6 +10,7 @@ linters:
     paths:
       - vendor
       - runtime/sandcastle
+      - .sandcastle
       - third_party$
       - builtin$
       - examples$
@@ -21,9 +22,19 @@ linters:
       - text: "Error return value of `.*\\.Close` is not checked"
         linters:
           - errcheck
+      - text: "Error return value of `.*\\.Remove` is not checked"
+        linters:
+          - errcheck
       - text: "Error return value of `.*\\.Unsetenv` is not checked"
         linters:
           - errcheck
+      - text: "Error return value of `fmt\\.Sscanf` is not checked"
+        linters:
+          - errcheck
+      - path: cmd/grove/app\.go$
+        text: "is unused"
+        linters:
+          - unused
 
 formatters:
   enable:
@@ -33,3 +44,4 @@ formatters:
     paths:
       - vendor
       - runtime/sandcastle
+      - .sandcastle

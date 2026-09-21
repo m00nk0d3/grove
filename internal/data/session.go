@@ -141,19 +141,19 @@ type rowScanner interface {
 // distinguish "not found" from other errors.
 func scanSession(s rowScanner) (domain.Session, error) {
 	var (
-		sess          domain.Session
-		runtime       sql.NullString
-		runtimeID     sql.NullString
-		shellPID      sql.NullInt64
-		agentName     sql.NullString
-		workflowRunID sql.NullString
-		workspaceID   sql.NullString
-		tabID         sql.NullString
-		paneID        sql.NullString
-		prompt        sql.NullString
+		sess           domain.Session
+		runtime        sql.NullString
+		runtimeID      sql.NullString
+		shellPID       sql.NullInt64
+		agentName      sql.NullString
+		workflowRunID  sql.NullString
+		workspaceID    sql.NullString
+		tabID          sql.NullString
+		paneID         sql.NullString
+		prompt         sql.NullString
 		degradedReason sql.NullString
-		startedAt     sql.NullString
-		updatedAt     sql.NullString
+		startedAt      sql.NullString
+		updatedAt      sql.NullString
 	)
 	err := s.Scan(
 		&sess.ID,

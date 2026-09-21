@@ -1,4 +1,4 @@
-﻿package updater
+package updater
 
 import (
 	"archive/tar"
