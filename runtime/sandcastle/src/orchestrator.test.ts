@@ -28,6 +28,7 @@ import {
   startAgentWithReadinessRecovery,
   waitForPiAgentSettled,
 } from "./herdr-specialist.js";
+import { readAuditVerdict } from "./review-loop.js";
 import {
   formatReviewVerdict,
   isAffirmative,
@@ -81,6 +82,7 @@ import {
   createLeanReport,
   implementationSessionId,
   readLeanReportEvidence,
+  readPullRequestTitle,
   runValidationWithRepair,
 } from "./orchestrator.js";
 
@@ -1915,4 +1917,111 @@ test("address does not call the agent when the gate passes first time", () => {
   const roles: string[] = [];
   validateWithRepair(process.cwd(), "owner/repo", "1163", "persona", (role) => roles.push(role), () => {});
   assert.deepEqual(roles, []);
+});
+
+test("an audit verdict is judged on its own schema, not the PR reviewer's", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-verdict-"));
+  const verdictPath = path.join(root, "security-audit-verdict.json");
+  try {
+    // Exactly what SPECIALISTS.SECURITY_AUDITOR asks for: no `fixes`, no
+    // `validation`. The PR reviewer schema rejected this as invalid.
+    fs.writeFileSync(
+      verdictPath,
+      JSON.stringify({
+        verdict: "approved",
+        summary: "No authorization or input-handling defects in this diff.",
+        reviewedAreas: ["LobLabelsController [Authorize] coverage"],
+        blockers: [],
+        preExisting: [],
+        residualRisks: [],
+      }),
+    );
+    assert.throws(() => readReviewVerdict(verdictPath), /invalid schema/);
+
+    const audit = readAuditVerdict(verdictPath, "security-audit");
+    assert.equal(audit.verdict, "approved");
+    assert.deepEqual(audit.blockers, []);
+
+    // A fenced object is a formatting slip, not a failed audit.
+    fs.writeFileSync(
+      verdictPath,
+      '```json\n{"verdict":"blockers","summary":"s","reviewedAreas":["a"],"blockers":["high | x.cs:1 | y"]}\n```',
+    );
+    assert.equal(readAuditVerdict(verdictPath).verdict, "blockers");
+
+    // "approved" while listing blockers is contradictory; believe the blockers.
+    fs.writeFileSync(
+      verdictPath,
+      JSON.stringify({
+        verdict: "approved",
+        summary: "s",
+        reviewedAreas: ["a"],
+        blockers: ["high | x.cs:1 | real finding"],
+      }),
+    );
+    assert.equal(readAuditVerdict(verdictPath).verdict, "blockers");
+
+    for (const bad of [
+      { summary: "s", reviewedAreas: ["a"], blockers: [] },
+      { verdict: "approved", reviewedAreas: ["a"], blockers: [] },
+      { verdict: "approved", summary: "  ", reviewedAreas: ["a"], blockers: [] },
+      { verdict: "maybe", summary: "s", reviewedAreas: ["a"], blockers: [] },
+    ]) {
+      fs.writeFileSync(verdictPath, JSON.stringify(bad));
+      assert.throws(() => readAuditVerdict(verdictPath, "database-review"), /invalid schema/);
+    }
+
+    fs.rmSync(verdictPath);
+    assert.throws(() => readAuditVerdict(verdictPath, "security-audit"), /wrote no verdict/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the pull request title says what changed, or falls back to the issue", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-title-"));
+  const titlePath = path.join(root, "issue-1086-pr-title.txt");
+  const fallback = "feat(kpi): hide target groups with no data";
+  try {
+    const write = (value: string) => fs.writeFileSync(titlePath, value);
+
+    write("feat(kpi): skip target groups whose rollup returns no rows\n");
+    assert.equal(
+      readPullRequestTitle(titlePath, fallback),
+      "feat(kpi): skip target groups whose rollup returns no rows",
+    );
+
+    // Models decorate despite being told not to.
+    write('  "fix(api): return 409 on duplicate lob_shortname"  \n');
+    assert.equal(
+      readPullRequestTitle(titlePath, fallback),
+      "fix(api): return 409 on duplicate lob_shortname",
+    );
+    write("# feat(ui): collapse empty KPI rows\n\nsome stray prose\n");
+    assert.equal(
+      readPullRequestTitle(titlePath, fallback),
+      "feat(ui): collapse empty KPI rows",
+    );
+    write("- perf(kpi): memoize target group resolution");
+    assert.equal(
+      readPullRequestTitle(titlePath, fallback),
+      "perf(kpi): memoize target group resolution",
+    );
+
+    // A restatement of the task is exactly what we are trying to avoid.
+    for (const useless of ["resolve #1086", "Implement issue 1086", "fix #1086"]) {
+      write(useless);
+      assert.equal(readPullRequestTitle(titlePath, fallback), fallback);
+    }
+
+    write("");
+    assert.equal(readPullRequestTitle(titlePath, fallback), fallback);
+    write(`feat(kpi): ${"x".repeat(200)}`);
+    assert.equal(readPullRequestTitle(titlePath, fallback), fallback);
+
+    fs.rmSync(titlePath);
+    assert.equal(readPullRequestTitle(titlePath, fallback), fallback);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -26,6 +26,78 @@ function normalizeStringList(value: unknown): string[] | null {
   return null;
 }
 
+// The conditional review specialists report a verdict of their own shape:
+// what they reviewed and what blocks, plus fields particular to their domain.
+// They do not carry the pull request reviewer's `fixes` and `validation`, so
+// validating them against that schema rejected sound audits over fields they
+// were never asked for.
+export interface AuditVerdict {
+  verdict: "approved" | "blockers";
+  summary: string;
+  reviewedAreas: string[];
+  blockers: string[];
+}
+
+export function readAuditVerdict(
+  verdictPath: string,
+  label = "audit",
+): AuditVerdict {
+  if (!fs.existsSync(verdictPath)) {
+    throw new Error(`The ${label} specialist wrote no verdict: ${verdictPath}`);
+  }
+
+  let jsonContent: string;
+  try {
+    jsonContent = fs.readFileSync(verdictPath, "utf8").trim();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Unable to read the ${label} verdict: ${detail}`);
+  }
+
+  // Agents sometimes wrap the object in a Markdown fence despite being asked
+  // not to; that is a formatting slip, not a failed audit.
+  if (jsonContent.startsWith("```")) {
+    // Drop the opening fence together with any language tag on that line,
+    // then the closing fence. Removing only the backticks leaves "json"
+    // in front of the object.
+    jsonContent = jsonContent.replace(/^```[^\n]*\n?/, "");
+    const closing = jsonContent.lastIndexOf("```");
+    if (closing >= 0) jsonContent = jsonContent.slice(0, closing);
+  }
+  jsonContent = jsonContent.replace(/<!--[\s\S]*?-->/g, "").trim();
+
+  let value: unknown;
+  try {
+    value = JSON.parse(jsonContent);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Unable to parse the ${label} verdict: ${detail}`);
+  }
+
+  const parsed = value as Partial<AuditVerdict>;
+  const reviewedAreas = normalizeStringList(parsed.reviewedAreas);
+  const blockers = normalizeStringList(parsed.blockers);
+  if (
+    !["approved", "blockers"].includes(parsed.verdict ?? "") ||
+    typeof parsed.summary !== "string" ||
+    !parsed.summary.trim() ||
+    !reviewedAreas ||
+    !blockers
+  ) {
+    throw new Error(
+      `The ${label} verdict has an invalid schema; it needs verdict, summary, reviewedAreas and blockers.`,
+    );
+  }
+
+  // "approved" alongside listed blockers is contradictory, and believing the
+  // optimistic half would let real findings through.
+  const verdict =
+    parsed.verdict === "approved" && blockers.length > 0
+      ? "blockers"
+      : (parsed.verdict as AuditVerdict["verdict"]);
+  return { verdict, summary: parsed.summary, reviewedAreas, blockers };
+}
+
 export function readReviewVerdict(verdictPath: string): ReviewVerdict {
   if (!fs.existsSync(verdictPath)) {
     throw new Error(`PR reviewer did not write its verdict: ${verdictPath}`);

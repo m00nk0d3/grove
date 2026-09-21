@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     gate. If it still fails, the command stops with the real output and names
     the worktree to rerun with `--continue`.
   - Available from the pull request Actions panel as "Address review feedback".
+- **Pull request titles describe the change, not the request** — the title was
+  the issue title verbatim, so every pull request restated what was asked
+  rather than what was done. The implementation reporter, which has already
+  read the whole diff, now also writes a one-line title in the repository own
+  commit convention. A missing, over-long, or merely restated title falls back
+  to the issue title.
 - **Shorter workflows for the same review coverage** — the full workflow ran 18
   steps; it now runs 13, and the lean workflow 12, without dropping a single
   check:
@@ -110,6 +116,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **clean no longer deletes a branch that has an open pull request** — cleanup
+  matched branches against merged pull requests by branch name. Release
+  tooling reuses one branch for every release, so a name whose earlier
+  releases merged could be hosting an open release pull request; deleting that
+  branch made GitHub close it. An open head ref is now excluded from every
+  cleanup candidate list, whatever merged on the same name before, and the
+  skip is reported rather than silent.
 - **Same-repository pull requests are no longer rejected as forks** — `gh pr
   view` returns `headRepository.nameWithOwner` as an empty string, unlike
   `gh pr list`, and the fork guard compared that empty value with the current
@@ -117,6 +130,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   repository is now rebuilt from its owner and name, `isCrossRepository`
   decides on its own when the head repository cannot be identified, and a real
   fork is still refused. This affected `ci` as well as the new `address`.
+- **A conditional audit is judged on its own schema** — the security,
+  database and API contract specialists were validated against the pull
+  request reviewer schema, which requires `fixes` and `validation` fields
+  those audits are never asked to produce. A sound audit was therefore
+  rejected with "PR review verdict has an invalid schema" and failed the
+  stage. They now have their own reader, which also tolerates a fenced object
+  and treats an "approved" verdict that still lists blockers as blockers.
 - **A prompt Herdr did not see start no longer fails the stage** — Herdr accepts
   and delivers a prompt, then requires the agent to be observed working or
   blocked within a fixed five seconds, reporting `agent_prompt_stalled`

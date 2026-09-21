@@ -38,6 +38,7 @@ import {
   formatReviewVerdict,
   postReviewComment,
   readJsonArtifactWithRetry,
+  readAuditVerdict,
   readReviewVerdict,
   REVIEW_BATCH_SIZE,
 } from "./review-loop.js";
@@ -99,6 +100,43 @@ export function implementationSessionId(repo: string, issueNum: string): string 
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// The reporter has read the whole diff, so it is the one stage that can say
+// what the change did rather than what the issue asked for. Its title is only
+// used when it is a single usable line; anything else falls back to the issue
+// title, which is at least accurate.
+const MAX_PR_TITLE_LENGTH = 100;
+
+export function readPullRequestTitle(
+  titlePath: string,
+  fallback: string,
+): string {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(titlePath, "utf8");
+  } catch {
+    return fallback;
+  }
+  const title = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+    // A model asked for "one line, no quotes" occasionally supplies quotes,
+    // a Markdown heading, or a bullet anyway.
+    ?.replace(/^#+\s*/, "")
+    .replace(/^[-*]\s*/, "")
+    .replace(/^["'`]|["'`]$/g, "")
+    .trim();
+
+  if (!title || title.length > MAX_PR_TITLE_LENGTH) {
+    return fallback;
+  }
+  // A title that just restates the task tells a changelog reader nothing.
+  if (/^(resolve|implement|fix)\s+(issue\s*)?#?\d+$/i.test(title)) {
+    return fallback;
+  }
+  return title;
 }
 
 export function runValidationWithRepair(
@@ -419,6 +457,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       path.dirname(statePath),
       `issue-${issueNum}-implementation-report.md`,
     );
+    const prTitlePath = path.join(
+      path.dirname(statePath),
+      `issue-${issueNum}-pr-title.txt`,
+    );
     const reviewReportPath = path.join(
       path.dirname(statePath),
       `issue-${issueNum}-review-verdict.md`,
@@ -609,7 +651,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             runSpecialist(`${step}-${cycle}`, buildPrompt(verdictPath), [
               verdictPath,
             ], () => {
-              readReviewVerdict(verdictPath);
+              readAuditVerdict(verdictPath, step);
             });
             if (
               captureWorktreeState(targetDir, verdictRelativePath) !==
@@ -619,7 +661,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
                 `The ${step} specialist modified the implementation instead of reporting blockers.`,
               );
             }
-            if (readReviewVerdict(verdictPath).verdict === "approved") {
+            if (readAuditVerdict(verdictPath, step).verdict === "approved") {
               return;
             }
             console.log(
@@ -872,6 +914,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     });
     runStep("report", () => {
       fs.rmSync(reportPath, { force: true });
+      fs.rmSync(prTitlePath, { force: true });
       if (state.mode === "full") {
         runSpecialist(
           "implementation-reporter",
@@ -881,8 +924,9 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             issueTitle,
             state.baseCommit,
             reportPath,
+            prTitlePath,
           ),
-          [reportPath],
+          [reportPath, prTitlePath],
         );
       } else {
         fs.writeFileSync(
@@ -906,6 +950,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       console.log(`\n\x1b[36m[Implementation Report]\x1b[0m\n${fs.readFileSync(reportPath, "utf8")}`);
     });
     runStep("publish", () => {
+      // The reporter names what the change did; the issue title only says what
+      // was asked for, which reads as boilerplate in a changelog.
+      const pullRequestTitle = readPullRequestTitle(prTitlePath, issueTitle);
+      console.log(`[35m[GitHub][0m Title: ${pullRequestTitle}`);
       console.log(`\x1b[33m[Git]\x1b[0m Pushing branch ${branchName}...`);
       runCommand("git", ["push", "-u", "origin", branchName], { cwd: targetDir });
       console.log(`\x1b[35m[GitHub]\x1b[0m Opening pull request...`);
@@ -940,7 +988,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             "--head",
             branchName,
             "--title",
-            issueTitle,
+            pullRequestTitle,
             "--body-file",
             reportPath,
           ],
@@ -949,7 +997,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       } else {
         runCommand(
           "gh",
-          ["pr", "edit", prUrl, "--title", issueTitle, "--body-file", reportPath],
+          ["pr", "edit", prUrl, "--title", pullRequestTitle, "--body-file", reportPath],
           { cwd: targetDir },
         );
       }

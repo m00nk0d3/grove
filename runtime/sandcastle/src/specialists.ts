@@ -633,6 +633,7 @@ Completion criteria:
     issueTitle: string,
     baseCommit: string,
     reportPath: string,
+    prTitlePath: string,
   ): string => `
 You are the Implementation Reporter for ${repo}#${issueNum}: ${issueTitle}
 
@@ -657,6 +658,19 @@ Required work:
    ## ⚠️ Known Limitations and Risks
    ## 👀 Reviewer Checklist
 6. Prefer concise bullets for evidence and a table with Criterion, Evidence, and Status columns for acceptance criteria. Use ✅, ⚠️, and ❌ only when supported by evidence.
+7. Write a pull request title to '${prTitlePath}': one line, nothing else, no
+   quotes and no trailing full stop. It must say what this change actually
+   does, in the words of the change rather than the words of the issue. The
+   issue title is '${issueTitle}'; do not simply repeat it, and do not write a
+   generic subject such as "resolve issue ${issueNum}".
+   - Use the repository's commit convention. Where that is Conventional
+     Commits, that means '<type>(<scope>): <summary>' with a type the change
+     earns: feat for new behaviour, fix for a defect, perf, refactor, docs,
+     test or chore as appropriate. Match the scopes the repository already
+     uses.
+   - Keep the whole line at 72 characters or fewer, in the imperative mood,
+     and specific enough that someone reading a release changelog learns what
+     changed. If the change does several things, name the one that matters.
 
 Boundaries:
 - Do not modify source files, tests, dependencies, commits, branches, remotes, pull requests, or worktrees.
@@ -665,6 +679,7 @@ Boundaries:
 
 Completion criteria:
 - '${reportPath}' is a detailed standalone implementation report suitable for a pull request body and terminal handoff.
+- '${prTitlePath}' holds exactly one line: the pull request title.
 `,
 
    PR_REVIEWER: (
