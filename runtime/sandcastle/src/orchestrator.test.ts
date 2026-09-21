@@ -544,7 +544,7 @@ test("lean specialists have distinct planning, implementation, and review contra
   assert.match(planner, /only new or modified artifact/);
   assert.match(planner, /Do not modify product code/);
   assert.match(prompt, /Lean Implementation Specialist/);
-  assert.match(prompt, /Fetch and read the complete GitHub issue/);
+  assert.match(prompt, /Read the complete GitHub issue using: gh issue view/);
   assert.match(prompt, /LEAN_PLAN\.md/);
   assert.match(prompt, /do not invent permanent tests/i);
   assert.match(prompt, /Do not commit, push, create or edit pull requests/);

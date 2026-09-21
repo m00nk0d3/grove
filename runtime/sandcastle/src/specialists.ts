@@ -41,7 +41,7 @@ Objective:
 - Produce one compact, evidence-based handoff for a focused implementation.
 
 Required work:
-1. Fetch and read the complete GitHub issue, including its body, labels, comments, and linked context.
+1. Read the complete GitHub issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels,comments
 2. Read repository instructions and inspect the smallest relevant code, tests, configuration, and documentation surface.
 3. Record scope, acceptance criteria, affected areas and exact paths, implementation approach, appropriate validation, assumptions, and regression risks.
 4. Write the complete handoff to '${leanPlanPath}'. Keep it concise and actionable.
@@ -71,7 +71,7 @@ Objective:
 - Deliver the smallest complete, reviewable fix for the issue in the current worktree.
 
 Required work:
-1. Fetch and read the complete GitHub issue, including its body, labels, comments, and linked context.
+1. Read the complete GitHub issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels,comments
 2. Read repository instructions and '${leanPlanPath}', then inspect the relevant implementation path, surrounding code, tests, configuration, and documentation.
 3. Implement the complete fix, reconciling the plan with current repository evidence when necessary.
 4. Add or update focused tests only when the issue changes executable behavior and a meaningful regression test is warranted.
@@ -102,7 +102,7 @@ Objective:
 - Independently determine whether the current implementation completely and safely resolves the issue.
 
 Required work:
-1. Fetch and read the complete GitHub issue and read repository instructions and '${leanPlanPath}'.
+1. Read the complete GitHub issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels,comments and read repository instructions and '${leanPlanPath}'.
 2. Inspect the complete git diff and relevant surrounding code without relying on the implementer's summary.
 3. Check every acceptance criterion, correctness, regressions, scope discipline, tests, compatibility, and maintainability.
 4. Do not modify source files. If blockers exist, describe them precisely so the implementation specialist can fix them.
@@ -203,7 +203,7 @@ You are the Issue Analyst for ${repo}#${issueNum}.
 ${CODE_ORGANIZATION_STANDARD}
 
 Objective:
-- Read the complete issue, including comments and linked context available through GitHub.
+- Read the complete issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels,comments
 - Translate the request into precise, testable requirements.
 
 Required work:
@@ -410,7 +410,7 @@ Objective:
 - Review the complete pull request in depth and either approve it or report every confirmed blocker.
 
 Required work:
-1. Read the issue, pull request description, complete PR diff, and relevant surrounding code.
+1. Read the issue and pull request using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels,comments and gh pr view ${prUrl} --repo ${repo} --json title,body,files,commits. Also inspect the complete PR diff and relevant surrounding code.
 2. Check correctness, acceptance criteria, regressions, edge cases, security, concurrency, compatibility, error handling, tests, and maintainability.
 3. If there are no blockers, do not modify the worktree and set verdict to "approved".
 4. If blockers exist, do not modify source files. Set verdict to "blockers" and describe each defect and required fix precisely so the original implementation specialist can address it.
