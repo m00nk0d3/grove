@@ -60,6 +60,7 @@ import {
   synchronizeDefaultBranch,
   verifyWorktree,
   warnIfWindowsPathLimitLikely,
+  type CommandRunner,
   type WorkflowState,
   type WorkflowStep,
 } from "./workflow-utils.js";
@@ -137,6 +138,57 @@ export function readPullRequestTitle(
     return fallback;
   }
   return title;
+}
+
+// The delivery commit is made before the reporter exists, so it carries a
+// placeholder subject. Release tooling builds its changelog from commit
+// subjects, which is how a release ends up listing "resolve #1086" instead of
+// what shipped. Rewriting the subject is only safe while the commit has never
+// left this machine, so anything that cannot prove that leaves it alone.
+const PLACEHOLDER_SUBJECT = /^(fix|feat|chore)(\([^)]*\))?: resolve #\d+$/i;
+
+export function retitleDeliveryCommit(
+  targetDir: string,
+  branchName: string,
+  title: string,
+  runner: CommandRunner = runCommand,
+): "retitled" | "skipped" {
+  try {
+    const onRemote = runner(
+      "git",
+      ["ls-remote", "--heads", "origin", branchName],
+      { cwd: targetDir },
+    ).trim();
+    if (onRemote !== "") {
+      return "skipped"; // published already; rewriting would diverge
+    }
+  } catch {
+    return "skipped"; // cannot prove it is unpushed, so do not touch it
+  }
+
+  let subject: string;
+  let body: string;
+  try {
+    subject = runner("git", ["log", "-1", "--format=%s"], {
+      cwd: targetDir,
+    }).trim();
+    body = runner("git", ["log", "-1", "--format=%b"], { cwd: targetDir }).trim();
+  } catch {
+    return "skipped";
+  }
+
+  // Only the placeholder is replaced. A subject someone wrote deliberately,
+  // or one already retitled by an earlier run, is left as it is.
+  if (!PLACEHOLDER_SUBJECT.test(subject) || subject === title) {
+    return "skipped";
+  }
+
+  const args = ["commit", "--amend", "-m", title];
+  if (body) {
+    args.push("-m", body); // keep the trailers the delivery commit carried
+  }
+  runner("git", args, { cwd: targetDir });
+  return "retitled";
 }
 
 export function runValidationWithRepair(
@@ -954,6 +1006,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       // was asked for, which reads as boilerplate in a changelog.
       const pullRequestTitle = readPullRequestTitle(prTitlePath, issueTitle);
       console.log(`[35m[GitHub][0m Title: ${pullRequestTitle}`);
+      if (
+        retitleDeliveryCommit(targetDir, branchName, pullRequestTitle) ===
+        "retitled"
+      ) {
+        console.log(
+          "[36m[Git][0m Retitled the delivery commit so the changelog reads usefully.",
+        );
+      }
       console.log(`\x1b[33m[Git]\x1b[0m Pushing branch ${branchName}...`);
       runCommand("git", ["push", "-u", "origin", branchName], { cwd: targetDir });
       console.log(`\x1b[35m[GitHub]\x1b[0m Opening pull request...`);

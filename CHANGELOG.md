@@ -62,7 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rather than what was done. The implementation reporter, which has already
   read the whole diff, now also writes a one-line title in the repository own
   commit convention. A missing, over-long, or merely restated title falls back
-  to the issue title.
+  to the issue title. The delivery commit carries a placeholder subject
+  because it is made before the reporter runs, so the same title also
+  replaces it at publish time, which is what release tooling reads when it
+  builds a changelog. The rewrite happens only while the branch has never
+  been pushed, only when the subject is still the placeholder, and never when
+  it cannot be proven unpublished.
 - **Shorter workflows for the same review coverage** — the full workflow ran 18
   steps; it now runs 13, and the lean workflow 12, without dropping a single
   check:

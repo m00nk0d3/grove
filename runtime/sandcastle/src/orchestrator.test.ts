@@ -83,6 +83,7 @@ import {
   implementationSessionId,
   readLeanReportEvidence,
   readPullRequestTitle,
+  retitleDeliveryCommit,
   runValidationWithRepair,
 } from "./orchestrator.js";
 
@@ -2024,4 +2025,72 @@ test("the pull request title says what changed, or falls back to the issue", () 
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("the delivery commit is retitled only while it is still unpublished", () => {
+  const title = "feat(kpi): skip target groups whose rollup returns no rows";
+  const fake = (opts: { onRemote?: string; subject: string; body?: string }) => {
+    const calls: string[][] = [];
+    const runner = (_command: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === "ls-remote") return opts.onRemote ?? "";
+      if (args[0] === "log" && args.includes("--format=%s")) return opts.subject;
+      if (args[0] === "log" && args.includes("--format=%b")) return opts.body ?? "";
+      return "";
+    };
+    return { calls, runner };
+  };
+
+  // Unpushed, placeholder subject: retitle and keep the trailers.
+  const fresh = fake({
+    subject: "fix: resolve #1086",
+    body: "Co-authored-by: Copilot <x@y>",
+  });
+  assert.equal(
+    retitleDeliveryCommit("/wt", "agent/x-1086", title, fresh.runner),
+    "retitled",
+  );
+  const amend = fresh.calls.find((args) => args[0] === "commit");
+  assert.deepEqual(amend, [
+    "commit",
+    "--amend",
+    "-m",
+    title,
+    "-m",
+    "Co-authored-by: Copilot <x@y>",
+  ]);
+
+  // Already on the remote: rewriting would diverge from what others have.
+  const pushed = fake({
+    onRemote: "abc123\trefs/heads/agent/x-1086",
+    subject: "fix: resolve #1086",
+  });
+  assert.equal(
+    retitleDeliveryCommit("/wt", "agent/x-1086", title, pushed.runner),
+    "skipped",
+  );
+  assert.ok(!pushed.calls.some((args) => args[0] === "commit"));
+
+  // A subject someone chose deliberately is never overwritten.
+  const deliberate = fake({ subject: "feat(kpi): a subject a human wrote" });
+  assert.equal(
+    retitleDeliveryCommit("/wt", "agent/x-1086", title, deliberate.runner),
+    "skipped",
+  );
+
+  // ls-remote failing means we cannot prove it is unpushed.
+  assert.equal(
+    retitleDeliveryCommit("/wt", "agent/x-1086", title, (_c, args) => {
+      if (args[0] === "ls-remote") throw new Error("network down");
+      return "fix: resolve #1086";
+    }),
+    "skipped",
+  );
+
+  // Re-running after a retitle is a no-op rather than a second amend.
+  const already = fake({ subject: title });
+  assert.equal(
+    retitleDeliveryCommit("/wt", "agent/x-1086", title, already.runner),
+    "skipped",
+  );
 });
