@@ -26,6 +26,8 @@ import {
   readReviewVerdict,
   REVIEW_BATCH_SIZE,
 } from "./review-loop.js";
+import { type ReviewVerdict, readJsonArtifactWithRetry, readReviewVerdict } from "./review-loop.js";
+const MAX_JSON_READ_RETRIES = 3;
 import {
   assertModeOverrideCompatible,
   detectRepo,
@@ -106,6 +108,58 @@ export function runValidationWithRepair(
       `Validation still fails after one implementation repair attempt: ${failure}`,
     );
   }
+}
+
+export async function readJsonArtifactWithRetry(
+  path: string,
+  maxRetries: number = MAX_JSON_READ_RETRIES,
+): Promise<unknown> {
+  if (!fs.existsSync(path)) {
+    throw new Error(`JSON artifact not found: ${path}`);
+  }
+
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const content = fs.readFileSync(path, "utf8");
+      
+      // Strip markdown fences and comments
+      let jsonContent = content.trim();
+      if (/^(```\s*json?\s*)/.test(jsonContent)) {
+        const startIdx = jsonContent.indexOf("```") + 3;
+        jsonContent = jsonContent.slice(startIdx);
+      }
+      if (/\n\s*\n\s*```/.test(jsonContent)) {
+        const endIdx = jsonContent.lastIndexOf("```");
+        jsonContent = jsonContent.slice(0, endIdx).trim();
+      }
+      jsonContent = jsonContent.replace(/<!--[\s\S]*?-->/g, "");
+
+      return JSON.parse(jsonContent);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.log(
+        `\x1b[33m[JSON Validation]\x1b[0m Attempt ${attempt}/${maxRetries} failed to read valid JSON from ${path}: ${lastError.message}`,
+      );
+      
+      if (attempt < maxRetries) {
+        // Don't retry on missing file or permission errors
+        const parseErr = lastError as Error;
+        if (parseErr.message.includes("not found") || 
+            parseErr.message.includes("ENOENT") ||
+            parseErr.message.includes("EACCES")) {
+          throw lastError;
+        }
+        
+        // Retry after short delay for transient issues
+        console.log(`\x1b[36m[JSON Validation]\x1b[0m Waiting before retry...`);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  }
+
+  throw lastError ?? new Error(`Failed to read valid JSON from ${path} after ${maxRetries} attempts.`);
 }
 
 export function createLeanReport(
@@ -642,7 +696,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           implementerSessionId,
         ),
       );
-      runStep("lean-review", () => {
+      runStep("lean-review", async () => {
         for (let cycle = 1; cycle <= REVIEW_BATCH_SIZE; cycle += 1) {
           fs.rmSync(leanCompletionPath, { force: true });
           const reviewState = captureWorktreeState(targetDir, "__no_ignored_file__");
@@ -655,8 +709,16 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
               leanCompletionPath,
             ),
             [leanCompletionPath],
-            () => {
-              readLeanReportEvidence(leanCompletionPath);
+            async () => {
+              // Validate the JSON completion was written correctly
+              try {
+                const evidence = await readJsonArtifactWithRetry(leanCompletionPath);
+                readLeanReportEvidence(leanCompletionPath);
+              } catch (error) {
+                throw new Error(
+                  `Lean review verdict invalid after cycle ${cycle}. The agent must produce valid, complete JSON.`
+                );
+              }
             },
           );
           if (
@@ -829,11 +891,30 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           `pr-review-${cycle}`,
           SPECIALISTS.PR_REVIEWER(repo, issueNum, prUrl, verdictPath, cycle),
           [verdictPath],
-          () => {
-            readReviewVerdict(verdictPath);
+          async () => {
+            // Validate the JSON verdict was written correctly before proceeding
+            try {
+              const verdict = await readJsonArtifactWithRetry(verdictPath);
+              readReviewVerdict(verdictPath);
+            } catch (error) {
+              throw new Error(
+                `PR review verdict invalid after cycle ${cycle}. The agent must produce valid, complete JSON.`
+              );
+            }
           },
         );
-        const verdict = readReviewVerdict(verdictPath);
+        let verdict: ReviewVerdict | undefined;
+        try {
+          const parsed = await readJsonArtifactWithRetry(verdictPath);
+          if (!parsed) {
+            throw new Error("PR review verdict is empty.");
+          }
+          verdict = parsed;
+        } catch (error) {
+          throw new Error(
+            `PR review verdict invalid after cycle ${cycle}. The agent must produce valid, complete JSON.`
+          );
+        }
         if (
           captureWorktreeState(
             targetDir,

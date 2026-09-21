@@ -88,7 +88,7 @@ Completion criteria:
 - The issue is fully implemented, appropriate validation passes, and the uncommitted diff is ready for orchestrator verification.
 `,
 
-  LEAN_REVIEWER: (
+   LEAN_REVIEWER: (
     issueNum: string,
     repo: string,
     leanPlanPath: string,
@@ -108,8 +108,10 @@ Required work:
 4. Do not modify source files. If blockers exist, describe them precisely so the implementation specialist can fix them.
 5. Run the smallest repository-native validation that covers the final diff. For documentation-only or non-behavioral changes, do not invent permanent tests.
 6. Write exactly one JSON object to '${completionPath}' with this schema:
-   {"status":"complete","verdict":"approved|blockers","summary":"specific evidence-based implementation conclusion","changes":["concrete behavior or API change reviewed"],"architecture":["component interaction or data flow, naming relevant files or symbols"],"validation":["command and result"],"acceptanceCriteria":[{"criterion":"criterion from the issue","evidence":"specific implementation and validation evidence or blocker","status":"✅|⚠️|❌"}],"compatibility":["specific compatibility result or constraint"],"risks":["specific residual risk, blocker, or 'No known residual risks after ...' with supporting scope"],"reviewedAreas":["specific acceptance criterion or risk checked"]}
-   Use only "✅", "⚠️", or "❌" for each acceptanceCriteria status. Every array must be non-empty. Do not use generic claims such as "focused implementation", "preserved existing architecture", or "validation passed" without naming concrete behavior, components, commands, and results.
+    {"status":"complete","verdict":"approved|blockers","summary":"specific evidence-based implementation conclusion","changes":["concrete behavior or API change reviewed"],"architecture":["component interaction or data flow, naming relevant files or symbols"],"validation":["command and result"],"acceptanceCriteria":[{"criterion":"criterion from the issue","evidence":"specific implementation and validation evidence or blocker","status":"✅|⚠️|❌"}],"compatibility":["specific compatibility result or constraint"],"risks":["specific residual risk, blocker, or 'No known residual risks after ...' with supporting scope"],"reviewedAreas":["specific acceptance criterion or risk checked"]}
+    Use only "✅", "⚠️", or "❌" for each acceptanceCriteria status. Every array must be non-empty. Do not use generic claims such as "focused implementation", "preserved existing architecture", or "validation passed" without naming concrete behavior, components, commands, and results.
+
+Important: Before writing the completion file, validate that your complete JSON is syntactically valid and properly closed (all braces and brackets balanced). If you need more time to construct a complete, correct JSON response, request it rather than writing partial/incomplete output.
 
 Boundaries:
 - Do not modify source files.
@@ -391,7 +393,7 @@ Completion criteria:
 - '${reportPath}' is a detailed standalone implementation report suitable for a pull request body and terminal handoff.
 `,
 
-  PR_REVIEWER: (
+   PR_REVIEWER: (
     repo: string,
     issueNum: string,
     prUrl: string,
@@ -417,6 +419,8 @@ Required work:
    Every item in every array must be one JSON string. Do not use objects as array items. Do NOT write Markdown fences or any text outside the JSON.
 
 Important: This is a filesystem path on disk, not an API endpoint. Use bash to write: echo '{"..."}' > '${verdictPath}'
+   
+**CRITICAL:** Before writing the verdict file, validate that your complete JSON is syntactically valid and properly closed (all braces and brackets balanced). If you need more time to construct a complete, correct JSON response, request it rather than writing partial/incomplete output.
 
 Boundaries:
 - Do not modify source files, commit, push, open or close pull requests, remove worktrees, or alter Git history.

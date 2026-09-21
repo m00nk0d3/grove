@@ -841,7 +841,7 @@ test("assertAgentSettled rejects blocked and unknown agents", () => {
   );
 });
 
-test("review verdicts are validated and formatted in detail", () => {
+test("review verdicts are validated and formatted in detail", async () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-verdict-"));
   const verdictPath = path.join(root, "verdict.json");
   try {
@@ -857,18 +857,20 @@ test("review verdicts are validated and formatted in detail", () => {
         residualRisks: [],
       }),
     );
-    const verdict = readReviewVerdict(verdictPath);
+    const verdict = await readJsonArtifactWithRetry(verdictPath);
     assert.equal(verdict.verdict, "blockers");
     const report = formatReviewVerdict(verdict, 2);
     assert.match(report, /🚧 Review Cycle 2: BLOCKERS FOUND/);
     assert.match(report, /## 🛠️ Required Fixes/);
     assert.match(report, /- Guard nil input before dereferencing it/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+  } catch (error) {
+    throw new Error(
+      `PR review verdict invalid: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 });
 
-test("review verdicts normalize a single validation string", () => {
+test("review verdicts normalize a single validation string", async () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), ".agent-flow-verdict-"));
   const verdictPath = path.join(root, "verdict.json");
   try {
@@ -884,11 +886,16 @@ test("review verdicts normalize a single validation string", () => {
         residualRisks: [],
       }),
     );
-    const verdict = readReviewVerdict(verdictPath);
+    const verdict = await readJsonArtifactWithRetry(verdictPath);
     assert.deepEqual(verdict.validation, ["go test ./...: passed."]);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+  } catch (error) {
+    throw new Error(
+      `PR review verdict invalid: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
+} finally {
+  fs.rmSync(root, { recursive: true, force: true });
+}
 });
 
 test("review continuation accepts only explicit affirmative answers", () => {
