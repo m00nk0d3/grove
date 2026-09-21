@@ -840,25 +840,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           SPECIALISTS.PR_REVIEWER(repo, issueNum, prUrl, verdictPath, cycle),
           [verdictPath],
           async () => {
-            // Validate the JSON verdict was written correctly before proceeding
-            try {
-              const verdict = await readJsonArtifactWithRetry(verdictPath);
-              readReviewVerdict(verdictPath);
-            } catch (error) {
-              throw new Error(
-                `PR review verdict invalid after cycle ${cycle}. The agent must produce valid, complete JSON.`
-              );
-            }
+            await readJsonArtifactWithRetry(verdictPath);
           },
         );
-        let verdict: ReviewVerdict;
-        try {
-          verdict = await readJsonArtifactWithRetry(verdictPath);
-        } catch (error) {
-          throw new Error(
-            `PR review verdict invalid after cycle ${cycle}. The agent must produce valid, complete JSON.`
-          );
-        }
+        const verdict = await readJsonArtifactWithRetry(verdictPath);
         if (
           captureWorktreeState(
             targetDir,
