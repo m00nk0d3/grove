@@ -314,6 +314,14 @@ For OpenCode agents, use bash commands like: echo '{"..."}' > "/absolute/path/to
         completionArtifacts,
         completionValidator,
       );
+    } else if (completionProblems.length > 0) {
+      console.log(
+        `\x1b[33m[Continuity]\x1b[0m ${role} settled without required output; throwing error.`,
+      );
+      // This should not be reached for OpenCode since we handle it above, but keep the throw
+      throw new Error(
+        `${role} did not satisfy completion requirements:\n${completionProblems.join("\n")}`,
+      );
     }
     if (completionProblems.length > 0) {
       throw new Error(
