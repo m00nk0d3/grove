@@ -100,64 +100,6 @@ export function readReviewVerdict(verdictPath: string): ReviewVerdict {
   };
 }
 
-export async function readJsonArtifactWithRetry(
-  path: string,
-  maxRetries: number = MAX_JSON_READ_RETRIES,
-): Promise<ReviewVerdict> {
-  if (!fs.existsSync(path)) {
-    throw new Error(`JSON artifact not found: ${path}`);
-  }
-
-  let lastError: Error | null = null;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const content = fs.readFileSync(path, "utf8");
-
-      // Strip markdown fences and comments
-      let jsonContent = content.trim();
-      if (/^(```\s*json?\s*)/.test(jsonContent)) {
-        const startIdx = jsonContent.indexOf("```") + 3;
-        jsonContent = jsonContent.slice(startIdx);
-      }
-      if (/\n\s*\n\s*```/.test(jsonContent)) {
-        const endIdx = jsonContent.lastIndexOf("```");
-        jsonContent = jsonContent.slice(0, endIdx).trim();
-      }
-      jsonContent = jsonContent.replace(/<!--[\s\S]*?-->/g, "");
-
-      let value: unknown;
-      try {
-        value = JSON.parse(jsonContent);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(`Invalid JSON: ${detail}`);
-      }
-
-      return value as ReviewVerdict;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-
-      if (attempt < maxRetries) {
-        const parseErr = lastError as Error;
-        if (
-          parseErr.message.includes("not found") ||
-          parseErr.message.includes("ENOENT") ||
-          parseErr.message.includes("EACCES")
-        ) {
-          throw lastError;
-        }
-
-        console.log(
-          `\x1b[33m[JSON Validation]\x1b[0m Attempt ${attempt}/${maxRetries} failed: ${parseErr.message}`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-    }
-  }
-
-  throw lastError ?? new Error(`Failed to read valid JSON from ${path}.`);
-}
 
 export function formatReviewVerdict(
   verdict: ReviewVerdict,
