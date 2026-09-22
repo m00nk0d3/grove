@@ -171,6 +171,28 @@ export function describeWorktreeChange(before: string, after: string): string {
   return notes.length > 0 ? notes.join("; ") : "no difference could be identified";
 }
 
+// GitHub closes an issue when a merged pull request's description says so in as
+// many words. A bare "#1172" links the two and closes nothing, which is what the
+// reports carried: every issue had to be closed by hand after its own change
+// shipped.
+//
+// The keyword is written here rather than asked of the reporter, because a
+// linkage that matters should not depend on an agent remembering a phrase.
+const CLOSING_REFERENCE = /\b(clos(e|es|ed)|fix(e[sd])?|resolv(e|es|ed))\s+#(\d+)\b/gi;
+
+export function ensureIssueClosingReference(
+  body: string,
+  issueNum: string,
+): string {
+  for (const match of body.matchAll(CLOSING_REFERENCE)) {
+    if (match[5] === issueNum) {
+      return body; // the reporter already said it; do not say it twice
+    }
+  }
+  const trimmed = body.replace(/\s+$/, "");
+  return `${trimmed}\n\nCloses #${issueNum}\n`;
+}
+
 export function implementationSessionId(repo: string, issueNum: string): string {
   const bytes = createHash("sha256")
     .update(`agent-flow:${repo}:${issueNum}:implementation`)
@@ -1340,6 +1362,15 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           ".[0].url // empty",
         ],
         { cwd: targetDir },
+      );
+      // Written into the file both branches below publish from, so the pull
+      // request carries it whether it is being opened or updated.
+      fs.writeFileSync(
+        reportPath,
+        ensureIssueClosingReference(
+          fs.readFileSync(reportPath, "utf8"),
+          issueNum,
+        ),
       );
       if (!prUrl) {
         prUrl = runCommand(

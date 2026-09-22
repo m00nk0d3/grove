@@ -730,3 +730,44 @@ test("a guard that fires names the files that changed", async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a pull request says it closes its issue, exactly once", async () => {
+  const { ensureIssueClosingReference } = await import("./orchestrator.js");
+
+  // A report with no closing keyword gets one. A bare "#1172" links the issue
+  // to the pull request and closes nothing, which is why the reference has to
+  // be the keyword form.
+  const plain = "## Summary\n\nSee #1172 for background.\n";
+  const withClose = ensureIssueClosingReference(plain, "1172");
+  assert.match(withClose, /\nCloses #1172\n$/);
+  assert.equal(
+    (withClose.match(/Closes #1172/g) ?? []).length,
+    1,
+    "exactly one closing reference",
+  );
+
+  // Applying it twice must not accumulate.
+  assert.equal(ensureIssueClosingReference(withClose, "1172"), withClose);
+
+  // Whatever the reporter already wrote is respected, in any accepted spelling.
+  for (const existing of [
+    "Fixes #1172",
+    "resolves #1172",
+    "CLOSED #1172",
+    "Some prose. Fixed #1172 in this change.",
+  ]) {
+    const body = `## Summary\n\n${existing}\n`;
+    assert.equal(
+      ensureIssueClosingReference(body, "1172"),
+      body,
+      `already closed by "${existing}"`,
+    );
+  }
+
+  // A keyword naming a different issue is not this issue's reference.
+  const other = "## Summary\n\nCloses #999\n";
+  assert.match(ensureIssueClosingReference(other, "1172"), /Closes #999[\s\S]*Closes #1172/);
+
+  // Trailing whitespace does not produce a ragged gap.
+  assert.match(ensureIssueClosingReference("body\n\n\n", "7"), /^body\n\nCloses #7\n$/);
+});
