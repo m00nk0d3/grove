@@ -68,6 +68,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   builds a changelog. The rewrite happens only while the branch has never
   been pushed, only when the subject is still the placeholder, and never when
   it cannot be proven unpublished.
+- **`resolve` no longer calls your own pull requests forks** — the fork check
+  compared the head repository name `gh pr view` returns, which is an empty
+  string, so every same-repository pull request was rejected with "comes from a
+  fork". `ci` and `address` were fixed earlier; `resolve` now shares that check
+  instead of keeping its own copy. `isCrossRepository` is the authority, and a
+  head repository is only compared by name when GitHub actually identified one.
+  A pull request whose fork has since been deleted reports as a fork rather
+  than as malformed metadata.
 - **A pull request that moved on is caught up, not refused** — `ci`, `address`,
   and `resolve` reuse the worktree already checked out for the branch, and
   refused outright whenever its HEAD was not the pull request head. A branch

@@ -167,9 +167,11 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     typeof value.headRefName !== "string" ||
     typeof value.headRefOid !== "string" ||
     typeof value.isCrossRepository !== "boolean" ||
-    typeof value.state !== "string" ||
-    !value.headRepository ||
-    typeof value.headRepository.nameWithOwner !== "string"
+    typeof value.state !== "string"
+    // The head repository is deliberately not required here. GitHub omits it
+    // once the fork it lived in is deleted, and isCrossRepository remains the
+    // authoritative answer, so its absence belongs to the fork check rather
+    // than being reported as malformed metadata.
   ) {
     throw new Error(`GitHub returned invalid metadata for ${repo}#${prNumber}.`);
   }
