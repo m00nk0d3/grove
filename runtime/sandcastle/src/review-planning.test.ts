@@ -643,3 +643,53 @@ test("a repository with no manifest yet is not profiled, and says so", async () 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a directory of per-reviewer verdicts is excluded, not just one file", async () => {
+  const { captureWorktreeState } = await import("./orchestrator.js");
+  const { execFileSync } = await import("node:child_process");
+  const root = scratch("fanout-guard-");
+  const git = (args: string[]) =>
+    execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git(["init", "--quiet", "-b", "main"]);
+    git(["config", "core.autocrlf", "false"]);
+    fs.writeFileSync(path.join(root, "file.txt"), "x");
+    git(["add", "-A"]);
+    git([
+      "-c", "user.name=T", "-c", "user.email=t@e.com",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init",
+    ]);
+
+    // The fan-out gives each reviewer its own verdict file inside one directory
+    // and asks captureWorktreeState to ignore the directory. Matching the path
+    // exactly meant every verdict counted as an edit, and each reviewer was
+    // accused of modifying the implementation it had only reviewed.
+    const reviewDir = ".agent/issue-1172/domain-review";
+    const before = captureWorktreeState(root, reviewDir);
+    fs.mkdirSync(path.join(root, reviewDir), { recursive: true });
+    for (const slug of ["kpirolluppar", "securityaudi", "databaserevi"]) {
+      fs.writeFileSync(
+        path.join(root, reviewDir, `${slug}.json`),
+        '{"verdict":"approved"}',
+      );
+    }
+    assert.equal(
+      captureWorktreeState(root, reviewDir),
+      before,
+      "verdicts written inside the ignored directory are not implementation edits",
+    );
+
+    // A reviewer that really does edit the implementation is still caught.
+    fs.writeFileSync(path.join(root, "file.txt"), "modified");
+    assert.notEqual(captureWorktreeState(root, reviewDir), before);
+
+    // And a single-file ignore still behaves as it always did.
+    const planPath = ".agent/issue-1172/LEAN_PLAN.md";
+    fs.writeFileSync(path.join(root, "file.txt"), "x");
+    const planBefore = captureWorktreeState(root, planPath);
+    fs.writeFileSync(path.join(root, planPath), "the plan");
+    assert.equal(captureWorktreeState(root, planPath), planBefore);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

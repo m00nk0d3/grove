@@ -84,6 +84,18 @@ import {
   type WorkflowStep,
 } from "./workflow-utils.js";
 
+// The path to ignore may be a single artifact — a planner's handoff — or a
+// directory holding one file per reviewer. Matching it exactly was enough for
+// the first and silently wrong for the second: every verdict written inside the
+// directory read as a file the stage should not have touched, and the fan-out
+// accused each reviewer of editing the implementation.
+function isIgnoredPath(file: string, ignoredRelativePath: string): boolean {
+  return (
+    file === ignoredRelativePath ||
+    file.startsWith(`${ignoredRelativePath}/`)
+  );
+}
+
 export function captureWorktreeState(
   targetDir: string,
   ignoredRelativePath: string,
@@ -99,7 +111,7 @@ export function captureWorktreeState(
     { cwd: targetDir },
   )
     .split("\0")
-    .filter((file) => file && file !== ignoredRelativePath)
+    .filter((file) => file && !isIgnoredPath(file, ignoredRelativePath))
     .map((file) => {
       const absolutePath = path.join(targetDir, file);
       const content = fs.lstatSync(absolutePath).isSymbolicLink()
