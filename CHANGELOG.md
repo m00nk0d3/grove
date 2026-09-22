@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   head repository is only compared by name when GitHub actually identified one.
   A pull request whose fork has since been deleted reports as a fork rather
   than as malformed metadata.
+- **Claude specialists no longer stall on PowerShell** — Windows exposes
+  PowerShell as a tool separate from Bash, and it was missing from the tools a
+  Claude specialist launches with. Leaving it out did not stop an agent using
+  it; it made every call wait for a person, which ends the run with
+  `agent_blocked`. A specialist working in a .NET or Windows repository reaches
+  for PowerShell unprompted, so the step that inspects or builds the solution
+  was the one that stalled. PowerShell is now allowed alongside Bash.
 - **A JavaScript project is no longer tested without its dependencies** — a
   git worktree is populated from tracked files alone, so `node_modules` never
   came with it and `npm test` failed before running a single test. Every

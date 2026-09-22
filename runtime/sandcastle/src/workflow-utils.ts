@@ -103,7 +103,19 @@ const DEFAULT_PI_PROVIDER = "lm-studio";
 const DEFAULT_PI_MODEL = "qwen/qwen3.5-9b";
 const DEFAULT_OPENCODE_MODEL = "lmstudio/qwen/qwen3.5-9b";
 const DEFAULT_CLAUDE_PERMISSION_MODE = "acceptEdits";
-const DEFAULT_CLAUDE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
+// PowerShell is a separate tool from Bash on Windows, and a specialist working in
+// a .NET or Windows repository reaches for it unprompted. Leaving it out does not
+// stop the agent using it — it makes every call wait for a person, which surfaces
+// as agent_blocked and ends the workflow.
+const DEFAULT_CLAUDE_TOOLS = [
+  "Read",
+  "Write",
+  "Edit",
+  "Bash",
+  "PowerShell",
+  "Glob",
+  "Grep",
+];
 export const PI_COMPACTION_GUARD_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "pi-compaction-guard.js",

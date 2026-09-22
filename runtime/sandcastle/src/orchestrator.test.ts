@@ -392,6 +392,9 @@ test("getClaudeAgentArgs uses Claude Code defaults and supports overrides", () =
     "Write",
     "Edit",
     "Bash",
+    // Windows exposes PowerShell as its own tool. Without it every PowerShell
+    // call waits for a person and the run ends in agent_blocked.
+    "PowerShell",
     "Glob",
     "Grep",
   ]);
