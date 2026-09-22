@@ -5,10 +5,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseWorktrees } from "./cleanup.js";
+import { detectStackProjects } from "./stack-detector.js";
+import { loadProfile } from "./project-profile.js";
+import { personaFor } from "./specialists.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import { runTrackedWorkflow } from "./runtime-state.js";
 import {
   detectRepo,
+  getProjectProfilePath,
+  pullRequestChangedFiles,
   requireCleanWorktree,
   runCommand,
   verifyWorktree,
@@ -20,6 +25,7 @@ export interface PullRequestMetadata {
   url: string;
   headRefName: string;
   headRefOid: string;
+  baseRefName: string;
   isCrossRepository: boolean;
   state: string;
   headRepository: { name?: string; nameWithOwner?: string } | null;
@@ -113,11 +119,14 @@ export function extractActionsRunIds(checks: PullRequestCheck[]): string[] {
 }
 
 export function buildCiFixPrompt(
+  persona: string,
   metadata: PullRequestMetadata,
   failedChecks: PullRequestCheck[],
   diagnosticsPath: string,
 ): string {
   return `
+${persona}
+
 You are fixing CI failures for pull request #${metadata.number}: ${metadata.title}
 PR: ${metadata.url}
 Head branch: ${metadata.headRefName}
@@ -157,7 +166,7 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     "--repo",
     repo,
     "--json",
-    "number,title,url,headRefName,headRefOid,isCrossRepository,state,headRepository,headRepositoryOwner",
+    "number,title,url,headRefName,headRefOid,baseRefName,isCrossRepository,state,headRepository,headRepositoryOwner",
   ]);
   const value = JSON.parse(output) as Partial<PullRequestMetadata>;
   if (
@@ -166,6 +175,7 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     typeof value.url !== "string" ||
     typeof value.headRefName !== "string" ||
     typeof value.headRefOid !== "string" ||
+    typeof value.baseRefName !== "string" ||
     typeof value.isCrossRepository !== "boolean" ||
     typeof value.state !== "string"
     // The head repository is deliberately not required here. GitHub omits it
@@ -489,9 +499,22 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   console.log();
 
+  const projects = detectStackProjects(targetDir);
+  const profile = loadProfile(
+    getProjectProfilePath(repoRoot),
+    targetDir,
+    projects,
+  ).profile;
+  const persona = personaFor(
+    "implementation",
+    projects,
+    profile,
+    pullRequestChangedFiles(targetDir, metadata.baseRefName),
+  );
+
   runSpecialistInPane({
     role: "ci-fixer",
-    promptText: buildCiFixPrompt(metadata, failedChecks, diagnosticsPath),
+    promptText: buildCiFixPrompt(persona, metadata, failedChecks, diagnosticsPath),
     targetDir,
     issueOrPrNumber: prNumber,
   });
@@ -506,7 +529,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     );
   }
 
-  verifyWorktree(targetDir);
+  verifyWorktree(targetDir, undefined, profile);
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
   runCommand("git", ["add", "-A"], { cwd: targetDir });
   runCommand(

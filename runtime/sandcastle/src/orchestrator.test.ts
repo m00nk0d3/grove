@@ -101,6 +101,7 @@ test("parseCliArgs accepts an issue number", () => {
     requestedRepo: null,
     issueNum: "42",
     modeOverride: null,
+    refreshProfile: false,
   });
 });
 
@@ -109,6 +110,7 @@ test("parseCliArgs accepts an explicit repository", () => {
     requestedRepo: "owner/repo",
     issueNum: "42",
     modeOverride: null,
+    refreshProfile: false,
   });
 });
 
@@ -117,11 +119,13 @@ test("parseCliArgs accepts lean and full overrides in either supported form", ()
     requestedRepo: null,
     issueNum: "42",
     modeOverride: "lean",
+    refreshProfile: false,
   });
   assert.deepEqual(parseCliArgs(["--full", "owner/repo", "42"]), {
     requestedRepo: "owner/repo",
     issueNum: "42",
     modeOverride: "full",
+    refreshProfile: false,
   });
 });
 
@@ -672,7 +676,7 @@ test("worktree state compares content across resumed and staged changes", () => 
 
 test("every specialist enforces the shared file-size standard", () => {
   const prompts = [
-    SPECIALISTS.LEAN_PLANNER("42", "owner/repo", ".agent/issue-42/LEAN_PLAN.md"),
+    SPECIALISTS.LEAN_PLANNER(TS_PERSONA, "42", "owner/repo", ".agent/issue-42/LEAN_PLAN.md"),
     SPECIALISTS.LEAN_IMPLEMENTER(
       TS_PERSONA,
       "42",
@@ -680,12 +684,14 @@ test("every specialist enforces the shared file-size standard", () => {
       ".agent/issue-42/LEAN_PLAN.md",
     ),
     SPECIALISTS.LEAN_REVIEWER(
+      TS_PERSONA,
       "42",
       "owner/repo",
       ".agent/issue-42/LEAN_PLAN.md",
       ".agent-lean-verification.json",
     ),
     SPECIALISTS.PLANNER(
+      TS_PERSONA,
       "42",
       "owner/repo",
       ".agent/REQUIREMENTS.md",
@@ -693,6 +699,7 @@ test("every specialist enforces the shared file-size standard", () => {
       ".agent/PLAN.md",
     ),
     SPECIALISTS.TEST_ENGINEER(
+      TS_PERSONA,
       "42",
       ".agent/REQUIREMENTS.md",
       ".agent/CONTEXT.md",
@@ -706,11 +713,12 @@ test("every specialist enforces the shared file-size standard", () => {
       ".agent/PLAN.md",
     ),
     SPECIALISTS.VERIFIER(
+      TS_PERSONA,
       "42",
       ".agent/REQUIREMENTS.md",
       ".agent/PLAN.md",
     ),
-    SPECIALISTS.DOMAIN_REVIEWER("42", "owner/repo", "/tmp/verdict.json", [
+    SPECIALISTS.DOMAIN_REVIEWER(TS_PERSONA, "42", "owner/repo", "/tmp/verdict.json", [
       "security-audit",
     ]),
     SPECIALISTS.IMPLEMENTER_VALIDATION_FIXES(
@@ -722,6 +730,7 @@ test("every specialist enforces the shared file-size standard", () => {
       "git exited with status 2: file.ts:3: trailing whitespace.",
     ),
     SPECIALISTS.PR_REVIEWER(
+      TS_PERSONA,
       "owner/repo",
       "42",
       "https://github.com/owner/repo/pull/7",
@@ -738,6 +747,7 @@ test("every specialist enforces the shared file-size standard", () => {
 
 test("test specialist does not invent tests for non-behavioral changes", () => {
   const prompt = SPECIALISTS.TEST_ENGINEER(
+    TS_PERSONA,
     "42",
     ".agent/REQUIREMENTS.md",
     ".agent/CONTEXT.md",
@@ -751,6 +761,7 @@ test("test specialist does not invent tests for non-behavioral changes", () => {
 
 test("lean specialists have distinct planning, implementation, and review contracts", () => {
   const planner = SPECIALISTS.LEAN_PLANNER(
+    TS_PERSONA,
     "42",
     "owner/repo",
     ".agent/issue-42/LEAN_PLAN.md",
@@ -762,6 +773,7 @@ test("lean specialists have distinct planning, implementation, and review contra
     ".agent/issue-42/LEAN_PLAN.md",
   );
   const reviewer = SPECIALISTS.LEAN_REVIEWER(
+    TS_PERSONA,
     "42",
     "owner/repo",
     ".agent/issue-42/LEAN_PLAN.md",
@@ -805,6 +817,7 @@ test("review blockers are handed back to the implementation specialist", () => {
     "/tmp/review.json",
   );
   const reviewer = SPECIALISTS.PR_REVIEWER(
+    TS_PERSONA,
     "owner/repo",
     "42",
     "https://github.com/owner/repo/pull/7",
@@ -821,6 +834,7 @@ test("review blockers are handed back to the implementation specialist", () => {
 
 test("verifier is required to run the whitespace delivery gate", () => {
   const verifier = SPECIALISTS.VERIFIER(
+    TS_PERSONA,
     "42",
     ".agent/REQUIREMENTS.md",
     ".agent/PLAN.md",
@@ -1376,6 +1390,7 @@ test("validation runs each project where it lives, chosen by the diff", () => {
       args: ["test"],
       root: "",
       label: "npm test",
+      source: "builtin",
     },
   ]);
 });
@@ -1698,6 +1713,7 @@ test("a same-repo pull request is not mistaken for a fork", () => {
     url: "u",
     headRefName: "agent/feat-x-1082",
     headRefOid: "abc",
+    baseRefName: "main",
     isCrossRepository: false,
     state: "OPEN",
     headRepository: { name: "OPSupervisor", nameWithOwner: "" },

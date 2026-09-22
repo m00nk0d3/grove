@@ -19,6 +19,7 @@ const pullRequest = {
   url: "https://github.com/owner/repo/pull/42",
   headRefName: "feature/ci",
   headRefOid: "abc123",
+  baseRefName: "main",
   isCrossRepository: false,
   state: "OPEN",
   headRepository: { nameWithOwner: "owner/repo" },
@@ -93,7 +94,7 @@ test("extractActionsRunIds deduplicates GitHub Actions run links", () => {
 });
 
 test("CI prompt requires root-cause fixes without delivery", () => {
-  const prompt = buildCiFixPrompt(pullRequest, [checks[0]], "/tmp/failures.md");
+  const prompt = buildCiFixPrompt("persona", pullRequest, [checks[0]], "/tmp/failures.md");
   assert.match(prompt, /CI \/ test: FAILURE/);
   assert.match(prompt, /root cause/);
   assert.match(prompt, /Do not commit, push/);

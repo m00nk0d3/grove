@@ -9,17 +9,27 @@ import {
   SPECIALISTS,
   buildImplementationPersona,
   getImplementationPrompt,
+  personaFor,
 } from "./specialists.js";
 import {
   detectStack,
   detectStackProjects,
+  stackLabel,
   TechStack,
 } from "./stack-detector.js";
+import {
+  fingerprintRepoShape,
+  loadProfile,
+  readProfileDraft,
+  writeProfile,
+  type RoleKey,
+} from "./project-profile.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import {
   collectChangedFiles,
   hasDocumentationSurface,
   selectConditionalSpecialists,
+  selectProfileConcerns,
   type ConditionalSpecialist,
 } from "./specialist-gating.js";
 import {
@@ -30,6 +40,7 @@ import {
   classifyIssue,
   explicitClassification,
   parseIssueMetadata,
+  scopeFilesFromIssue,
 } from "./issue-classifier.js";
 import {
   confirmAnotherReviewBatch,
@@ -48,6 +59,8 @@ import {
   detectRepo,
   FULL_WORKFLOW_STEPS,
   planVerification,
+  unresolvedProjects,
+  getProjectProfilePath,
   getWorkflowStatePath,
   loadWorkflowState,
   LEAN_WORKFLOW_STEPS,
@@ -378,7 +391,8 @@ export function readLeanReportEvidence(evidencePath: string): LeanReportEvidence
 }
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
-  const { requestedRepo, issueNum, modeOverride } = parseCliArgs(args);
+  const { requestedRepo, issueNum, modeOverride, refreshProfile } =
+    parseCliArgs(args);
   if (process.env.HERDR_ENV !== "1") {
     throw new Error("agent-flow must be run from a Herdr-managed pane.");
   }
@@ -404,18 +418,21 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   let modeReport: string;
   if (state) assertModeOverrideCompatible(state, modeOverride);
+  // Read on every run, not only when starting one: a resumed workflow still has
+  // to know which part of the repository the issue is about, in order to pick
+  // the specialists its remaining stages run in.
+  const issueMetadata = parseIssueMetadata(
+    runCommand("gh", [
+      "issue",
+      "view",
+      issueNum,
+      "--repo",
+      repo,
+      "--json",
+      "title,body,labels",
+    ]),
+  );
   if (!state) {
-    const issueMetadata = parseIssueMetadata(
-      runCommand("gh", [
-        "issue",
-        "view",
-        issueNum,
-        "--repo",
-        repo,
-        "--json",
-        "title,body,labels",
-      ]),
-    );
     const classification = modeOverride
       ? explicitClassification(modeOverride)
       : classifyIssue(issueMetadata);
@@ -496,7 +513,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     }
 
     const stack: TechStack = detectStack(targetDir);
-    const persona = buildImplementationPersona(detectStackProjects(targetDir));
+    // Detection runs on every workflow: it is a filesystem walk, it costs
+    // nothing next to an agent turn, and it is what decides whether the
+    // repository's specialists are still the right ones.
+    const projects = detectStackProjects(targetDir);
+    const profilePath = getProjectProfilePath(repoRoot);
+    const profileDraftPath = `${agentDir}/project-profile.json`;
     const requirementsPath = `${agentDir}/REQUIREMENTS.md`;
     const contextPath = `${agentDir}/CONTEXT.md`;
     const planPath = `${agentDir}/PLAN.md`;
@@ -679,9 +701,32 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     // the same diff for what is one pass over one change.
     const runDomainReview = (handoffPath: string): void => {
       runStep("domain-review", () => {
-        const domains = selectedSpecialists().filter(
+        const builtinDomains = selectedSpecialists().filter(
           (specialist) => specialist !== "documentation",
         );
+        // A generated concern either extends a built-in checklist or stands as a
+        // domain of its own, so a repository whose vocabulary the built-in
+        // patterns never matched still gets the review it needs.
+        const profileConcerns = selectProfileConcerns(
+          collectChangedFiles(targetDir),
+          profile?.concerns ?? [],
+        );
+        const extraSections: Record<string, string> = {};
+        for (const concern of profileConcerns) {
+          const key = concern.augments ?? concern.id;
+          const body = `## Concern: ${concern.title}\n\n${concern.checklist
+            .map((item) => `- ${item}`)
+            .join("\n")}\n`;
+          extraSections[key] = extraSections[key]
+            ? `${extraSections[key]}${body}`
+            : body;
+        }
+        const domains = [
+          ...new Set([
+            ...builtinDomains,
+            ...profileConcerns.map((concern) => concern.augments ?? concern.id),
+          ]),
+        ];
         if (domains.length === 0) {
           console.log(
             "[33m[Specialists][0m Skipping domain-review: the diff raises none of its concerns.",
@@ -707,7 +752,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           );
           runSpecialist(
             `domain-review-${cycle}`,
-            SPECIALISTS.DOMAIN_REVIEWER(issueNum, repo, verdictPath, domains),
+            SPECIALISTS.DOMAIN_REVIEWER(
+              diffPersonaOf("review"),
+              issueNum,
+              repo,
+              verdictPath,
+              domains,
+              extraSections,
+            ),
             [verdictPath],
             () => {
               readAuditVerdict(verdictPath, "domain-review");
@@ -757,7 +809,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         }
         runSpecialist(
           "documentation-specialist",
-          SPECIALISTS.DOCUMENTATION_SPECIALIST(issueNum, repo, issueTitle),
+          SPECIALISTS.DOCUMENTATION_SPECIALIST(
+            diffPersonaOf("documentation"),
+            issueNum,
+            repo,
+            issueTitle,
+          ),
         );
         verifyWithRepair(handoffPath);
       });
@@ -796,11 +853,95 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       requireCleanWorktree(targetDir);
     };
 
+    // The specialists this repository gets are written for it, once per shape of
+    // the repository rather than once per workflow. This runs before the first
+    // stage and outside runStep: it produces no workflow step, appears in no
+    // checkpoint, and after it succeeds the profile is fresh, so the next run
+    // does not repeat it.
+    let profile = loadProfile(profilePath, targetDir, projects).profile;
+    {
+      const loaded = loadProfile(profilePath, targetDir, projects);
+      profile = loaded.profile;
+      if (refreshProfile || loaded.status !== "fresh") {
+        const why = refreshProfile
+          ? "a refresh was requested"
+          : loaded.reason;
+        console.log(
+          `\x1b[36m[Prompt Engineer]\x1b[0m Writing this repository's specialists: ${why}.`,
+        );
+        fs.mkdirSync(path.join(targetDir, agentDir), { recursive: true });
+        const absoluteDraftPath = path.join(targetDir, profileDraftPath);
+        runSpecialist(
+          "prompt-engineer",
+          SPECIALISTS.PROMPT_ENGINEER(
+            repo,
+            profileDraftPath,
+            projects.map((project) => ({
+              root: project.root,
+              marker: project.marker,
+              label: stackLabel(project),
+            })),
+          ),
+          [absoluteDraftPath],
+          () => {
+            readProfileDraft(absoluteDraftPath, projects);
+          },
+        );
+        profile = writeProfile(
+          profilePath,
+          readProfileDraft(absoluteDraftPath, projects),
+          fingerprintRepoShape(targetDir, projects),
+        );
+        fs.rmSync(absoluteDraftPath, { force: true });
+        // The profile decides what this workflow will execute, so what it chose
+        // is stated plainly at the moment it is adopted rather than left to be
+        // discovered in a log.
+        for (const project of profile.projects) {
+          const where = project.root || "the repository root";
+          console.log(
+            `\x1b[36m[Prompt Engineer]\x1b[0m ${where} (${project.label}): ${project.test.command} ${project.test.args.join(" ")}` +
+              (project.test.verified ? "" : " [unverified]"),
+          );
+          if (project.setup) {
+            console.log(
+              `\x1b[36m[Prompt Engineer]\x1b[0m ${where} setup: ${project.setup.command} ${project.setup.args.join(" ")}`,
+            );
+          }
+        }
+      }
+    }
+
+    // A project nothing can validate is refused here, before any agent runs: the
+    // repair loop cannot fix a missing test command, and would spend three
+    // attempts discovering that.
+    const unresolved = unresolvedProjects(projects, profile, targetDir);
+    if (unresolved.length > 0) {
+      const names = unresolved
+        .map((project) => `${project.root || "the repository root"} (${project.marker})`)
+        .join(", ");
+      throw new Error(
+        `No test command is known for ${names}.\n` +
+          `Run 'imp ${issueNum} --refresh-profile' to have the prompt engineer establish one, ` +
+          `or add it to ${profilePath}.`,
+      );
+    }
+
+    // What a step will touch decides which specialist it gets. Before any diff
+    // exists that comes from the issue; afterwards, from the diff itself, so a
+    // change confined to one project is reviewed by that project's specialist.
+    const issueScope = scopeFilesFromIssue(issueMetadata, projects);
+    const personaOf = (role: RoleKey, scopeFiles?: string[]): string =>
+      personaFor(role, projects, profile, scopeFiles ?? issueScope);
+    const diffPersonaOf = (role: RoleKey): string =>
+      personaFor(role, projects, profile, collectChangedFiles(targetDir));
+    const persona = personaOf("implementation");
+
     if (state.mode === "full") {
       runStep("planning", () =>
         runSpecialist(
           "planner",
           SPECIALISTS.PLANNER(
+            personaOf("planning"),
             issueNum,
             repo,
             requirementsPath,
@@ -818,6 +959,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         runSpecialist(
           "test-engineer",
           SPECIALISTS.TEST_ENGINEER(
+            personaOf("tests"),
             issueNum,
             requirementsPath,
             contextPath,
@@ -843,7 +985,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       runStep("verification", () => {
         runSpecialist(
           "verifier",
-          SPECIALISTS.VERIFIER(issueNum, requirementsPath, planPath),
+          SPECIALISTS.VERIFIER(
+            diffPersonaOf("verification"),
+            issueNum,
+            requirementsPath,
+            planPath,
+          ),
         );
         verifyWithRepair(planPath);
       });
@@ -854,7 +1001,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         const stateBefore = captureWorktreeState(targetDir, leanPlanPath);
         runSpecialist(
           "lean-planner",
-          SPECIALISTS.LEAN_PLANNER(issueNum, repo, leanPlanPath),
+          SPECIALISTS.LEAN_PLANNER(
+            personaOf("planning"),
+            issueNum,
+            repo,
+            leanPlanPath,
+          ),
           [path.join(targetDir, leanPlanPath)],
         );
         const stateAfter = captureWorktreeState(targetDir, leanPlanPath);
@@ -885,6 +1037,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           runSpecialist(
             `lean-verifier-reviewer-${cycle}`,
             SPECIALISTS.LEAN_REVIEWER(
+              diffPersonaOf("review"),
               issueNum,
               repo,
               leanPlanPath,
@@ -1080,7 +1233,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
         runSpecialist(
           `pr-review-${cycle}`,
-          SPECIALISTS.PR_REVIEWER(repo, issueNum, prUrl, verdictPath, cycle),
+          SPECIALISTS.PR_REVIEWER(
+            diffPersonaOf("review"),
+            repo,
+            issueNum,
+            prUrl,
+            verdictPath,
+            cycle,
+          ),
           [verdictPath],
           async () => {
             await readJsonArtifactWithRetry(verdictPath);

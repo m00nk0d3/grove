@@ -76,6 +76,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   head repository is only compared by name when GitHub actually identified one.
   A pull request whose fork has since been deleted reports as a fork rather
   than as malformed metadata.
+- **A prompt engineer writes the specialists for each repository** — the
+  runtime shipped four hand-written personas and picked one, so a repository in
+  any other language was told it was being edited by a "Senior TypeScript
+  Engineer" and validated with `npm test`. Only six of the fifteen specialists
+  knew the stack at all; the planner, test engineer, verifier, reviewer and
+  documentation specialist were given the issue and left to infer the language.
+
+  A `prompt-engineer` agent now reads the repository and writes the specialist
+  for every stage of the workflow, together with the commands that validate
+  each project and the review concerns its own vocabulary raises. It adds no
+  workflow step and appears in no checkpoint.
+
+  - **Detection runs on every workflow** and is itself the staleness check. It
+    is a filesystem walk, so it costs nothing beside an agent turn; when what
+    it finds still matches the profile, no agent runs at all.
+  - **The specialist follows the code the step will touch.** Before a diff
+    exists that comes from the issue's own paths and area labels; afterwards
+    from the diff. A pull request confined to one project is reviewed by that
+    project's specialist rather than by a composite naming trees it never
+    touches.
+  - **A generated command must be proven.** The prompt engineer runs each test
+    command once and records the evidence; an unverified command never
+    displaces one that already works, so the four built-in stacks behave
+    exactly as they did.
+  - **A project nothing can validate stops the run before any agent starts**,
+    naming the project and `--refresh-profile`, rather than failing inside a
+    repair loop that cannot fix a missing test command.
+  - **Dependency setup is no longer npm-only.** A profile names the command
+    that prepares a fresh checkout and the path whose presence means it has
+    already been done.
+  - The profile lives in the git common directory, alongside the workflow
+    checkpoints. **Nothing is added to the repositories sandcastle is pointed
+    at.**
+
+  `seedlookups` is gone from the database-review gate: it was one repository's
+  idiom sitting in a shared default, and it belongs in that repository's
+  profile.
 - **Claude specialists no longer stall on PowerShell** — Windows exposes
   PowerShell as a tool separate from Bash, and it was missing from the tools a
   Claude specialist launches with. Leaving it out did not stop an agent using

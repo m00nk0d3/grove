@@ -1,4 +1,15 @@
-import type { StackProject, TechStack } from "./stack-detector.js";
+import {
+  isKnownStack,
+  stackLabel,
+  type KnownTechStack,
+  type StackProject,
+} from "./stack-detector.js";
+import {
+  profileProjectFor,
+  projectsInScope,
+  type RepoProfile,
+  type RoleKey,
+} from "./project-profile.js";
 
 const CODE_ORGANIZATION_STANDARD = `
 Code organization standard:
@@ -9,7 +20,10 @@ Code organization standard:
 - If safe refactoring is not practical or useful, preserve the cohesive implementation.
 `;
 
-const IMPLEMENTATION_PROMPTS: Record<TechStack, string> = {
+// Keyed on the known stacks only. A project this runtime does not recognise has
+// no honest built-in persona, and inventing one is the bug this table caused:
+// a Rust repository was told it was being edited by a TypeScript engineer.
+const IMPLEMENTATION_PROMPTS: Record<KnownTechStack, string> = {
   TYPESCRIPT: `
 You are a Senior TypeScript Engineer.
 Use strict type safety, existing project patterns, and explicit error handling.
@@ -33,33 +47,110 @@ Do not introduce unrelated refactors.
 `,
 };
 
-// A repository with a .NET solution beside a TypeScript frontend is not one
-// stack or the other, and telling the implementer it is produces confident
-// advice in the wrong language. Name every stack and the directory that owns
-// it, so the agent follows the conventions of whichever tree it is editing.
-export function buildImplementationPersona(projects: StackProject[]): string {
-  const stacks = [...new Set(projects.map((project) => project.stack))];
-  if (stacks.length === 0) {
-    return IMPLEMENTATION_PROMPTS.TYPESCRIPT;
+// Every role needs some persona, including in a repository that has never been
+// profiled and whose language this runtime does not recognise. Claiming a
+// specific expertise there would repeat the bug; claiming none at all leaves the
+// prompt headless.
+const GENERIC_PERSONAS: Record<RoleKey, string> = {
+  planning: `
+You are a Senior Engineer planning this change.
+Read the repository before deciding anything, and follow the conventions it
+already uses rather than ones you would prefer.
+`,
+  tests: `
+You are a Senior Test Engineer.
+Use the repository's existing test framework, layout, and naming exactly as you
+find them. Do not introduce a second testing approach.
+`,
+  implementation: `
+You are a Senior Software Engineer.
+Follow the conventions of the code you are editing: its error handling, its
+layout, and its existing patterns.
+Do not introduce unrelated refactors.
+`,
+  verification: `
+You are a Senior Verification Engineer.
+Validate with the repository's own commands, and never weaken a test to make it
+pass.
+`,
+  review: `
+You are a Senior Reviewer.
+Judge the change against the conventions this repository actually uses, and
+raise only defects you can point at in the diff.
+`,
+  documentation: `
+You are a Senior Technical Writer.
+Update the documentation this repository's own rules require, in its established
+voice and structure.
+`,
+};
+
+function builtinPersona(role: RoleKey, project: StackProject): string {
+  if (role === "implementation" && isKnownStack(project.stack)) {
+    return IMPLEMENTATION_PROMPTS[project.stack];
   }
-  if (stacks.length === 1) {
-    return IMPLEMENTATION_PROMPTS[stacks[0]];
+  return GENERIC_PERSONAS[role];
+}
+
+// personaFor picks the specialist for one stage of the workflow, scoped to the
+// code that stage is about to touch.
+//
+// That scoping is the point: reviewing a Python pull request in a repository that
+// also holds a TypeScript app should summon a Python reviewer, not a composite
+// that half-describes a frontend the diff never goes near. Projects owning none
+// of the scope files contribute nothing.
+export function personaFor(
+  role: RoleKey,
+  projects: StackProject[],
+  profile: RepoProfile | null,
+  scopeFiles: string[] = [],
+): string {
+  const scoped = projectsInScope(projects, scopeFiles);
+  if (scoped.length === 0) {
+    return profile?.projects.length
+      ? profile.projects[0].personas[role]
+      : GENERIC_PERSONAS[role];
   }
-  const layout = projects
+
+  const personas = scoped.map((project) => ({
+    project,
+    text: profileProjectFor(profile, project.root)?.personas[role]
+      ?? builtinPersona(role, project),
+  }));
+
+  // Two projects sharing a persona — two Go modules, or two unprofiled
+  // TypeScript packages — are one specialist, not a list repeating itself.
+  const distinct = [...new Set(personas.map((entry) => entry.text))];
+  if (distinct.length === 1) {
+    return distinct[0];
+  }
+
+  const layout = scoped
     .map(
       (project) =>
-        `- ${project.root || "the repository root"}: ${project.stack} (${project.marker})`,
+        `- ${project.root || "the repository root"}: ${stackLabel(project)} (${project.marker})`,
     )
     .join("\n");
+  const summary = profile?.repoSummary ? `\n${profile.repoSummary}\n` : "";
   return `
 This repository contains more than one stack:
 ${layout}
-
+${summary}
 Follow the conventions of the stack that owns the file you are editing, and do
 not carry idioms across the boundary between them. Where a change spans stacks,
 keep each side idiomatic to its own tree and validate each one with its own
 project's tests.
-${stacks.map((stack) => IMPLEMENTATION_PROMPTS[stack]).join("")}`;
+${distinct.join("")}`;
+}
+
+// buildImplementationPersona is personaFor's implementation role, kept as its own
+// name because that is what the implement and repair call sites ask for.
+export function buildImplementationPersona(
+  projects: StackProject[],
+  profile: RepoProfile | null = null,
+  scopeFiles: string[] = [],
+): string {
+  return personaFor("implementation", projects, profile, scopeFiles);
 }
 
 // One concern per domain the gate selected. They are kept apart so a review
@@ -109,11 +200,115 @@ const DOMAIN_REVIEW_SECTIONS: Record<string, string> = {
 };
 
 export const SPECIALISTS = {
+  // The prompt engineer's product is other agents' prompts. It runs once per
+  // repository shape rather than once per workflow, and everything it writes is
+  // validated before any of it reaches an agent.
+  PROMPT_ENGINEER: (
+    repo: string,
+    draftPath: string,
+    projects: { root: string; marker: string; label: string }[],
+  ): string => `
+You are the Prompt Engineer for ${repo}.
+
+${CODE_ORGANIZATION_STANDARD}
+
+Objective:
+- Write the specialists that every later stage of this workflow will run in, and
+  the commands that validate this repository. You are writing prompts for other
+  agents, not doing the work yourself.
+
+This repository's projects, as detected:
+${projects
+  .map(
+    (project) =>
+      `- ${project.root || "the repository root"}: ${project.label} (${project.marker})`,
+  )
+  .join("\n")}
+
+Required work:
+1. Read each project before describing it: its manifest, its test configuration,
+   its CI workflow under .github/, any Makefile, justfile or Taskfile, and its
+   README or CONTRIBUTING. Establish what the project is and how this repository
+   actually builds, tests and lints it.
+2. For each project write six personas, one per role: planning, tests,
+   implementation, verification, review, documentation. Each is three to six
+   lines, written in the second person, naming the language and the conventions
+   this repository actually uses rather than generic advice, and ending with a
+   boundary line in the manner of the example below. This is the register to
+   match:
+
+${IMPLEMENTATION_PROMPTS.CSHARP}
+3. For each project give the command that runs its tests, and the command that
+   prepares a fresh checkout when its ecosystem needs one, together with the
+   path whose presence means that preparation can be skipped (node_modules,
+   vendor, .venv, target).
+   - Each command is one executable and its arguments, never a shell line. They
+     are run without a shell, so an operator such as && or | inside a command
+     will be read as part of the program's name and will fail.
+   - Report the command this repository already uses. Prefer what its CI or its
+     manifest scripts run over anything you would choose yourself.
+4. Run each test command once, in its own project directory, and record what
+   happened in 'evidence'. A test suite that fails for reasons that predate your
+   work still proves the command is the right one, so set 'verified' true. If a
+   command would need network access, containers, credentials, or more than a
+   few minutes, do not run it: set 'verified' false and say so in 'evidence'.
+   An unverified command is used only when nothing else is known.
+5. Describe the review concerns this repository raises. For security, database
+   and interface-contract work, give the path vocabulary this repository
+   actually uses as regular expressions over lowercased forward-slashed
+   repository-relative paths, set 'augments' to 'security-audit',
+   'database-review' or 'api-contract-review' respectively, and add up to three
+   checklist points specific to this stack. You may add at most two concerns of
+   your own, with 'augments' omitted.
+
+Boundaries:
+- Change no product code, tests, dependencies, configuration, or Git history.
+  Running a test command is the only side effect you may cause.
+- Invent nothing. Every command must come from this repository; every persona
+  must describe conventions you have actually read.
+- Write no version, fingerprint, or timestamp fields. Those are recorded for you.
+
+Completion criteria:
+- Write exactly one JSON object to '${draftPath}' and nothing else, with this
+  shape:
+  {
+    "repoSummary": "one to three sentences describing the repository",
+    "projects": [
+      {
+        "root": "<as listed above>",
+        "marker": "<as listed above>",
+        "label": "<UPPERCASE, as listed above>",
+        "ecosystem": "one sentence a person would recognise the project by",
+        "personas": {
+          "planning": "...", "tests": "...", "implementation": "...",
+          "verification": "...", "review": "...", "documentation": "..."
+        },
+        "test": { "command": "...", "args": ["..."], "verified": true, "evidence": "..." },
+        "setup": { "command": "...", "args": ["..."], "verified": true, "evidence": "...", "skipWhenPresent": "node_modules" }
+      }
+    ],
+    "concerns": [
+      {
+        "id": "lowercase-slug",
+        "title": "short name",
+        "augments": "database-review",
+        "pathPatterns": ["(^|/)migrations?(/|$)"],
+        "checklist": ["one point per line"]
+      }
+    ]
+  }
+- Omit 'setup' for a project whose ecosystem needs no preparation step.
+- Report every project listed above, and no project that is not listed.
+`,
+
   LEAN_PLANNER: (
+    persona: string,
     issueNum: string,
     repo: string,
     leanPlanPath: string,
   ): string => `
+${persona}
+
 You are the Lean Planner for ${repo}#${issueNum}.
 
 ${CODE_ORGANIZATION_STANDARD}
@@ -169,12 +364,15 @@ Completion criteria:
 - The issue is fully implemented, appropriate validation passes, and the uncommitted diff is ready for orchestrator verification.
 `,
 
-   LEAN_REVIEWER: (
+  LEAN_REVIEWER: (
+    persona: string,
     issueNum: string,
     repo: string,
     leanPlanPath: string,
     completionPath: string,
   ): string => `
+${persona}
+
 You are the independent Lean Verifier and Reviewer for ${repo}#${issueNum}.
 
 ${CODE_ORGANIZATION_STANDARD}
@@ -275,12 +473,15 @@ Completion criteria:
 `,
 
   PLANNER: (
+    persona: string,
     issueNum: string,
     repo: string,
     requirementsPath: string,
     contextPath: string,
     planPath: string,
   ): string => `
+${persona}
+
 You are the Planner for ${repo}#${issueNum}.
 
 ${CODE_ORGANIZATION_STANDARD}
@@ -321,11 +522,14 @@ Completion criteria:
 `,
 
   TEST_ENGINEER: (
+    persona: string,
     issueNum: string,
     requirementsPath: string,
     contextPath: string,
     planPath: string,
   ): string => `
+${persona}
+
 You are the Test Engineer for issue #${issueNum}.
 
 ${CODE_ORGANIZATION_STANDARD}
@@ -350,10 +554,13 @@ Completion criteria:
 `,
 
   VERIFIER: (
+    persona: string,
     issueNum: string,
     requirementsPath: string,
     planPath: string,
   ): string => `
+${persona}
+
 You are the Verification Engineer for issue #${issueNum}, and you also carry
 the adversarial review of this change.
 
@@ -391,11 +598,15 @@ Completion criteria:
 `,
 
   DOMAIN_REVIEWER: (
+    persona: string,
     issueNum: string,
     repo: string,
     verdictPath: string,
     domains: string[],
+    extraSections: Record<string, string> = {},
   ): string => `
+${persona}
+
 You are the Domain Reviewer for ${repo}#${issueNum}.
 
 ${CODE_ORGANIZATION_STANDARD}
@@ -405,7 +616,7 @@ Objective:
   fix. Each concern is here because the diff actually touches it, so give each
   one its own pass rather than forming a single general impression.
 
-${domains.map((domain) => DOMAIN_REVIEW_SECTIONS[domain] ?? "").filter(Boolean).join("\n")}
+${domains.map((domain) => [DOMAIN_REVIEW_SECTIONS[domain], extraSections[domain]].filter(Boolean).join("\n")).filter(Boolean).join("\n")}
 
 Required work:
 1. Read the issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels and read repository instructions.
@@ -431,10 +642,13 @@ Completion criteria:
   reviewedAreas, and every blocker names a concrete location, impact and fix.
 `,
   DOCUMENTATION_SPECIALIST: (
+    persona: string,
     issueNum: string,
     repo: string,
     issueTitle: string,
   ): string => `
+${persona}
+
 You are the Documentation Specialist for ${repo}#${issueNum}: ${issueTitle}
 
 ${CODE_ORGANIZATION_STANDARD}
@@ -644,13 +858,16 @@ Completion criteria:
 - '${prTitlePath}' holds exactly one line: the pull request title.
 `,
 
-   PR_REVIEWER: (
+  PR_REVIEWER: (
+    persona: string,
     repo: string,
     issueNum: string,
     prUrl: string,
     verdictPath: string,
     cycle: number,
   ): string => `
+${persona}
+
 You are the independent pull request reviewer for ${repo}#${issueNum}.
 Review cycle: ${cycle}
 Pull request: ${prUrl}

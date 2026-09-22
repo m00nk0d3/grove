@@ -12,11 +12,18 @@ import type {
   WorkflowMode,
   WorkflowModeSource,
 } from "./issue-classifier.js";
+import {
+  profileProjectFor,
+  projectsInScope,
+  type RepoProfile,
+} from "./project-profile.js";
 
 export interface CliOptions {
   issueNum: string;
   requestedRepo: string | null;
   modeOverride: WorkflowMode | null;
+  /** Rewrite this repository's specialists even when they are current. */
+  refreshProfile: boolean;
 }
 
 // Steps are agent stages first and bookkeeping second. Git and filesystem work
@@ -249,22 +256,81 @@ export interface VerificationTask {
   /** Directory to run in, relative to the repository root ("" = root). */
   root: string;
   label: string;
+  /** Dependency install for projects whose ecosystem needs one. */
+  setup?: { command: string; args: string[]; skipWhenPresent?: string };
+  source: "builtin" | "profile";
 }
 
-function taskFor(project: StackProject): VerificationTask {
-  const base = getVerificationCommand(project.stack);
-  const args =
-    project.stack === "CSHARP"
-      ? ["test", project.marker.slice(project.marker.lastIndexOf("/") + 1)]
-      : base.args;
+// resolveVerificationTask decides what validates a project, preferring a command
+// the prompt engineer actually ran over one this runtime assumes.
+//
+// The precedence is deliberately conservative: a generated command the profiler
+// could not run never displaces a built-in that works today. That, rather than
+// declining to profile familiar repositories, is what keeps the four built-in
+// stacks behaving exactly as they did.
+export function resolveVerificationTask(
+  project: StackProject,
+  profile: RepoProfile | null,
+  targetDir?: string,
+): VerificationTask | null {
+  const entry = profileProjectFor(profile, project.root);
+  const builtin = getVerificationCommand(project.stack, targetDir);
   const where = project.root ? ` (in ${project.root})` : "";
-  return {
+
+  const fromProfile = (): VerificationTask => ({
     stack: project.stack,
-    command: base.command,
-    args,
+    command: entry!.test.command,
+    args: entry!.test.args,
     root: project.root,
-    label: `${base.command} ${args.join(" ")}${where}`,
-  };
+    label: `${entry!.test.command} ${entry!.test.args.join(" ")}${where}`,
+    ...(entry!.setup
+      ? {
+          setup: {
+            command: entry!.setup.command,
+            args: entry!.setup.args,
+            skipWhenPresent: entry!.setup.skipWhenPresent,
+          },
+        }
+      : {}),
+    source: "profile",
+  });
+
+  if (entry?.test.verified) {
+    return fromProfile();
+  }
+  if (builtin) {
+    const args =
+      project.stack === "CSHARP"
+        ? ["test", project.marker.slice(project.marker.lastIndexOf("/") + 1)]
+        : builtin.args;
+    return {
+      stack: project.stack,
+      command: builtin.command,
+      args,
+      root: project.root,
+      label: `${builtin.command} ${args.join(" ")}${where}`,
+      source: "builtin",
+    };
+  }
+  if (entry) {
+    console.log(
+      `\x1b[33m[Validation]\x1b[0m Using an unverified command for ${project.root || "the repository root"}: ${entry.test.evidence}`,
+    );
+    return fromProfile();
+  }
+  return null;
+}
+
+// unresolvedProjects names the projects nothing can validate, so a run can refuse
+// early with something actionable instead of failing inside a repair loop.
+export function unresolvedProjects(
+  projects: StackProject[],
+  profile: RepoProfile | null,
+  targetDir?: string,
+): StackProject[] {
+  return projects.filter(
+    (project) => resolveVerificationTask(project, profile, targetDir) === null,
+  );
 }
 
 // planVerification chooses which projects a change has to be validated against.
@@ -274,57 +340,61 @@ function taskFor(project: StackProject): VerificationTask {
 export function planVerification(
   projects: StackProject[],
   changedFiles: string[],
+  profile: RepoProfile | null = null,
 ): VerificationTask[] {
   if (projects.length === 0) {
-    // No recognised project: preserve the historical repository-root default.
+    // No recognised project. A profile entry for the repository root is a
+    // deliberate statement about how to test it and wins; otherwise the
+    // historical repository-root default is preserved.
+    const rootEntry = profileProjectFor(profile, "");
+    if (rootEntry) {
+      return [
+        {
+          stack: "UNKNOWN",
+          command: rootEntry.test.command,
+          args: rootEntry.test.args,
+          root: "",
+          label: `${rootEntry.test.command} ${rootEntry.test.args.join(" ")}`,
+          ...(rootEntry.setup
+            ? {
+                setup: {
+                  command: rootEntry.setup.command,
+                  args: rootEntry.setup.args,
+                  skipWhenPresent: rootEntry.setup.skipWhenPresent,
+                },
+              }
+            : {}),
+          source: "profile",
+        },
+      ];
+    }
     const fallback = getVerificationCommand("TYPESCRIPT");
     return [
       {
         stack: "TYPESCRIPT",
-        command: fallback.command,
-        args: fallback.args,
+        command: fallback!.command,
+        args: fallback!.args,
         root: "",
-        label: `${fallback.command} ${fallback.args.join(" ")}`,
+        label: `${fallback!.command} ${fallback!.args.join(" ")}`,
+        source: "builtin",
       },
     ];
   }
 
-  const ownerOf = (file: string): StackProject | undefined => {
-    const normalized = file.replace(/\\/g, "/");
-    let owner: StackProject | undefined;
-    for (const project of projects) {
-      const matches =
-        project.root === "" || normalized.startsWith(`${project.root}/`);
-      // The deepest matching root wins, so frontend/ beats a root project.
-      if (matches && (!owner || project.root.length > owner.root.length)) {
-        owner = project;
-      }
-    }
-    return owner;
-  };
+  const selected = projectsInScope(projects, changedFiles);
 
-  const affected = new Set<StackProject>();
-  for (const file of changedFiles) {
-    const owner = ownerOf(file);
-    if (owner) {
-      affected.add(owner);
-    }
-  }
-
-  // Nothing attributable — a root-level config or an unknown change — means the
-  // safe answer is to validate everything rather than guess.
-  const selected =
-    affected.size > 0
-      ? projects.filter((project) => affected.has(project))
-      : projects;
-
-  return selected.map(taskFor);
+  return selected
+    .map((project) => resolveVerificationTask(project, profile))
+    .filter((task): task is VerificationTask => task !== null);
 }
 
+// Returns null for a project this runtime has no built-in command for. The switch
+// stays exhaustive, so adding a stack forces a decision here rather than silently
+// falling through to npm.
 export function getVerificationCommand(
   stack: TechStack,
   targetDir?: string,
-): { command: string; args: string[] } {
+): { command: string; args: string[] } | null {
   switch (stack) {
     case "GO":
       return { command: "go", args: ["test", "./..."] };
@@ -339,6 +409,8 @@ export function getVerificationCommand(
       const project = targetDir ? findDotNetProject(targetDir) : undefined;
       return { command: "dotnet", args: project ? ["test", project] : ["test"] };
     }
+    case "UNKNOWN":
+      return null;
   }
 }
 
@@ -350,13 +422,21 @@ export function parseCliArgs(args: string[]): CliOptions {
   }
   if (leanCount > 1 || fullCount > 1) throw new Error(usage());
 
-  const positional = args.filter((arg) => arg !== "--lean" && arg !== "--full");
+  const refreshProfile = args.includes("--refresh-profile");
+  const positional = args.filter(
+    (arg) => arg !== "--lean" && arg !== "--full" && arg !== "--refresh-profile",
+  );
   if (positional.some((arg) => arg.startsWith("--"))) throw new Error(usage());
   const modeOverride: WorkflowMode | null =
     leanCount === 1 ? "lean" : fullCount === 1 ? "full" : null;
 
   if (positional.length === 1 && ISSUE_PATTERN.test(positional[0])) {
-    return { requestedRepo: null, issueNum: positional[0], modeOverride };
+    return {
+      requestedRepo: null,
+      issueNum: positional[0],
+      modeOverride,
+      refreshProfile,
+    };
   }
   if (
     positional.length === 2 &&
@@ -367,6 +447,7 @@ export function parseCliArgs(args: string[]): CliOptions {
       requestedRepo: positional[0],
       issueNum: positional[1],
       modeOverride,
+      refreshProfile,
     };
   }
   throw new Error(usage());
@@ -384,8 +465,50 @@ export function assertModeOverrideCompatible(
   }
 }
 
+// The profile describes the repository, not one issue, so it lives beside the
+// workflow checkpoints in the git common directory — shared by every worktree of
+// the repository and never part of its tracked tree.
+export function getProjectProfilePath(repoRoot: string): string {
+  const gitCommonDir = runCommand("git", ["rev-parse", "--git-common-dir"], {
+    cwd: repoRoot,
+  });
+  return path.join(
+    path.resolve(repoRoot, gitCommonDir),
+    "agent-flow",
+    "project-profile.json",
+  );
+}
+
+// The files a pull request changes, which is the scope that decides which
+// specialist reviews or repairs it. A Python pull request in a repository that
+// also holds a TypeScript app should summon a Python reviewer.
+export function pullRequestChangedFiles(
+  targetDir: string,
+  baseRefName: string,
+  runner: CommandRunner = runCommand,
+): string[] {
+  for (const base of [`origin/${baseRefName}`, baseRefName]) {
+    try {
+      return runner("git", ["diff", "--name-only", `${base}...HEAD`], {
+        cwd: targetDir,
+      })
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch {
+      // Try the local ref, then give up: an empty scope means every project is
+      // in scope, which is the conservative answer rather than a wrong one.
+    }
+  }
+  return [];
+}
+
 function usage(): string {
-  return "Usage: imp <issue_number> [--lean|--full] OR imp <owner/repo> <issue_number> [--lean|--full] (agent-flow is an alias)";
+  return (
+    "Usage: imp <issue_number> [--lean|--full] [--refresh-profile] OR " +
+    "imp <owner/repo> <issue_number> [--lean|--full] [--refresh-profile] " +
+    "(agent-flow is an alias)"
+  );
 }
 
 // A worktree repeats its branch slug in its directory name, so every character
@@ -763,6 +886,24 @@ export function ensureJavaScriptDependencies(
   return "installed";
 }
 
+// The same idea for any ecosystem: a profile names the command that prepares a
+// fresh checkout and the path whose presence means it has already been done, so
+// an ordinary run and every repair cycle pay nothing.
+export function ensureProjectSetup(
+  setup: NonNullable<VerificationTask["setup"]>,
+  projectDir: string,
+  runner: CommandRunner = runCommand,
+): "present" | "installed" {
+  if (
+    setup.skipWhenPresent &&
+    fs.existsSync(path.join(projectDir, setup.skipWhenPresent))
+  ) {
+    return "present";
+  }
+  runner(setup.command, setup.args, { cwd: projectDir });
+  return "installed";
+}
+
 const FAILURE_LINE =
   /\b(error|errors|fail|fails|failed|failing|failure|failures|assert)\b/i;
 const MAX_FAILURE_CHARS = 4000;
@@ -848,14 +989,25 @@ function runVerificationTask(task: VerificationTask, cwd: string): void {
   }
 }
 
-export function verifyWorktree(targetDir: string, touched?: string[]): void {
+export function verifyWorktree(
+  targetDir: string,
+  touched?: string[],
+  profile: RepoProfile | null = null,
+): void {
   const tasks = planVerification(
     detectStackProjects(targetDir),
     touched ?? collectTrackedChanges(targetDir),
+    profile,
   );
   for (const task of tasks) {
     const cwd = task.root ? path.join(targetDir, task.root) : targetDir;
-    if (
+    if (task.setup) {
+      if (ensureProjectSetup(task.setup, cwd) === "installed") {
+        console.log(
+          `\x1b[32m[Validation]\x1b[0m Prepared ${task.root || "."} with ${task.setup.command} ${task.setup.args.join(" ")}`,
+        );
+      }
+    } else if (
       task.stack === "TYPESCRIPT" &&
       ensureJavaScriptDependencies(cwd) === "installed"
     ) {

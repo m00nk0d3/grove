@@ -211,12 +211,15 @@ export async function chooseReviewPostAction(
 }
 
 export function buildPullRequestReviewPrompt(
+  persona: string,
   repo: string,
   prNumber: string,
   metadataJson: string,
   verdictPath: string,
 ): string {
   return `
+${persona}
+
 You are an independent senior pull request reviewer for ${repo}#${prNumber}.
 
 Pull request metadata:

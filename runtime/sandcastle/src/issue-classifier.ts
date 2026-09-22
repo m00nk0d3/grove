@@ -71,6 +71,45 @@ function referencedFiles(text: string): string[] {
   return [...text.matchAll(FILE_PATH_PATTERN)].map((match) => match[1]);
 }
 
+// scopeFilesFromIssue answers "which part of this repository is the issue about?"
+// so the stages that run before any diff exists — planning, tests, implementation
+// — get the specialist for the code they are about to touch rather than a
+// composite describing the whole repository.
+//
+// Evidence comes from paths written in the issue and from labels that name an
+// area. An issue that offers neither yields nothing, and the caller then treats
+// every project as in scope: a vague issue should get the broad specialist, not a
+// confident guess at the wrong language.
+export function scopeFilesFromIssue(
+  metadata: IssueMetadata,
+  projects: { root: string }[],
+): string[] {
+  const roots = projects
+    .map((project) => project.root)
+    .filter((root) => root.length > 0);
+  const scope = new Set<string>();
+
+  for (const file of referencedFiles(`${metadata.title}\n${metadata.body}`)) {
+    scope.add(file.replace(/\\/g, "/"));
+  }
+
+  // A label such as 'area: backend' or plain 'frontend' names a project root as
+  // reliably as a path does, and issues carry them far more often.
+  const text = normalizedLabels(metadata.labels).join(" ");
+  for (const root of roots) {
+    const name = root.split("/").pop() ?? root;
+    if (new RegExp(`(^|[^a-z0-9])${escapeRegExp(name.toLowerCase())}([^a-z0-9]|$)`).test(text)) {
+      scope.add(`${root}/`);
+    }
+  }
+
+  return [...scope];
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function classifyIssue(metadata: IssueMetadata): WorkflowClassification {
   const labels = normalizedLabels(metadata.labels);
   const fullLabel = labels.find((label) => FULL_LABELS.has(label));

@@ -9,11 +9,14 @@ import {
 } from "./ci-fix.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import { runTrackedWorkflow, updateTrackedWorkflow } from "./runtime-state.js";
-import { buildImplementationPersona, SPECIALISTS } from "./specialists.js";
+import { personaFor, SPECIALISTS } from "./specialists.js";
 import { detectStackProjects } from "./stack-detector.js";
+import { loadProfile, type RepoProfile } from "./project-profile.js";
 import {
   detectRepo,
+  getProjectProfilePath,
   planVerification,
+  pullRequestChangedFiles,
   requireCleanWorktree,
   resolveAgentBackend,
   runCommand,
@@ -242,8 +245,9 @@ export function validateWithRepair(
   persona: string,
   runSpecialist: (role: string, promptText: string) => void,
   verify: (dir: string) => void = verifyWorktree,
+  profile: RepoProfile | null = null,
 ): void {
-  const commands = planVerification(detectStackProjects(targetDir), [])
+  const commands = planVerification(detectStackProjects(targetDir), [], profile)
     .map((task) => task.label)
     .join(" && ");
 
@@ -505,7 +509,20 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     });
   };
 
-  const persona = buildImplementationPersona(detectStackProjects(targetDir));
+  // The specialist that answers this review is the one for the code the pull
+  // request actually changes.
+  const projects = detectStackProjects(targetDir);
+  const profile = loadProfile(
+    getProjectProfilePath(repoRoot),
+    targetDir,
+    projects,
+  ).profile;
+  const persona = personaFor(
+    "implementation",
+    projects,
+    profile,
+    pullRequestChangedFiles(targetDir, metadata.baseRefName),
+  );
   const runSpecialist = (role: string, promptText: string): void => {
     runSpecialistInPane({
       role,
@@ -547,7 +564,15 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
-  validateWithRepair(targetDir, repo, prNumber, persona, runSpecialist);
+  validateWithRepair(
+    targetDir,
+    repo,
+    prNumber,
+    persona,
+    runSpecialist,
+    (dir) => verifyWorktree(dir, undefined, profile),
+    profile,
+  );
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
   runCommand("git", ["add", "-A"], { cwd: targetDir });
   runCommand(

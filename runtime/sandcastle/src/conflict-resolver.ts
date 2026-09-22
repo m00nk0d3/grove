@@ -10,10 +10,15 @@ import {
   validateFixablePullRequest,
 } from "./ci-fix.js";
 import { parseWorktrees } from "./cleanup.js";
+import { detectStackProjects } from "./stack-detector.js";
+import { loadProfile } from "./project-profile.js";
+import { personaFor } from "./specialists.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import { runTrackedWorkflow } from "./runtime-state.js";
 import {
   detectRepo,
+  getProjectProfilePath,
+  pullRequestChangedFiles,
   requireCleanWorktree,
   runCommand,
   verifyWorktree,
@@ -172,10 +177,13 @@ function mergeWithoutCommit(
 }
 
 export function buildConflictPrompt(
+  persona: string,
   metadata: PullRequestMetadata,
   conflictedFiles: string[],
 ): string {
   return `
+${persona}
+
 You are resolving merge conflicts for pull request #${metadata.number}: ${metadata.title}
 PR: ${metadata.url}
 Head branch: ${metadata.headRefName}
@@ -256,13 +264,26 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  const projects = detectStackProjects(targetDir);
+  const profile = loadProfile(
+    getProjectProfilePath(repoRoot),
+    targetDir,
+    projects,
+  ).profile;
+  const persona = personaFor(
+    "implementation",
+    projects,
+    profile,
+    pullRequestChangedFiles(targetDir, metadata.baseRefName),
+  );
+
   if (conflictedFiles.length > 0) {
     console.log("## 🚧 Conflicts");
     for (const file of conflictedFiles) console.log(`- ${file}`);
     console.log();
     runSpecialistInPane({
       role: "conflict-resolver",
-      promptText: buildConflictPrompt(metadata, conflictedFiles),
+      promptText: buildConflictPrompt(persona, metadata, conflictedFiles),
       targetDir,
       issueOrPrNumber: prNumber,
     });
@@ -282,7 +303,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (currentHead !== originalHead) {
     throw new Error("The conflict resolver committed changes unexpectedly.");
   }
-  verifyWorktree(targetDir);
+  verifyWorktree(targetDir, undefined, profile);
   runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
 
   console.log("\n## ✅ Resolution Ready\n");

@@ -91,7 +91,7 @@ test("resolve trusts isCrossRepository rather than the head repository name", ()
 });
 
 test("conflict prompt requires evidence-based resolution without delivery", () => {
-  const prompt = buildConflictPrompt(pullRequest, ["src/api.ts", "src/api.test.ts"]);
+  const prompt = buildConflictPrompt("persona", pullRequest, ["src/api.ts", "src/api.test.ts"]);
   assert.match(prompt, /src\/api\.ts/);
   assert.match(prompt, /preserving the intended behavior from both/);
   assert.match(prompt, /Do not abort the merge, commit, push/);

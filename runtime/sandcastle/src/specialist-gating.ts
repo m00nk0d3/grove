@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { runCommand, type CommandRunner } from "./workflow-utils.js";
+import type { ProfileConcern } from "./project-profile.js";
 
 // Specialists that review a finished implementation rather than produce it.
 // Each one costs an agent run, so a stage is only worth entering when the diff
@@ -22,7 +23,6 @@ const DATABASE_PATTERNS = [
   /dbcontext/,
   /(^|\/)entities?(\/|$)/,
   /(^|\/)seeds?(\/|$)/,
-  /seedlookups/,
 ];
 
 const SECURITY_PATTERNS = [
@@ -124,6 +124,22 @@ export function hasDocumentationSurface(targetDir: string): boolean {
 export interface GatingInput {
   changedFiles: string[];
   hasDocumentationSurface: boolean;
+}
+
+// The built-in vocabularies are one repository's idea of what a migration or a
+// controller is called. A profile carries the words this repository actually
+// uses, so an Ecto or Rails change reaches database-review even though none of
+// `alembic`, `schema.prisma` or `dbcontext` ever matched it.
+export function selectProfileConcerns(
+  changedFiles: string[],
+  concerns: ProfileConcern[],
+): ProfileConcern[] {
+  const files = changedFiles.map(normalize);
+  if (files.length === 0) return [];
+  return concerns.filter((concern) => {
+    const patterns = concern.pathPatterns.map((source) => new RegExp(source));
+    return files.some((file) => patterns.some((pattern) => pattern.test(file)));
+  });
 }
 
 export function selectConditionalSpecialists(
