@@ -693,3 +693,40 @@ test("a directory of per-reviewer verdicts is excluded, not just one file", asyn
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a guard that fires names the files that changed", async () => {
+  const { captureWorktreeState, describeWorktreeChange } = await import("./orchestrator.js");
+  const { execFileSync } = await import("node:child_process");
+  const root = scratch("evidence-");
+  const git = (args: string[]) =>
+    execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git(["init", "--quiet", "-b", "main"]);
+    git(["config", "core.autocrlf", "false"]);
+    fs.writeFileSync(path.join(root, "tracked.txt"), "x");
+    git(["add", "-A"]);
+    git([
+      "-c", "user.name=T", "-c", "user.email=t@e.com",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init",
+    ]);
+
+    const ignored = ".agent/issue-1/domain-review";
+    const before = captureWorktreeState(root, ignored);
+
+    // A reviewer that leaves scratch files behind and edits a tracked file.
+    fs.writeFileSync(path.join(root, "notes.md"), "scratch");
+    fs.writeFileSync(path.join(root, "tracked.txt"), "edited");
+    const after = captureWorktreeState(root, ignored);
+
+    const description = describeWorktreeChange(before, after);
+    assert.match(description, /new untracked files: notes\.md/);
+    assert.match(description, /tracked files: tracked\.txt/);
+
+    // Comparing a state with itself reports nothing rather than inventing a cause.
+    assert.match(describeWorktreeChange(before, before), /no difference/);
+    // And unparseable input degrades to a sentence rather than throwing.
+    assert.match(describeWorktreeChange("{{{", after), /could not be compared/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

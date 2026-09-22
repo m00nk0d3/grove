@@ -123,6 +123,54 @@ export function captureWorktreeState(
   return JSON.stringify({ trackedDiff, untracked });
 }
 
+// An accusation with no evidence is unactionable: "the reviewer modified the
+// implementation" leaves whoever reads it with no idea what moved, and the
+// worktree is preserved but unexplained. Name the paths.
+export function describeWorktreeChange(before: string, after: string): string {
+  let a: { trackedDiff: string; untracked: [string, string][] };
+  let b: typeof a;
+  try {
+    a = JSON.parse(before);
+    b = JSON.parse(after);
+  } catch {
+    return "the worktree changed, but the captured state could not be compared";
+  }
+
+  const notes: string[] = [];
+  const names = (state: typeof a) => new Map(state.untracked);
+  const beforeFiles = names(a);
+  const afterFiles = names(b);
+
+  const added = [...afterFiles.keys()].filter((file) => !beforeFiles.has(file));
+  const removed = [...beforeFiles.keys()].filter((file) => !afterFiles.has(file));
+  const rewritten = [...afterFiles.keys()].filter(
+    (file) => beforeFiles.has(file) && beforeFiles.get(file) !== afterFiles.get(file),
+  );
+
+  const list = (label: string, files: string[]) => {
+    if (files.length === 0) return;
+    const shown = files.slice(0, 10).join(", ");
+    notes.push(
+      `${label}: ${shown}${files.length > 10 ? ` and ${files.length - 10} more` : ""}`,
+    );
+  };
+  list("new untracked files", added);
+  list("removed untracked files", removed);
+  list("rewritten untracked files", rewritten);
+
+  if (a.trackedDiff !== b.trackedDiff) {
+    // The diff itself is large and binary-safe; its changed paths are enough.
+    const changed = [
+      ...new Set(
+        [...b.trackedDiff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((match) => match[1]),
+      ),
+    ];
+    list("tracked files", changed.length > 0 ? changed : ["(see git diff)"]);
+  }
+
+  return notes.length > 0 ? notes.join("; ") : "no difference could be identified";
+}
+
 export function implementationSessionId(repo: string, issueNum: string): string {
   const bytes = createHash("sha256")
     .update(`agent-flow:${repo}:${issueNum}:implementation`)
@@ -816,11 +864,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
                 readAuditVerdict(passPath, pass.title);
               },
             );
-            if (
-              captureWorktreeState(targetDir, reviewDirRelative) !== stateBefore
-            ) {
+            const stateAfter = captureWorktreeState(targetDir, reviewDirRelative);
+            if (stateAfter !== stateBefore) {
               throw new Error(
-                `The ${pass.title} reviewer modified the implementation instead of reporting blockers.`,
+                `The ${pass.title} reviewer modified the implementation instead of reporting blockers — ` +
+                  `${describeWorktreeChange(stateBefore, stateAfter)}.`,
               );
             }
             results.push({
@@ -1122,7 +1170,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
         const stateAfter = captureWorktreeState(targetDir, leanPlanPath);
         if (stateAfter !== stateBefore) {
-          throw new Error("Lean planner modified files outside its handoff artifact.");
+          throw new Error(
+            "Lean planner modified files outside its handoff artifact — " +
+              `${describeWorktreeChange(stateBefore, stateAfter)}.`,
+          );
         }
         const absoluteLeanPlanPath = path.join(targetDir, leanPlanPath);
         if (
