@@ -327,9 +327,23 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     "--repo",
     repo,
     "--json",
-    "number,title,url,headRefName,headRefOid,isCrossRepository,state,headRepository,headRepositoryOwner",
+    "number,title,url,headRefName,headRefOid,baseRefName,isCrossRepository,state,headRepository,headRepositoryOwner",
   ]);
-  return JSON.parse(output) as PullRequestMetadata;
+  const value = JSON.parse(output) as Partial<PullRequestMetadata>;
+  // A field this command uses but never asked for reads as undefined and
+  // degrades silently — baseRefName decides which specialist answers the
+  // review — so the shape is checked rather than assumed.
+  if (
+    typeof value.number !== "number" ||
+    typeof value.headRefName !== "string" ||
+    typeof value.headRefOid !== "string" ||
+    typeof value.baseRefName !== "string" ||
+    typeof value.isCrossRepository !== "boolean" ||
+    typeof value.state !== "string"
+  ) {
+    throw new Error(`GitHub returned invalid metadata for ${repo}#${prNumber}.`);
+  }
+  return value as PullRequestMetadata;
 }
 
 export function parseFeedbackResponse(raw: string): PullRequestFeedback {

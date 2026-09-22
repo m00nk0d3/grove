@@ -546,6 +546,10 @@ export function pullRequestChangedFiles(
   baseRefName: string,
   runner: CommandRunner = runCommand,
 ): string[] {
+  // Without a base there is nothing to diff against, and shelling out with
+  // "origin/undefined" would spend two failed git calls to reach the same
+  // answer. An empty scope means every project, which is the safe reading.
+  if (!baseRefName) return [];
   for (const base of [`origin/${baseRefName}`, baseRefName]) {
     try {
       return runner("git", ["diff", "--name-only", `${base}...HEAD`], {

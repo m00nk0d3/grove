@@ -480,3 +480,34 @@ test("verification refuses when nothing can validate the change", async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a command only reads pull request fields it actually asks GitHub for", async () => {
+  const { pullRequestChangedFiles } = await import("./workflow-utils.js");
+
+  // address used baseRefName for persona scoping without requesting it, so it
+  // read as undefined and the scope quietly fell back to every project.
+  // Resolved from this module rather than the working directory, which differs
+  // between `npm test` and a direct `node --test`.
+  const { fileURLToPath } = await import("node:url");
+  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const sources = ["address-review.ts", "ci-fix.ts", "conflict-resolver.ts", "pr-review.ts"];
+  for (const file of sources) {
+    const source = fs.readFileSync(path.join(srcDir, file), "utf8");
+    if (!source.includes("metadata.baseRefName") && !source.includes("baseRefName:")) continue;
+    const queries = [...source.matchAll(/"((?:number|id)[a-zA-Z,]*)"/g)].map((m) => m[1]);
+    const asksForIt = queries.some((query) => query.split(",").includes("baseRefName"));
+    assert.ok(
+      asksForIt,
+      `${file} uses baseRefName but no --json query requests it`,
+    );
+  }
+
+  // And a missing base costs no git calls and yields the safe answer.
+  let called = 0;
+  const runner = () => {
+    called += 1;
+    return "";
+  };
+  assert.deepEqual(pullRequestChangedFiles("/nowhere", "", runner), []);
+  assert.equal(called, 0, "a missing base ref must not shell out");
+});
