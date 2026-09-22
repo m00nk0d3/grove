@@ -102,7 +102,16 @@ export function captureWorktreeState(
 ): string {
   const trackedDiff = runCommand(
     "git",
-    ["diff", "--binary", "HEAD", "--", ".", `:(exclude)${ignoredRelativePath}`],
+    [
+      "diff",
+      "--binary",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "HEAD",
+      "--",
+      ".",
+      `:(exclude)${ignoredRelativePath}`,
+    ],
     { cwd: targetDir },
   );
   const untracked = runCommand(
