@@ -381,11 +381,70 @@ export function planVerification(
     ];
   }
 
-  const selected = projectsInScope(projects, changedFiles);
+  // A change confined to a surface — a migration directory, a stylesheet tree —
+  // belongs to no project, and without this it falls through to "unattributable,
+  // so validate everything" and runs every suite in the repository. The profile
+  // names the project whose tests actually cover each surface.
+  const ownedRoots = new Set(
+    projects
+      .filter((project) => project.root !== "")
+      .map((project) => project.root),
+  );
+  const delegated = new Set<string>();
+  let sawSurfaceFile = false;
+  for (const file of changedFiles) {
+    const normalized = file.replace(/\\/g, "/");
+    if ([...ownedRoots].some((root) => normalized.startsWith(`${root}/`))) {
+      continue; // a project already owns it
+    }
+    const surface = deepestSurfaceFor(profile, normalized);
+    if (!surface) continue;
+    sawSurfaceFile = true;
+    if (surface.validatedBy) delegated.add(surface.validatedBy);
+  }
+
+  const scoped = projectsInScope(projects, changedFiles);
+  // Only narrow when every surface that was touched said who validates it.
+  // A surface with nothing declared keeps the conservative answer: too slow is a
+  // better failure than unvalidated.
+  const selected =
+    sawSurfaceFile && delegated.size > 0
+      ? projects.filter(
+          (project) =>
+            delegated.has(project.root) || scopedOwnsAProject(scoped, projects, changedFiles, project),
+        )
+      : scoped;
 
   return selected
     .map((project) => resolveVerificationTask(project, profile))
     .filter((task): task is VerificationTask => task !== null);
+}
+
+function deepestSurfaceFor(
+  profile: RepoProfile | null,
+  normalizedFile: string,
+): { root: string; validatedBy?: string } | undefined {
+  let best: { root: string; validatedBy?: string } | undefined;
+  for (const surface of profile?.surfaces ?? []) {
+    if (!normalizedFile.startsWith(`${surface.root}/`)) continue;
+    if (!best || surface.root.length > best.root.length) best = surface;
+  }
+  return best;
+}
+
+// A project stays selected when a changed file genuinely lives inside it, as
+// opposed to having been swept in by the "nothing attributable" fallback.
+function scopedOwnsAProject(
+  scoped: StackProject[],
+  projects: StackProject[],
+  changedFiles: string[],
+  project: StackProject,
+): boolean {
+  if (!scoped.includes(project)) return false;
+  if (project.root === "") return false;
+  return changedFiles.some((file) =>
+    file.replace(/\\/g, "/").startsWith(`${project.root}/`),
+  );
 }
 
 // Returns null for a project this runtime has no built-in command for. The switch

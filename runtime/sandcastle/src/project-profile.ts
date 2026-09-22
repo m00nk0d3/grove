@@ -11,7 +11,7 @@ import { stackLabel, type StackProject } from "./stack-detector.js";
 // tree: sandcastle leaves no footprint in the projects it is pointed at, and an
 // untracked file can be rewritten mid-run without dirtying a worktree and
 // tripping the workflow's own clean-checkout guards.
-export const PROJECT_PROFILE_VERSION = 1;
+export const PROJECT_PROFILE_VERSION = 2;
 
 // One specialist per stage of the workflow. Grouping the fifteen prompt builders
 // onto six keys keeps the generated text tractable while still giving every step
@@ -45,6 +45,19 @@ export interface ProfileSetupCommand extends ProfileCommand {
   skipWhenPresent?: string;
 }
 
+// A framework is what a project is actually built with, as opposed to what
+// language it is written in. A React app and a plain Node service share a
+// language and need different specialists; naming the framework is what lets the
+// personas and the review concerns be about the code that is really there.
+export interface ProfileFramework {
+  /** "React", "Alembic", "Tailwind CSS". */
+  name: string;
+  /** What it does in this repository, in a clause. */
+  role: string;
+  /** The dependency or file that proves it is here. */
+  evidence: string;
+}
+
 export interface ProfileProject {
   /** Directory owning the project, relative to the repository root ("" = root). */
   root: string;
@@ -54,10 +67,30 @@ export interface ProfileProject {
   label: string;
   /** One sentence a person would recognise the project by. */
   ecosystem: string;
+  /** The frameworks this project is built with. May be empty. */
+  frameworks: ProfileFramework[];
   /** The specialist for each stage, rendered as its prompt's opening lines. */
   personas: Record<RoleKey, string>;
   test: ProfileCommand;
   setup?: ProfileSetupCommand;
+}
+
+// A surface is a body of work with no manifest of its own: SQL migrations, a
+// stylesheet tree, infrastructure definitions. It has specialists but no test
+// command, so it names the project whose suite covers it instead.
+export interface ProfileSurface {
+  /** Directory owning the surface, relative to the repository root. */
+  root: string;
+  /** What the surface is: "SQL", "STYLES". */
+  label: string;
+  /** What this body of work is for, in a sentence. */
+  purpose: string;
+  personas: Record<RoleKey, string>;
+  /**
+   * The root of the project whose tests cover changes here. Without it a change
+   * confined to this surface has to fall back to validating every project.
+   */
+  validatedBy?: string;
 }
 
 export interface ProfileConcern {
@@ -81,6 +114,7 @@ export interface RepoProfile {
   /** One to three sentences describing the repository as a whole. */
   repoSummary: string;
   projects: ProfileProject[];
+  surfaces: ProfileSurface[];
   concerns: ProfileConcern[];
 }
 
@@ -158,6 +192,7 @@ function manifestDigestInput(absoluteMarkerPath: string): string {
 export function fingerprintRepoShape(
   targetDir: string,
   projects: StackProject[],
+  surfaces: { root: string; label: string }[] = [],
 ): string {
   const shape = [...projects]
     .sort((a, b) => a.root.localeCompare(b.root))
@@ -168,9 +203,20 @@ export function fingerprintRepoShape(
       label: stackLabel(project),
       manifest: manifestDigestInput(path.join(targetDir, project.marker)),
     }));
+  // A surface appearing, vanishing or changing kind makes the specialists wrong
+  // in the same way a new project does, so it belongs in the same signal.
+  const surfaceShape = [...surfaces]
+    .sort((a, b) => a.root.localeCompare(b.root))
+    .map((surface) => ({ root: surface.root, label: surface.label }));
   return crypto
     .createHash("sha256")
-    .update(JSON.stringify({ version: PROJECT_PROFILE_VERSION, shape }))
+    .update(
+      JSON.stringify({
+        version: PROJECT_PROFILE_VERSION,
+        shape,
+        surfaces: surfaceShape,
+      }),
+    )
     .digest("hex");
 }
 
@@ -197,7 +243,7 @@ function unwrapJson(content: string): string {
 // profiling failure with a sentence that says what to do.
 const COMMAND_PATTERN = /^[A-Za-z0-9._\/\\-]+$/;
 const MIN_PERSONA_LENGTH = 40;
-const MAX_PERSONA_LENGTH = 4000;
+const MAX_PERSONA_LENGTH = 6000;
 const MAX_PATTERN_LENGTH = 200;
 
 function fail(message: string): never {
@@ -253,6 +299,93 @@ function readCommand(
   return command;
 }
 
+// Every reader below rebuilds its result field by field, so a key the prompt
+// engineer writes but nothing here copies is dropped without complaint. Adding a
+// field to the schema means adding it in three places: the interface, the
+// validation, and the constructed object.
+function readPersonas(value: unknown, where: string): Record<RoleKey, string> {
+  if (!value || typeof value !== "object") {
+    fail(`${where} has no personas.`);
+  }
+  const resolved = {} as Record<RoleKey, string>;
+  for (const role of ROLE_KEYS) {
+    const persona = (value as Record<string, unknown>)[role];
+    if (typeof persona !== "string" || persona.trim().length < MIN_PERSONA_LENGTH) {
+      fail(
+        `${where} has no usable '${role}' persona; each one needs at least ${MIN_PERSONA_LENGTH} characters.`,
+      );
+    }
+    if (persona.length > MAX_PERSONA_LENGTH) {
+      fail(`${where} has an oversized '${role}' persona.`);
+    }
+    resolved[role] = persona.trim();
+  }
+  return resolved;
+}
+
+function readRelativeRoot(value: unknown, where: string): string {
+  if (typeof value !== "string") {
+    fail(`${where} has no root.`);
+  }
+  if (path.isAbsolute(value) || value.includes("..") || value.startsWith("./")) {
+    fail(`${where} root '${value}' must be a plain relative path.`);
+  }
+  return value;
+}
+
+function readFrameworks(value: unknown, where: string): ProfileFramework[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    fail(`${where} frameworks must be a list.`);
+  }
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      fail(`${where} framework ${index} is not an object.`);
+    }
+    const candidate = entry as Partial<ProfileFramework>;
+    for (const field of ["name", "role", "evidence"] as const) {
+      if (typeof candidate[field] !== "string" || !candidate[field]!.trim()) {
+        fail(`${where} framework ${index} has no ${field}.`);
+      }
+    }
+    return {
+      name: candidate.name!.trim(),
+      role: candidate.role!.trim(),
+      evidence: candidate.evidence!.trim(),
+    };
+  });
+}
+
+function readSurface(value: unknown, index: number): ProfileSurface {
+  if (!value || typeof value !== "object") {
+    fail(`Profile surface ${index} is not an object.`);
+  }
+  const candidate = value as Partial<ProfileSurface>;
+  const root = readRelativeRoot(candidate.root, `Profile surface ${index}`);
+  if (!root) {
+    fail(`Profile surface ${index} has an empty root.`);
+  }
+  if (typeof candidate.label !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(candidate.label)) {
+    fail(`Profile surface '${root}' needs an uppercase label such as SQL or STYLES.`);
+  }
+  if (typeof candidate.purpose !== "string" || !candidate.purpose.trim()) {
+    fail(`Profile surface '${root}' has no purpose.`);
+  }
+  const surface: ProfileSurface = {
+    root,
+    label: candidate.label,
+    purpose: candidate.purpose,
+    personas: readPersonas(candidate.personas, `Profile surface '${root}'`),
+  };
+  if (candidate.validatedBy !== undefined) {
+    if (typeof candidate.validatedBy !== "string") {
+      fail(`Profile surface '${root}' has an invalid validatedBy.`);
+    }
+    surface.validatedBy = candidate.validatedBy;
+  }
+  return surface;
+}
+
 function readProject(value: unknown, index: number): ProfileProject {
   if (!value || typeof value !== "object") {
     fail(`Profile project ${index} is not an object.`);
@@ -276,29 +409,16 @@ function readProject(value: unknown, index: number): ProfileProject {
   if (typeof candidate.ecosystem !== "string" || !candidate.ecosystem.trim()) {
     fail(`Profile project '${root}' has no ecosystem description.`);
   }
-  const personas = candidate.personas;
-  if (!personas || typeof personas !== "object") {
-    fail(`Profile project '${root}' has no personas.`);
-  }
-  const resolved = {} as Record<RoleKey, string>;
-  for (const role of ROLE_KEYS) {
-    const persona = (personas as Record<string, unknown>)[role];
-    if (typeof persona !== "string" || persona.trim().length < MIN_PERSONA_LENGTH) {
-      fail(
-        `Profile project '${root}' has no usable '${role}' persona; each one needs at least ${MIN_PERSONA_LENGTH} characters.`,
-      );
-    }
-    if (persona.length > MAX_PERSONA_LENGTH) {
-      fail(`Profile project '${root}' has an oversized '${role}' persona.`);
-    }
-    resolved[role] = persona.trim();
-  }
   const project: ProfileProject = {
     root,
     marker: candidate.marker,
     label: candidate.label,
     ecosystem: candidate.ecosystem,
-    personas: resolved,
+    frameworks: readFrameworks(
+      candidate.frameworks,
+      `Profile project '${root}'`,
+    ),
+    personas: readPersonas(candidate.personas, `Profile project '${root}'`),
     test: readCommand(candidate.test, `Profile project '${root}' test command`),
   };
   if (candidate.setup !== undefined) {
@@ -420,6 +540,24 @@ export function readProfileDraft(
     }
   }
 
+  const surfaces = Array.isArray(candidate.surfaces)
+    ? candidate.surfaces.map(readSurface)
+    : [];
+  const surfaceRoots = new Set<string>();
+  for (const surface of surfaces) {
+    if (surfaceRoots.has(surface.root)) {
+      throw new Error(`The project profile has two surfaces for '${surface.root}'.`);
+    }
+    surfaceRoots.add(surface.root);
+    // A surface validated by a project that does not exist would silently fall
+    // back to validating everything, which is the behaviour surfaces exist to fix.
+    if (surface.validatedBy !== undefined && !seen.has(surface.validatedBy)) {
+      throw new Error(
+        `Profile surface '${surface.root}' says it is validated by '${surface.validatedBy}', which is not a project in this repository.`,
+      );
+    }
+  }
+
   const concerns = Array.isArray(candidate.concerns)
     ? candidate.concerns.map(readConcern)
     : [];
@@ -431,7 +569,7 @@ export function readProfileDraft(
     concernIds.add(concern.id);
   }
 
-  return { repoSummary: candidate.repoSummary, projects, concerns };
+  return { repoSummary: candidate.repoSummary, projects, surfaces, concerns };
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +584,7 @@ export function loadProfile(
   profilePath: string,
   targetDir: string,
   projects: StackProject[],
+  surfaces: { root: string; label: string }[] = [],
 ): LoadedProfile {
   if (!fs.existsSync(profilePath)) {
     return { profile: null, status: "absent", reason: "no profile has been written yet" };
@@ -492,7 +631,7 @@ export function loadProfile(
       reason: `it was written for profile version ${candidate.version}`,
     };
   }
-  const current = fingerprintRepoShape(targetDir, projects);
+  const current = fingerprintRepoShape(targetDir, projects, surfaces);
   if (profile.fingerprint !== current) {
     return { profile, status: "stale", reason: "the repository's projects have changed" };
   }

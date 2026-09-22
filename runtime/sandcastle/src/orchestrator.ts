@@ -8,12 +8,15 @@ import { fileURLToPath } from "url";
 import {
   SPECIALISTS,
   buildImplementationPersona,
+  builtinReviewSections,
   getImplementationPrompt,
   personaFor,
 } from "./specialists.js";
 import {
   detectStack,
   detectStackProjects,
+  detectSurfaces,
+  readDirectDependencies,
   stackLabel,
   TechStack,
 } from "./stack-detector.js";
@@ -22,14 +25,16 @@ import {
   loadProfile,
   readProfileDraft,
   writeProfile,
+  type RepoProfile,
   type RoleKey,
 } from "./project-profile.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import {
   collectChangedFiles,
   hasDocumentationSurface,
+  planReviewPasses,
+  resolveMaxReviewPasses,
   selectConditionalSpecialists,
-  selectProfileConcerns,
   type ConditionalSpecialist,
 } from "./specialist-gating.js";
 import {
@@ -49,11 +54,12 @@ import {
   formatReviewVerdict,
   postReviewComment,
   readJsonArtifactWithRetry,
+  combineAuditVerdicts,
   readAuditVerdict,
   readReviewVerdict,
   REVIEW_BATCH_SIZE,
 } from "./review-loop.js";
-import { type ReviewVerdict } from "./review-loop.js";
+import { type AuditVerdict, type ReviewVerdict } from "./review-loop.js";
 import {
   assertModeOverrideCompatible,
   detectRepo,
@@ -237,13 +243,18 @@ export function createLeanReport(
   stack: TechStack,
   targetDir: string,
   evidence: LeanReportEvidence,
+  profile: RepoProfile | null = null,
 ): string {
   const changedFiles = runCommand(
     "git",
     ["diff", "--name-status", baseCommit, "HEAD"],
     { cwd: targetDir },
   );
-  const verification = planVerification(detectStackProjects(targetDir), [])
+  const verification = planVerification(
+    detectStackProjects(targetDir),
+    [],
+    profile,
+  )
     .map((task) => task.label)
     .join(" && ");
   const head = runCommand("git", ["rev-parse", "--short", "HEAD"], {
@@ -517,6 +528,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     // nothing next to an agent turn, and it is what decides whether the
     // repository's specialists are still the right ones.
     const projects = detectStackProjects(targetDir);
+    const surfaces = detectSurfaces(targetDir, projects);
     const profilePath = getProjectProfilePath(repoRoot);
     const profileDraftPath = `${agentDir}/project-profile.json`;
     const requirementsPath = `${agentDir}/REQUIREMENTS.md`;
@@ -652,11 +664,15 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const verifyWithRepair = (handoffPath: string): void => {
       // Name every command the gate runs, so a repair in a multi-stack
       // repository knows which project it has to make pass.
-      const verification = planVerification(detectStackProjects(targetDir), [])
+      const verification = planVerification(
+        detectStackProjects(targetDir),
+        [],
+        profile,
+      )
         .map((task) => task.label)
         .join(" && ");
       runValidationWithRepair(
-        () => verifyWorktree(targetDir),
+        () => verifyWorktree(targetDir, undefined, profile),
         (failure) =>
           runSpecialist(
             `${stack.toLowerCase()}-validation-repair`,
@@ -704,80 +720,123 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         const builtinDomains = selectedSpecialists().filter(
           (specialist) => specialist !== "documentation",
         );
-        // A generated concern either extends a built-in checklist or stands as a
-        // domain of its own, so a repository whose vocabulary the built-in
-        // patterns never matched still gets the review it needs.
-        const profileConcerns = selectProfileConcerns(
-          collectChangedFiles(targetDir),
-          profile?.concerns ?? [],
-        );
-        const extraSections: Record<string, string> = {};
-        for (const concern of profileConcerns) {
-          const key = concern.augments ?? concern.id;
-          const body = `## Concern: ${concern.title}\n\n${concern.checklist
-            .map((item) => `- ${item}`)
-            .join("\n")}\n`;
-          extraSections[key] = extraSections[key]
-            ? `${extraSections[key]}${body}`
-            : body;
-        }
-        const domains = [
-          ...new Set([
-            ...builtinDomains,
-            ...profileConcerns.map((concern) => concern.augments ?? concern.id),
-          ]),
-        ];
-        if (domains.length === 0) {
+        // One specialist per concern, ranked by how much of the diff each one
+        // actually matches. A generated concern either extends a built-in
+        // checklist or stands as a review of its own, so a repository whose
+        // vocabulary the built-in patterns never matched still gets the review
+        // it needs.
+        const plan = planReviewPasses({
+          changedFiles: collectChangedFiles(targetDir),
+          builtins: builtinDomains,
+          builtinSections: builtinReviewSections(),
+          concerns: profile?.concerns ?? [],
+          maxPasses: resolveMaxReviewPasses(),
+        });
+        if (plan.passes.length === 0) {
           console.log(
-            "[33m[Specialists][0m Skipping domain-review: the diff raises none of its concerns.",
+            "\x1b[33m[Specialists]\x1b[0m Skipping domain-review: the diff raises none of its concerns.",
           );
           return;
         }
         console.log(
-          `[36m[Specialists][0m Domain review covering: ${domains.join(", ")}`,
+          `\x1b[36m[Specialists]\x1b[0m Domain review, one specialist each: ${plan.passes
+            .map((pass) => `${pass.title} (${pass.matchCount})`)
+            .join(", ")}`,
         );
-        // Keep the verdict inside the worktree: Claude needs approval to write
+        if (plan.skipped.length > 0) {
+          console.log(
+            `\x1b[33m[Specialists]\x1b[0m Not reviewed, the pass cap was reached: ${plan.skipped
+              .map((pass) => `${pass.title} (${pass.matchCount})`)
+              .join(", ")}`,
+          );
+        }
+        // Keep the verdicts inside the worktree: Claude needs approval to write
         // outside its working directory, and .agent/ is removed at delivery.
-        const verdictRelativePath = `${agentDir
+        const reviewDirRelative = `${agentDir
           .split(path.sep)
-          .join("/")}/domain-review-verdict.json`;
-        const verdictPath = path.join(targetDir, verdictRelativePath);
-        fs.mkdirSync(path.dirname(verdictPath), { recursive: true });
+          .join("/")}/domain-review`;
+        const verdictPath = path.join(
+          targetDir,
+          reviewDirRelative,
+          "combined.json",
+        );
+        fs.mkdirSync(path.join(targetDir, reviewDirRelative), {
+          recursive: true,
+        });
 
+        let due = plan.passes;
         for (let cycle = 1; cycle <= REVIEW_BATCH_SIZE; cycle += 1) {
-          fs.rmSync(verdictPath, { force: true });
-          const stateBefore = captureWorktreeState(
-            targetDir,
-            verdictRelativePath,
-          );
-          runSpecialist(
-            `domain-review-${cycle}`,
-            SPECIALISTS.DOMAIN_REVIEWER(
-              diffPersonaOf("review"),
-              issueNum,
-              repo,
-              verdictPath,
-              domains,
-              extraSections,
-            ),
-            [verdictPath],
-            () => {
-              readAuditVerdict(verdictPath, "domain-review");
-            },
-          );
-          if (
-            captureWorktreeState(targetDir, verdictRelativePath) !== stateBefore
-          ) {
-            throw new Error(
-              "The domain reviewer modified the implementation instead of reporting blockers.",
+          const results: {
+            id: string;
+            title: string;
+            verdict: AuditVerdict;
+          }[] = [];
+          for (const pass of due) {
+            const passPath = path.join(
+              targetDir,
+              reviewDirRelative,
+              `${pass.slug}.json`,
             );
+            fs.rmSync(passPath, { force: true });
+            // The whole review directory is excluded, so one reviewer's verdict
+            // is never mistaken for another reviewer editing the implementation.
+            const stateBefore = captureWorktreeState(
+              targetDir,
+              reviewDirRelative,
+            );
+            runSpecialist(
+              `${pass.slug}-${cycle}`,
+              SPECIALISTS.DOMAIN_REVIEWER(
+                diffPersonaOf("review"),
+                issueNum,
+                repo,
+                passPath,
+                pass,
+              ),
+              [passPath],
+              () => {
+                readAuditVerdict(passPath, pass.title);
+              },
+            );
+            if (
+              captureWorktreeState(targetDir, reviewDirRelative) !== stateBefore
+            ) {
+              throw new Error(
+                `The ${pass.title} reviewer modified the implementation instead of reporting blockers.`,
+              );
+            }
+            results.push({
+              id: pass.id,
+              title: pass.title,
+              verdict: readAuditVerdict(passPath, pass.title),
+            });
           }
-          if (readAuditVerdict(verdictPath, "domain-review").verdict === "approved") {
+
+          const combined = combineAuditVerdicts(results, plan.skipped);
+          if (combined.verdict === "approved") {
             return;
           }
-          console.log(
-            `[33m[domain-review][0m Blockers reported in cycle ${cycle}; returning control to the implementation specialist.`,
+          // One fix agent per cycle rather than one per reviewer. The
+          // implementation specialist holds a single session, and several
+          // sequential fix turns would multiply the cost and let two fixes
+          // conflict over the same file.
+          fs.writeFileSync(
+            verdictPath,
+            `${JSON.stringify(combined, null, 2)}\n`,
           );
+          const blocking = results.filter(
+            (result) => result.verdict.verdict === "blockers",
+          );
+          console.log(
+            `\x1b[33m[domain-review]\x1b[0m Blockers from ${blocking
+              .map((result) => result.title)
+              .join(", ")} in cycle ${cycle}; returning control to the implementation specialist.`,
+          );
+          // Only the reviewers that blocked are asked again. Re-running a
+          // specialist that already approved costs an agent run to be told the
+          // same thing twice, and is what would make the cap expensive.
+          const blocked = new Set(blocking.map((result) => result.id));
+          due = plan.passes.filter((pass) => blocked.has(pass.id));
           runSpecialist(
             `${stack.toLowerCase()}-domain-review-fix-${cycle}`,
             SPECIALISTS.IMPLEMENTER_REVIEW_FIXES(
@@ -836,7 +895,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       if (!status) {
         throw new Error("The workflow produced no changes to commit.");
       }
-      verifyWorktree(targetDir);
+      verifyWorktree(targetDir, undefined, profile);
       runCommand("git", ["add", "-A"], { cwd: targetDir });
       runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
       runCommand(
@@ -858,10 +917,9 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     // stage and outside runStep: it produces no workflow step, appears in no
     // checkpoint, and after it succeeds the profile is fresh, so the next run
     // does not repeat it.
-    let profile = loadProfile(profilePath, targetDir, projects).profile;
+    const loaded = loadProfile(profilePath, targetDir, projects, surfaces);
+    let profile = loaded.profile;
     {
-      const loaded = loadProfile(profilePath, targetDir, projects);
-      profile = loaded.profile;
       if (refreshProfile || loaded.status !== "fresh") {
         const why = refreshProfile
           ? "a refresh was requested"
@@ -880,7 +938,13 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
               root: project.root,
               marker: project.marker,
               label: stackLabel(project),
+              // Facts, read from the manifest. The prompt engineer decides what
+              // they mean; it does not decide what they are.
+              dependencies: readDirectDependencies(
+                path.join(targetDir, project.marker),
+              ),
             })),
+            surfaces,
           ),
           [absoluteDraftPath],
           () => {
@@ -890,7 +954,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         profile = writeProfile(
           profilePath,
           readProfileDraft(absoluteDraftPath, projects),
-          fingerprintRepoShape(targetDir, projects),
+          fingerprintRepoShape(targetDir, projects, surfaces),
         );
         fs.rmSync(absoluteDraftPath, { force: true });
         // The profile decides what this workflow will execute, so what it chose

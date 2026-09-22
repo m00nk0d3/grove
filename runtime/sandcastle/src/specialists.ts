@@ -156,6 +156,10 @@ export function buildImplementationPersona(
 // One concern per domain the gate selected. They are kept apart so a review
 // that covers three of them still works through three explicit checklists
 // rather than blurring into one pass.
+export function builtinReviewSections(): Record<string, string> {
+  return { ...DOMAIN_REVIEW_SECTIONS };
+}
+
 const DOMAIN_REVIEW_SECTIONS: Record<string, string> = {
   "security-audit": `## Concern: security
 
@@ -206,7 +210,13 @@ export const SPECIALISTS = {
   PROMPT_ENGINEER: (
     repo: string,
     draftPath: string,
-    projects: { root: string; marker: string; label: string }[],
+    projects: {
+      root: string;
+      marker: string;
+      label: string;
+      dependencies: string[];
+    }[],
+    surfaces: { root: string; label: string; evidence: string }[] = [],
   ): string => `
 You are the Prompt Engineer for ${repo}.
 
@@ -217,25 +227,42 @@ Objective:
   the commands that validate this repository. You are writing prompts for other
   agents, not doing the work yourself.
 
-This repository's projects, as detected:
+This repository's projects, as detected, with the dependencies each one declares:
 ${projects
   .map(
     (project) =>
-      `- ${project.root || "the repository root"}: ${project.label} (${project.marker})`,
+      `- ${project.root || "the repository root"}: ${project.label} (${project.marker})\n` +
+      `  declares: ${project.dependencies.length > 0 ? project.dependencies.join(", ") : "nothing this runtime could read"}`,
   )
   .join("\n")}
-
+${
+  surfaces.length > 0
+    ? `
+This repository's surfaces — directories of work with no manifest of their own:
+${surfaces
+  .map((surface) => `- ${surface.root}: ${surface.label} (${surface.evidence})`)
+  .join("\n")}
+`
+    : ""
+}
 Required work:
 1. Read each project before describing it: its manifest, its test configuration,
    its CI workflow under .github/, any Makefile, justfile or Taskfile, and its
    README or CONTRIBUTING. Establish what the project is and how this repository
    actually builds, tests and lints it.
-2. For each project write six personas, one per role: planning, tests,
+2. Name the frameworks each project is built with. The dependency list above is
+   evidence, not an answer: report the ones that change how code here is written,
+   and say what each one does *in this repository* rather than what it does in
+   general. "Alembic, and autogenerate is disabled here, so migrations are
+   written by hand" is useful; "Alembic is a migration tool" is not. A project
+   with no framework worth naming gets an empty list.
+3. For each project write six personas, one per role: planning, tests,
    implementation, verification, review, documentation. Each is three to six
-   lines, written in the second person, naming the language and the conventions
+   lines, written in the second person, naming the frameworks and the conventions
    this repository actually uses rather than generic advice, and ending with a
-   boundary line in the manner of the example below. This is the register to
-   match:
+   boundary line in the manner of the example below. A reviewer for a React
+   project should read as a React reviewer, not as a TypeScript one. This is the
+   register to match:
 
 ${IMPLEMENTATION_PROMPTS.CSHARP}
 3. For each project give the command that runs its tests, and the command that
@@ -602,27 +629,27 @@ Completion criteria:
     issueNum: string,
     repo: string,
     verdictPath: string,
-    domains: string[],
-    extraSections: Record<string, string> = {},
+    concern: { title: string; sections: string; matchCount: number },
   ): string => `
 ${persona}
 
-You are the Domain Reviewer for ${repo}#${issueNum}.
+You are the ${concern.title} reviewer for ${repo}#${issueNum}.
 
 ${CODE_ORGANIZATION_STANDARD}
 
 Objective:
-- Review this diff against the specific concerns below. You review; you do not
-  fix. Each concern is here because the diff actually touches it, so give each
-  one its own pass rather than forming a single general impression.
+- Review this diff against one concern, and only that concern. Another reviewer
+  is covering each of the others, so depth here is worth more than breadth: work
+  the checklist below point by point rather than forming a general impression.
+  This concern was raised because ${concern.matchCount} changed ${concern.matchCount === 1 ? "file matches" : "files match"} it.
 
-${domains.map((domain) => [DOMAIN_REVIEW_SECTIONS[domain], extraSections[domain]].filter(Boolean).join("\n")).filter(Boolean).join("\n")}
+${concern.sections}
 
 Required work:
 1. Read the issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels and read repository instructions.
 2. Inspect the complete diff and the surrounding code each changed file depends on.
-3. Work through every concern above in turn. Report only what the evidence in
-   this diff supports, and name the file and line for each finding.
+3. Work through the checklist above point by point. Report only what the
+   evidence in this diff supports, and name the file and line for each finding.
 4. Separate defects this change introduces from pre-existing problems it merely
    touches. Report both, labelled, and never treat a documented pre-existing
    baseline as a blocker for this issue.
@@ -638,8 +665,9 @@ Boundaries:
 - Do not report generic advice that this diff does not touch.
 
 Completion criteria:
-- '${verdictPath}' contains the required JSON, every concern above appears in
-  reviewedAreas, and every blocker names a concrete location, impact and fix.
+- '${verdictPath}' contains the required JSON, every checklist point above is
+  accounted for in reviewedAreas, and every blocker names a concrete location,
+  impact and fix.
 `,
   DOCUMENTATION_SPECIALIST: (
     persona: string,

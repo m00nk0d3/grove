@@ -718,9 +718,11 @@ test("every specialist enforces the shared file-size standard", () => {
       ".agent/REQUIREMENTS.md",
       ".agent/PLAN.md",
     ),
-    SPECIALISTS.DOMAIN_REVIEWER(TS_PERSONA, "42", "owner/repo", "/tmp/verdict.json", [
-      "security-audit",
-    ]),
+    SPECIALISTS.DOMAIN_REVIEWER(TS_PERSONA, "42", "owner/repo", "/tmp/verdict.json", {
+      title: "security",
+      sections: "## Concern: security",
+      matchCount: 2,
+    }),
     SPECIALISTS.IMPLEMENTER_VALIDATION_FIXES(
       TS_PERSONA,
       "42",

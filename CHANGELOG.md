@@ -76,6 +76,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   head repository is only compared by name when GitHub actually identified one.
   A pull request whose fork has since been deleted reports as a fork rather
   than as malformed metadata.
+- **Specialists know the framework, not only the language** — the prompt
+  engineer was never asked about frameworks, so a React app and a plain Node
+  service got the same TypeScript specialist, and Alembic, SQLAlchemy and
+  Entity Framework were invisible. Detection now reads each project's declared
+  dependencies and hands them over as evidence; the prompt engineer names the
+  frameworks and says what each one means *in this repository*. The dependency
+  names are read, never interpreted by a built-in table: a curated list of
+  known frameworks would rebuild the closed set this work exists to escape.
+- **A directory with a job but no manifest is a surface** — SQL migrations,
+  a stylesheet tree, infrastructure definitions. Recognised by what the files
+  are rather than what the directory is called, so a folder named `database`
+  holding TypeScript is not one, and three files of one kind are needed before
+  anything is. A surface names the project whose tests cover it, which fixes a
+  measured oddity: a change to one migration used to belong to no project and
+  so validated **every** project in the repository. It now runs the suite that
+  covers it. A surface that names no owner keeps the old conservative answer,
+  because too slow is a better failure than unvalidated.
+- **The review fans out, one specialist per concern** — the three domain audits
+  were merged into a single agent for speed, which was right for three neutral
+  concerns and wrong once database, design and framework concerns joined them:
+  one prompt carrying six checklists reviews each of them less well. Each
+  concern the work raises now gets its own reviewer, in its own pane, with its
+  own clean context and its own verdict file. One concern raised is still one
+  agent.
+  - Concerns are **ranked** by how much of the diff each one actually matches,
+    and **capped** per run (`AGENT_FLOW_MAX_REVIEW_PASSES`, default 5). What
+    the cap left out is reported in the log *and* in the verdict the
+    implementation specialist reads, never dropped silently.
+  - **A built-in audit is counted against the cap but never cut by it.** Match
+    count systematically under-ranks a small, severe change: one file that
+    drops a column matches once, while a broad rename in an auth-adjacent
+    directory matches a dozen times. Losing a security audit because a token
+    refresh touched eight stylesheets is the wrong way to be wrong.
+  - After a fix, only the reviewers that blocked are asked again.
+  - The workflow's step list, its checkpoint and the dashboard are unchanged:
+    all of this happens inside the `domain-review` step, which already looped.
 - **A prompt engineer writes the specialists for each repository** — the
   runtime shipped four hand-written personas and picked one, so a repository in
   any other language was told it was being edited by a "Senior TypeScript
