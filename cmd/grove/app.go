@@ -671,8 +671,6 @@ const (
 	panelCount                     // Sentinel — used for modular cycling via (p+1)%panelCount
 )
 
-const pageSize = 50
-
 type contextActionOption struct {
 	icon         string
 	label        string
@@ -709,9 +707,6 @@ type Model struct {
 	lastMouseX         int
 	lastMouseY         int
 	lastMouseAt        time.Time
-
-	// Pagination state
-	currentPage int // 0-based current page index for issues/PRs lists
 
 	// Debounce state
 	pendingSync *githubSyncedMsg // pending sync data waiting for debounce timer
@@ -950,7 +945,6 @@ func (m *Model) handleNavClick(msg tea.MouseMsg, layout mouseUILayout) (tea.Mode
 	m.view = activeView(row)
 	m.ctxScrollOffset = 0
 	m.contextActionIdx = 0
-	m.currentPage = 0
 	return m, nil
 }
 
@@ -963,8 +957,14 @@ func (m *Model) handleListClick(msg tea.MouseMsg, layout mouseUILayout, doubleCl
 
 	switch m.view {
 	case viewDashboard:
-		const dashboardTabRow = 13
-		const dashboardFirstMissionRow = 14
+		// Derived from the banner the dashboard draws rather than written down
+		// again here, so the rows the hit-test looks for are the rows the
+		// renderer puts there. The tab line is the banner's last row and the
+		// first workflow follows it.
+		theme := styles.NewTheme(styles.Themes[m.themeIdx])
+		listInner := m.listInnerWidth()
+		dashboardFirstMissionRow := dashboardBannerRows(theme, listInner)
+		dashboardTabRow := dashboardFirstMissionRow - 1
 		if contentRow == dashboardTabRow {
 			relativeX := msg.X - layout.listX - 2
 			if relativeX >= 39 {
@@ -980,10 +980,10 @@ func (m *Model) handleListClick(msg tea.MouseMsg, layout mouseUILayout, doubleCl
 		}
 		visibleRow := (contentRow - dashboardFirstMissionRow) / 2
 		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
-		start := 0
-		if m.selectedMissionIdx >= 5 {
-			start = m.selectedMissionIdx - 4
-		}
+		// The same window the renderer drew, computed the same way from the same
+		// panel height. Assuming a fixed five rows here meant a click landed on a
+		// different workflow than the one under the pointer on any taller panel.
+		start, _ := missionWindow(theme, listInner, m.listPanelHeight(), len(missions), m.selectedMissionIdx)
 		idx := start + visibleRow
 		if idx < 0 || idx >= len(missions) {
 			return m, nil
@@ -993,12 +993,20 @@ func (m *Model) handleListClick(msg tea.MouseMsg, layout mouseUILayout, doubleCl
 			return m.activateSelectedItem()
 		}
 	case viewIssues:
-		row := contentRow - 1
+		row := contentRow - listHeaderRows
 		treeRows := buildIssueTree(m.issues)
-		if row < 0 || row >= min(pageSize, len(treeRows)-m.currentPage*pageSize) {
+		selectedTreeIdx := 0
+		for ti, treeRow := range treeRows {
+			if treeRow.originalIdx == m.selectedIssueIdx {
+				selectedTreeIdx = ti
+				break
+			}
+		}
+		start, count := m.listRowWindow(len(treeRows), selectedTreeIdx)
+		if row < 0 || row >= count {
 			return m, nil
 		}
-		treeIdx := m.currentPage*pageSize + row
+		treeIdx := start + row
 		if treeIdx < len(treeRows) {
 			m.selectedIssueIdx = treeRows[treeIdx].originalIdx
 			if doubleClick {
@@ -1006,9 +1014,13 @@ func (m *Model) handleListClick(msg tea.MouseMsg, layout mouseUILayout, doubleCl
 			}
 		}
 	case viewPRs:
-		row := contentRow - 1
-		idx := m.currentPage*pageSize + row
-		if row < 0 || idx >= len(m.prs) {
+		row := contentRow - listHeaderRows
+		start, count := m.listRowWindow(len(m.prs), m.selectedPRIdx)
+		if row < 0 || row >= count {
+			return m, nil
+		}
+		idx := start + row
+		if idx >= len(m.prs) {
 			return m, nil
 		}
 		m.selectedPRIdx = idx
@@ -1016,13 +1028,8 @@ func (m *Model) handleListClick(msg tea.MouseMsg, layout mouseUILayout, doubleCl
 			return m.activateSelectedItem()
 		}
 	default:
-		row := contentRow - 1
-		start := 0
-		panelHeight := m.heightOrDefault() - fixedChromeRows
-		maxItems := panelHeight - 1
-		if maxItems > 0 && m.selectedIdx >= maxItems {
-			start = m.selectedIdx - maxItems + 1
-		}
+		row := contentRow - listHeaderRows
+		start, _ := m.listRowWindow(len(m.Worktrees), m.selectedIdx)
 		idx := start + row
 		if row < 0 || idx >= len(m.Worktrees) {
 			return m, nil
@@ -1308,17 +1315,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.view = viewWorktrees
 				m.ctxScrollOffset = 0
 				m.contextActionIdx = 0
-				m.currentPage = 0
 			case "i", "I":
 				m.view = viewIssues
 				m.ctxScrollOffset = 0
 				m.contextActionIdx = 0
-				m.currentPage = 0
 			case "p", "P":
 				m.view = viewPRs
 				m.ctxScrollOffset = 0
 				m.contextActionIdx = 0
-				m.currentPage = 0
 			case "r", "R":
 				if m.syncing {
 					return m, nil
@@ -1724,7 +1728,7 @@ func (m *Model) View() string {
 	if actionIdx >= len(actions) {
 		actionIdx = max(0, len(actions)-1)
 	}
-	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.currentPage, m.sessions, func() *domain.ExternalIntegration {
+	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, func() *domain.ExternalIntegration {
 		if m.herdrSnapshot != nil {
 			return &m.herdrSnapshot.Integration
 		}
@@ -3299,56 +3303,52 @@ func (m *Model) clampSelectedIdx() {
 
 func (m *Model) clampIssueIdx() {
 	if len(m.issues) == 0 {
-		m.selectedIssueIdx = 0
-		m.syncPageToSelection()
+		m.selectedIssueIdx = 0
 		return
 	}
 	if m.selectedIssueIdx >= len(m.issues) {
-		m.selectedIssueIdx = len(m.issues) - 1
-		m.syncPageToSelection()
+		m.selectedIssueIdx = len(m.issues) - 1
 	}
 }
 
 func (m *Model) clampPRIdx() {
 	if len(m.prs) == 0 {
-		m.selectedPRIdx = 0
-		m.syncPageToSelection()
+		m.selectedPRIdx = 0
 		return
 	}
 	if m.selectedPRIdx >= len(m.prs) {
-		m.selectedPRIdx = len(m.prs) - 1
-		m.syncPageToSelection()
+		m.selectedPRIdx = len(m.prs) - 1
 	}
 }
 
-// nextPage advances to the next page for the current list view (issues or PRs).
+// nextPage moves the selection a screenful down the current list view.
+//
+// The lists used to be drawn one fixed page of fifty at a time while also
+// scrolling within that page, so two offsets described one list and a click or a
+// keypress could be answered by either of them. There is now a single window,
+// sized to the panel, and the page keys move the selection through it.
 func (m *Model) nextPage() {
 	switch m.view {
 	case viewIssues:
-		maxPage := (len(m.issues) - 1) / pageSize
-		if m.currentPage < maxPage {
-			m.currentPage++
-			m.selectedIssueIdx = m.currentPage * pageSize
+		if len(m.issues) == 0 {
+			return
 		}
+		m.selectedIssueIdx = min(m.selectedIssueIdx+m.listPageStep(len(m.issues)), len(m.issues)-1)
 	case viewPRs:
-		maxPage := (len(m.prs) - 1) / pageSize
-		if m.currentPage < maxPage {
-			m.currentPage++
-			m.selectedPRIdx = m.currentPage * pageSize
+		if len(m.prs) == 0 {
+			return
 		}
+		m.selectedPRIdx = min(m.selectedPRIdx+m.listPageStep(len(m.prs)), len(m.prs)-1)
 	}
 }
 
-// prevPage retreats to the previous page for the current list view.
+// prevPage moves the selection a screenful up the current list view.
 func (m *Model) prevPage() {
-	if m.currentPage > 0 {
-		m.currentPage--
-		switch m.view {
-		case viewIssues:
-			m.selectedIssueIdx = m.currentPage * pageSize
-		case viewPRs:
-			m.selectedPRIdx = m.currentPage * pageSize
-		}
+	switch m.view {
+	case viewIssues:
+		m.selectedIssueIdx = max(m.selectedIssueIdx-m.listPageStep(len(m.issues)), 0)
+	case viewPRs:
+		m.selectedPRIdx = max(m.selectedPRIdx-m.listPageStep(len(m.prs)), 0)
 	}
 }
 
@@ -3382,8 +3382,7 @@ func (m *Model) moveDown() {
 			for ti, r := range tree {
 				if r.originalIdx == m.selectedIssueIdx {
 					if ti < len(tree)-1 {
-						m.selectedIssueIdx = tree[ti+1].originalIdx
-						m.syncPageToSelection()
+						m.selectedIssueIdx = tree[ti+1].originalIdx
 						m.ctxScrollOffset = 0
 					}
 					break
@@ -3433,8 +3432,7 @@ func (m *Model) moveUp() {
 			for ti, r := range tree {
 				if r.originalIdx == m.selectedIssueIdx {
 					if ti > 0 {
-						m.selectedIssueIdx = tree[ti-1].originalIdx
-						m.syncPageToSelection()
+						m.selectedIssueIdx = tree[ti-1].originalIdx
 						m.ctxScrollOffset = 0
 					}
 					break
@@ -3465,7 +3463,6 @@ func (m *Model) fuzzyConfirmSelection() tea.Cmd {
 	case domain.KindWorktree:
 		m.view = viewWorktrees
 		m.ctxScrollOffset = 0
-		m.currentPage = 0
 		if wt, ok := result.Payload.(domain.Worktree); ok {
 			for i, w := range m.Worktrees {
 				if w.Path == wt.Path {
@@ -3477,12 +3474,10 @@ func (m *Model) fuzzyConfirmSelection() tea.Cmd {
 	case domain.KindIssue:
 		m.view = viewIssues
 		m.ctxScrollOffset = 0
-		m.currentPage = 0
 		if iss, ok := result.Payload.(domain.Issue); ok {
 			for i, issue := range m.issues {
 				if issue.Number == iss.Number {
-					m.selectedIssueIdx = i
-					m.syncPageToSelection()
+					m.selectedIssueIdx = i
 					break
 				}
 			}
@@ -3490,12 +3485,10 @@ func (m *Model) fuzzyConfirmSelection() tea.Cmd {
 	case domain.KindPR:
 		m.view = viewPRs
 		m.ctxScrollOffset = 0
-		m.currentPage = 0
 		if pr, ok := result.Payload.(domain.PullRequest); ok {
 			for i, p := range m.prs {
 				if p.Number == pr.Number {
-					m.selectedPRIdx = i
-					m.syncPageToSelection()
+					m.selectedPRIdx = i
 					break
 				}
 			}
@@ -3643,24 +3636,42 @@ func (m *Model) performCleanupCmd(worktreePaths []string, branches []string) tea
 	}
 }
 
-// The issues and pull request lists render one page at a time while the
-// selection moves through the whole list. Nothing kept the two in step, so past
-// the first page the selection walked off the rendered slice: the detail pane
-// followed it, because it reads the selected item directly, while the list
-// carried on drawing page one and appeared frozen.
-//
-// The page is derived from the selection rather than tracked beside it, so the
-// two cannot drift apart again. The explicit page keys move the selection to the
-// start of their page, so they land on the same answer.
-func (m *Model) syncPageToSelection() {
-	switch m.view {
-	case viewIssues:
-		if len(m.issues) > pageSize && m.selectedIssueIdx >= 0 {
-			m.currentPage = m.selectedIssueIdx / pageSize
-		}
-	case viewPRs:
-		if len(m.prs) > pageSize && m.selectedPRIdx >= 0 {
-			m.currentPage = m.selectedPRIdx / pageSize
-		}
+// listPanelHeight reports the inner height of the list panel, derived from the
+// terminal size exactly as the renderer derives it. Zero means no height is
+// known, which is how the renderer is told to draw the list unwindowed.
+func (m *Model) listPanelHeight() int {
+	if h := m.heightOrDefault(); h > fixedChromeRows {
+		return h - fixedChromeRows
 	}
+	return 0
+}
+
+// listInnerWidth reports the inner width of the list panel, again as the
+// renderer derives it.
+func (m *Model) listInnerWidth() int {
+	return computeListInner(m.width)
+}
+
+// listRowWindow reports the window the list panel is showing for a list whose
+// items are one row tall. The renderer and the click hit-test have to agree on
+// it; when they did not, a click selected a different row than the one under the
+// pointer.
+func (m *Model) listRowWindow(total, selected int) (start, count int) {
+	panelHeight := m.listPanelHeight()
+	if panelHeight <= 0 {
+		return 0, total
+	}
+	return listWindow(panelHeight-listHeaderRows, 1, total, selected)
+}
+
+// listPageStep reports how far the page keys move the selection: one screenful
+// of the list, less a row of overlap so the item that was at the edge stays
+// visible and the jump is easy to follow.
+func (m *Model) listPageStep(total int) int {
+	_, count := m.listRowWindow(total, 0)
+	step := count - 1
+	if step < 1 {
+		step = 1
+	}
+	return step
 }

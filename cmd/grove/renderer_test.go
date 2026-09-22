@@ -1914,48 +1914,39 @@ func TestRenderFull_IssueBody_ControlCharsStripped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: Pagination renderer tests
+// List position renderer tests
 // ---------------------------------------------------------------------------
 
-func TestRenderFooterBar_ShowsPageInfo_Issues(t *testing.T) {
+func TestRenderFooterBar_ShowsListPosition_Issues(t *testing.T) {
 	theme := styles.NewTheme("digital-noir")
 	issues := make([]domain.Issue, 120)
 	for i := range issues {
 		issues[i] = domain.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
 	}
 
-	// Page 1 of 3 (items 1-50 of 120)
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, nil, 0)
-	assert.Contains(t, footer, "Page 1/3", "should show page 1/3")
-	assert.Contains(t, footer, "1-50 of 120 issues", "should show item range")
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, 0, nil, 0)
+	assert.Contains(t, footer, "1/120 issues", "should show the selection's place in the list")
 
-	// Page 3 of 3 (items 101-120 of 120)
-	footer2 := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, nil, 2)
-	assert.Contains(t, footer2, "Page 3/3", "should show page 3/3")
-	assert.Contains(t, footer2, "101-120 of 120 issues", "should show last page range")
+	footer2 := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, 119, nil, 0)
+	assert.Contains(t, footer2, "120/120 issues", "should show the last issue as the last of the list")
 }
 
-func TestRenderFooterBar_ShowsPageInfo_PRs(t *testing.T) {
+func TestRenderFooterBar_ShowsListPosition_PRs(t *testing.T) {
 	theme := styles.NewTheme("digital-noir")
 	prs := make([]domain.PullRequest, 60)
 	for i := range prs {
 		prs[i] = domain.PullRequest{Number: i + 1, Title: fmt.Sprintf("PR %d", i+1)}
 	}
 
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewPRs, nil, prs, 1)
-	assert.Contains(t, footer, "Page 2/2", "should show page 2/2")
-	assert.Contains(t, footer, "51-60 of 60 PRs", "should show last PR page range")
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewPRs, nil, 0, prs, 50)
+	assert.Contains(t, footer, "51/60 PRs", "should show the selection's place in the list")
 }
 
-func TestRenderFooterBar_NoPageInfo_WhenListFitsOnOnePage(t *testing.T) {
+func TestRenderFooterBar_NoListPosition_WhenListEmpty(t *testing.T) {
 	theme := styles.NewTheme("digital-noir")
-	issues := make([]domain.Issue, 10)
-	for i := range issues {
-		issues[i] = domain.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
-	}
 
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, nil, 0)
-	assert.NotContains(t, footer, "Page", "no page info when list fits in one page")
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, nil, 0, nil, 0)
+	assert.NotContains(t, footer, "issues", "no position readout when there are no issues")
 }
 
 // ---------------------------------------------------------------------------

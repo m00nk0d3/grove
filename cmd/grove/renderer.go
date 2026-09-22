@@ -132,20 +132,14 @@ func renderSessionBlock(s *domain.Session) string {
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, currentPage int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, selections ...int) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, sessions []domain.Session, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, selections ...int) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
 	theme := styles.NewTheme(styles.Themes[themeIdx])
 
-	navOuter := navPanelInner + panelOverhead
 	ctxInner := computeCtxInner(termWidth)
-	ctxOuter := ctxInner + panelOverhead
-	listOuter := termWidth - navOuter - ctxOuter
-	if listOuter < minPathWidth+panelOverhead {
-		listOuter = minPathWidth + panelOverhead
-	}
-	listInner := listOuter - panelOverhead
+	listInner := computeListInner(termWidth)
 	headerInner := termWidth - headerOverhead
 
 	// panelHeight is the inner content height for all three side panels.
@@ -228,35 +222,6 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	header := renderHeader(repoPath, theme, headerInner, countActiveSessions(sessions), herdrStatus, sandcastleStatus, githubStatus)
 	nav := renderNavRail(theme, panelHeight, view, focused == panelNav)
 
-	// Apply pagination slicing for issue/PR list panels.
-	pageStart := currentPage * pageSize
-	visibleIssues := issues
-	visibleSelectedIssueIdx := selectedIssueIdx
-	if len(issues) > pageSize {
-		end := pageStart + pageSize
-		if end > len(issues) {
-			end = len(issues)
-		}
-		visibleIssues = issues[pageStart:end]
-		visibleSelectedIssueIdx = selectedIssueIdx - pageStart
-		if visibleSelectedIssueIdx < 0 {
-			visibleSelectedIssueIdx = 0
-		}
-	}
-	visiblePRs := prs
-	visibleSelectedPRIdx := selectedPRIdx
-	if len(prs) > pageSize {
-		end := pageStart + pageSize
-		if end > len(prs) {
-			end = len(prs)
-		}
-		visiblePRs = prs[pageStart:end]
-		visibleSelectedPRIdx = selectedPRIdx - pageStart
-		if visibleSelectedPRIdx < 0 {
-			visibleSelectedPRIdx = 0
-		}
-	}
-
 	var list string
 	selectedMissionIdx := 0
 	if len(selections) > 1 {
@@ -270,9 +235,9 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	case viewDashboard:
 		list = renderDashboard(missionState, worktrees, issues, prs, theme, listInner, panelHeight, focused == panelList, sessions, selectedMissionIdx, selectedDashboardTab, dismissed)
 	case viewIssues:
-		list = renderIssueList(visibleIssues, visibleSelectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList, missionState)
+		list = renderIssueList(issues, selectedIssueIdx, worktrees, theme, listInner, panelHeight, focused == panelList, missionState)
 	case viewPRs:
-		list = renderPRList(visiblePRs, visibleSelectedPRIdx, theme, listInner, panelHeight, focused == panelList)
+		list = renderPRList(prs, selectedPRIdx, theme, listInner, panelHeight, focused == panelList)
 	default:
 		list = renderWorktreePanel(worktrees, selectedIdx, theme, listInner, panelHeight, focused == panelList, sessions)
 	}
@@ -294,7 +259,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	))
 	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState, actions, actionIdx)
 	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, nav, list, ctx)
-	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, prs, currentPage)
+	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, selectedIssueIdx, prs, selectedPRIdx)
 	actionBar := renderActionBar(theme, termWidth)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer, actionBar)
@@ -399,19 +364,12 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 	if selectedMissionIdx >= len(missions) {
 		selectedMissionIdx = max(0, len(missions)-1)
 	}
-	const defaultVisibleMissions = 5
-	start := 0
-	end := len(missions)
-	maxItems := len(missions)
-	if panelHeight > 0 {
-		maxItems = panelHeight - 3
-	} else {
-		maxItems = defaultVisibleMissions
-	}
-	if maxItems > 0 && selectedMissionIdx >= maxItems {
-		start = selectedMissionIdx - maxItems + 1
-	}
-	end = min(start+maxItems, len(missions))
+	start, visible := missionWindow(theme, listInner, panelHeight, len(missions), selectedMissionIdx)
+	end := start + visible
+	// The rows are built apart from the banner so the scroll indicator can run
+	// down the list itself rather than the full height of the panel.
+	var rows strings.Builder
+	listWidth := listInner - scrollbarWidth(len(missions), visible)
 	for i := start; i < end; i++ {
 		mission := missions[i]
 		stateStyle := success
@@ -432,7 +390,7 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 				detail = fmt.Sprintf("%s  •  %s", detail, formatFinishedAt(finished, time.Now()))
 			}
 		}
-		nameWidth := listInner - 18
+		nameWidth := listWidth - 18
 		if nameWidth < 12 {
 			nameWidth = 12
 		}
@@ -440,14 +398,21 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 		if focused && i == selectedMissionIdx {
 			cursor = "> "
 		}
-		b.WriteString(fmt.Sprintf("%s%s  %-*s  %s\n",
+		rows.WriteString(fmt.Sprintf("%s%s  %-*s  %s\n",
 			cursor,
 			stateStyle.Render("●"),
 			nameWidth,
 			truncateStr(mission.label, nameWidth),
 			stateStyle.Render(strings.ToUpper(defaultStatus(mission.status))),
 		))
-		b.WriteString(muted.Render(fmt.Sprintf("     %s", detail)))
+		rows.WriteString(muted.Render(fmt.Sprintf("     %s", detail)))
+		rows.WriteString("\n")
+	}
+	if visible > 0 {
+		b.WriteString(attachScrollbar(
+			strings.TrimRight(rows.String(), "\n"),
+			0, len(missions), visible, start, theme,
+		))
 		b.WriteString("\n")
 	}
 	if len(missions) == 0 {
@@ -460,23 +425,18 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 		st = theme.MutedBorder(st)
 	}
 	if panelHeight > 0 {
-		content := strings.TrimRight(b.String(), "\n")
 		if len(missions) > 0 {
 			b.WriteString("\n")
 			b.WriteString(muted.Render("────────────────────────────────"))
 			b.WriteString("\n↑↓ navigate  •  [m] dismiss done  •  [x] remove  •  [r] retry")
 		}
-		content = strings.TrimRight(b.String(), "\n")
-		if maxLines := panelHeight - 5; len(strings.Split(content, "\n")) > maxLines {
-			lines := strings.Split(content, "\n")
-			if selectedMissionIdx >= 0 && selectedMissionIdx < len(lines) {
-				start := max(0, selectedMissionIdx-(maxLines/2))
-				end := min(len(lines), start+maxLines)
-				content = strings.Join(lines[start:end], "\n")
-			} else {
-				content = strings.Join(lines[:min(len(lines), maxLines)], "\n")
-			}
-		}
+		// The mission window is already sized to the rows left over after the
+		// banner and the hints, so this clip only bites on a panel too short to
+		// hold the banner at all, where it keeps the panel's own border rather
+		// than letting the overflow push it off screen. The clip that used to
+		// stand here sliced by line number using the mission index, so selecting
+		// a workflow cut the banner off at an arbitrary point.
+		content := clipContent(strings.TrimRight(b.String(), "\n"), 0, panelHeight)
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 		return st.Render(content)
 	}
@@ -573,6 +533,156 @@ func isDismissed(workflow domain.WorkflowRunRef, dismissed map[string]bool) bool
 		runID = workflow.WorkflowID
 	}
 	return runID != "" && dismissed[runID]
+}
+
+const (
+	// missionRowsPerItem: a workflow occupies two rows, its name and the detail
+	// line beneath it.
+	missionRowsPerItem = 2
+	// defaultVisibleMissions is used only when no panel height is known, which
+	// is the case in tests and on a zero-height terminal.
+	defaultVisibleMissions = 5
+	// dashboardHintRows: the blank line, rule and key hints below the list.
+	dashboardHintRows = 3
+	// listHeaderRows: the column header every table list draws above its rows.
+	listHeaderRows = 1
+)
+
+// computeListInner reports the inner width of the list panel for a terminal of
+// the given width. The click hit-test sizes its windows from the same figure the
+// renderer draws with.
+func computeListInner(termWidth int) int {
+	if termWidth <= 0 {
+		termWidth = defaultTermWidth
+	}
+	navOuter := navPanelInner + panelOverhead
+	ctxOuter := computeCtxInner(termWidth) + panelOverhead
+	listOuter := termWidth - navOuter - ctxOuter
+	if listOuter < minPathWidth+panelOverhead {
+		listOuter = minPathWidth + panelOverhead
+	}
+	return listOuter - panelOverhead
+}
+
+// listWindow reports which slice of a list is on screen and the index it starts
+// at, sized to the space available and always containing the selected item.
+//
+// available is a budget in terminal rows and rowsPerItem is how many rows one
+// item draws. Sizing a window in items against a budget measured in rows is what
+// let these lists draw past the bottom of their panel; it also stopped them
+// scrolling, because a window too large to fit is a window large enough to hold
+// every item, so the offset never moved off zero.
+func listWindow(available, rowsPerItem, total, selected int) (start, count int) {
+	if rowsPerItem < 1 {
+		rowsPerItem = 1
+	}
+	count = available / rowsPerItem
+	if count < 1 {
+		count = 1
+	}
+	if count > total {
+		count = total
+	}
+	if count <= 0 {
+		return 0, 0
+	}
+	if selected >= count {
+		start = selected - count + 1
+	}
+	if start+count > total {
+		start = total - count
+	}
+	if start < 0 {
+		start = 0
+	}
+	return start, count
+}
+
+// dashboardBannerRows reports how many rows the dashboard draws above its
+// workflow list. Only the card block's height varies, so it is measured; the
+// rest is a fixed sequence of lines. The renderer and the click hit-test both
+// size the list from this, and TestDashboardBannerRowsMatchesRender pins it
+// against what the dashboard actually renders.
+func dashboardBannerRows(theme styles.Theme, listInner int) int {
+	cardWidth := listInner / 4
+	if cardWidth < 12 {
+		cardWidth = 12
+	}
+	// Title, system line and a blank; the cards; a blank; the pulse header, its
+	// three rows and a blank; the tab line.
+	return 3 + lipgloss.Height(renderDashboardCard(theme, "WORKTREES", 0, cardWidth)) + 7
+}
+
+// missionWindow reports which slice of the workflow list the dashboard shows.
+// The renderer and the click hit-test both call it, because when they disagreed
+// a click landed on a different workflow than the one under the pointer.
+func missionWindow(theme styles.Theme, listInner, panelHeight, total, selected int) (start, count int) {
+	available := defaultVisibleMissions * missionRowsPerItem
+	if panelHeight > 0 {
+		available = panelHeight - dashboardBannerRows(theme, listInner) - dashboardHintRows
+	}
+	return listWindow(available, missionRowsPerItem, total, selected)
+}
+
+// scrollbarColumn renders the one-column scroll indicator drawn down the right
+// edge of a list: a track whose thumb is as long as the visible share of the
+// list and sits as far down as the window does. It returns an empty string when
+// the whole list fits, so a short list keeps the full panel width for itself.
+func scrollbarColumn(rows, total, visible, start int, theme styles.Theme) string {
+	if rows < 1 || visible < 1 || total <= visible {
+		return ""
+	}
+	thumb := rows * visible / total
+	if thumb < 1 {
+		thumb = 1
+	}
+	if thumb > rows {
+		thumb = rows
+	}
+	// Spread the offset over the scrollable range, not the whole list, so the
+	// last window puts the thumb flush with the bottom of the track.
+	top := 0
+	if maxStart := total - visible; maxStart > 0 {
+		top = start * (rows - thumb) / maxStart
+	}
+	if top > rows-thumb {
+		top = rows - thumb
+	}
+	thumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent()))
+	trackStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
+	lines := make([]string, rows)
+	for i := range lines {
+		if i >= top && i < top+thumb {
+			lines[i] = thumbStyle.Render("█")
+		} else {
+			lines[i] = trackStyle.Render("│")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// scrollbarWidth reports the columns a list must give up to its scroll
+// indicator, so the body is built at the width it will actually be drawn at.
+func scrollbarWidth(total, visible int) int {
+	if visible >= 1 && total > visible {
+		return 1
+	}
+	return 0
+}
+
+// attachScrollbar joins the scroll indicator to the right of a list body,
+// holding it clear of the headerRows the body draws above its first item.
+func attachScrollbar(body string, headerRows, total, visible, start int, theme styles.Theme) string {
+	// The track is measured from the body rather than from the item count, so it
+	// stays right for a list whose items are more than one row tall.
+	bar := scrollbarColumn(lipgloss.Height(body)-headerRows, total, visible, start, theme)
+	if bar == "" {
+		return body
+	}
+	if headerRows > 0 {
+		bar = strings.Repeat("\n", headerRows) + bar
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, body, bar)
 }
 
 // missionFinishedAt reports when a run stopped. The runtime rewrites the
@@ -834,27 +944,20 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 		ghidW      = 6
 		fixedTotal = cursorW + pathW + statusW + updatedW + ghidW // 58
 	)
-	nameW := listInner - fixedTotal
-	if nameW < 10 {
-		nameW = 10
-	}
-
-	// Cap rendered rows and virtual-scroll so selectedIdx is always in the window.
+	// Virtual-scroll so selectedIdx is always in the window. The header row takes
+	// one of the panel's lines.
 	startIdx := 0
 	visible := worktrees
 	if panelHeight > 0 {
-		maxItems := panelHeight - 1
-		if maxItems < 0 {
-			maxItems = 0
-		}
-		if maxItems > 0 && selectedIdx >= maxItems {
-			startIdx = selectedIdx - maxItems + 1
-		}
-		end := startIdx + maxItems
-		if end > len(worktrees) {
-			end = len(worktrees)
-		}
-		visible = worktrees[startIdx:end]
+		start, count := listWindow(panelHeight-listHeaderRows, 1, len(worktrees), selectedIdx)
+		startIdx = start
+		visible = worktrees[start : start+count]
+	}
+
+	bodyWidth := listInner - scrollbarWidth(len(worktrees), len(visible))
+	nameW := bodyWidth - fixedTotal
+	if nameW < 10 {
+		nameW = 10
 	}
 
 	type wtEntry struct {
@@ -939,12 +1042,14 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 		BorderLeft(false).BorderRight(false).
 		BorderHeader(false).BorderColumn(false).BorderRow(false).
 		Wrap(false).
-		Width(listInner).
+		Width(bodyWidth).
 		StyleFunc(colStyle)
 
 	for _, e := range entries {
 		t.Row(e.cursor, e.name, e.path, e.status, e.updated, e.ghid)
 	}
+
+	body := attachScrollbar(t.Render(), listHeaderRows, len(worktrees), len(visible), startIdx, theme)
 
 	st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
 	if !focused {
@@ -953,7 +1058,7 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(t.Render())
+	return st.Render(body)
 }
 
 func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session, missionState *domain.MissionControlState, actions []contextActionOption, actionIdx int) string {
@@ -1298,11 +1403,6 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 		labelsColW = 20
 		fixedTotal = numColW + statusColW + assignColW + labelsColW // 48
 	)
-	titleColW := listInner - fixedTotal
-	if titleColW < 10 {
-		titleColW = 10
-	}
-
 	// Build tree-ordered rows and find the tree index for the selected issue.
 	treeRows := buildIssueTree(issues)
 	selectedTreeIdx := 0
@@ -1313,23 +1413,22 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 		}
 	}
 
-	// Cap rendered rows and virtual-scroll so selectedTreeIdx is always in the window.
-	// The header row occupies 1 line, so at most panelHeight-1 data rows fit.
+	// Scroll the whole list as one run of items, keeping the selection in view.
+	// The header row takes one of the panel's lines.
 	treeStartIdx := 0
 	visible := treeRows
 	if panelHeight > 0 {
-		maxItems := panelHeight - 1
-		if maxItems < 0 {
-			maxItems = 0
-		}
-		if maxItems > 0 && selectedTreeIdx >= maxItems {
-			treeStartIdx = selectedTreeIdx - maxItems + 1
-		}
-		end := treeStartIdx + maxItems
-		if end > len(treeRows) {
-			end = len(treeRows)
-		}
-		visible = treeRows[treeStartIdx:end]
+		start, count := listWindow(panelHeight-listHeaderRows, 1, len(treeRows), selectedTreeIdx)
+		treeStartIdx = start
+		visible = treeRows[start : start+count]
+	}
+
+	// The table is built at the width it will be drawn at, so the scroll
+	// indicator takes its column from the list rather than overflowing the panel.
+	bodyWidth := listInner - scrollbarWidth(len(treeRows), len(visible))
+	titleColW := bodyWidth - fixedTotal
+	if titleColW < 10 {
+		titleColW = 10
 	}
 
 	// Pre-build cell values and capture status per visible row for use in StyleFunc.
@@ -1415,12 +1514,14 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 		BorderLeft(false).BorderRight(false).
 		BorderHeader(false).BorderColumn(false).BorderRow(false).
 		Wrap(false).
-		Width(listInner).
+		Width(bodyWidth).
 		StyleFunc(colStyle)
 
 	for _, e := range entries {
 		t.Row(e.num, e.title, e.status, e.assign, e.labels)
 	}
+
+	body := attachScrollbar(t.Render(), listHeaderRows, len(treeRows), len(visible), treeStartIdx, theme)
 
 	st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
 	if !focused {
@@ -1429,7 +1530,7 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(t.Render())
+	return st.Render(body)
 }
 
 func issueWorkflowStatus(issueNumber int, state *domain.MissionControlState) string {
@@ -1472,27 +1573,20 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 		prStatusColW = 8
 		prFixedTotal = prCursorW + prNumColW + prBranchColW + prAssignColW + prStatusColW
 	)
-	prTitleColW := listInner - prFixedTotal
-	if prTitleColW < 10 {
-		prTitleColW = 10
-	}
-
-	// Virtual-scroll so selectedIdx is always in the window.
+	// Virtual-scroll so selectedIdx is always in the window. The header row takes
+	// one of the panel's lines.
 	prStartIdx := 0
 	visible := prs
 	if panelHeight > 0 {
-		maxItems := panelHeight - 1
-		if maxItems < 0 {
-			maxItems = 0
-		}
-		if maxItems > 0 && selectedIdx >= maxItems {
-			prStartIdx = selectedIdx - maxItems + 1
-		}
-		end := prStartIdx + maxItems
-		if end > len(prs) {
-			end = len(prs)
-		}
-		visible = prs[prStartIdx:end]
+		start, count := listWindow(panelHeight-listHeaderRows, 1, len(prs), selectedIdx)
+		prStartIdx = start
+		visible = prs[start : start+count]
+	}
+
+	bodyWidth := listInner - scrollbarWidth(len(prs), len(visible))
+	prTitleColW := bodyWidth - prFixedTotal
+	if prTitleColW < 10 {
+		prTitleColW = 10
 	}
 
 	type prEntry struct{ cursor, num, title, branch, assign, status string }
@@ -1568,7 +1662,7 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 		BorderLeft(false).BorderRight(false).
 		BorderHeader(false).BorderColumn(false).BorderRow(false).
 		Wrap(false).
-		Width(listInner).
+		Width(bodyWidth).
 		StyleFunc(colStyle)
 
 	for _, e := range entries {
@@ -1579,6 +1673,8 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 		t.Row("", "", "No open PRs.", "", "", "")
 	}
 
+	body := attachScrollbar(t.Render(), listHeaderRows, len(prs), len(visible), prStartIdx, theme)
+
 	st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
 	if !focused {
 		st = theme.MutedBorder(st)
@@ -1586,7 +1682,7 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(t.Render())
+	return st.Render(body)
 }
 
 // clipContent slices content lines for bounded panel rendering.
@@ -1609,7 +1705,7 @@ func clipContent(content string, offset, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderFooterBar(theme styles.Theme, date string, termWidth int, syncing bool, lastSynced time.Time, syncErr error, view activeView, issues []domain.Issue, prs []domain.PullRequest, currentPage int) string {
+func renderFooterBar(theme styles.Theme, date string, termWidth int, syncing bool, lastSynced time.Time, syncErr error, view activeView, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int) string {
 	hints := footerHintsDefault
 	switch view {
 	case viewIssues:
@@ -1633,27 +1729,18 @@ func renderFooterBar(theme styles.Theme, date string, termWidth int, syncing boo
 		}
 	}
 
+	// The lists scroll as one continuous run of items, so the position that
+	// matters is where the selection sits in the whole list, not which fixed
+	// block of fifty it happens to fall in.
 	var pageInfo string
 	switch view {
 	case viewIssues:
-		if len(issues) > pageSize {
-			totalPages := (len(issues) + pageSize - 1) / pageSize
-			start := currentPage*pageSize + 1
-			end := start + pageSize - 1
-			if end > len(issues) {
-				end = len(issues)
-			}
-			pageInfo = fmt.Sprintf(" | Page %d/%d (%d-%d of %d issues)", currentPage+1, totalPages, start, end, len(issues))
+		if len(issues) > 0 {
+			pageInfo = fmt.Sprintf(" | %d/%d issues", min(selectedIssueIdx+1, len(issues)), len(issues))
 		}
 	case viewPRs:
-		if len(prs) > pageSize {
-			totalPages := (len(prs) + pageSize - 1) / pageSize
-			start := currentPage*pageSize + 1
-			end := start + pageSize - 1
-			if end > len(prs) {
-				end = len(prs)
-			}
-			pageInfo = fmt.Sprintf(" | Page %d/%d (%d-%d of %d PRs)", currentPage+1, totalPages, start, end, len(prs))
+		if len(prs) > 0 {
+			pageInfo = fmt.Sprintf(" | %d/%d PRs", min(selectedPRIdx+1, len(prs)), len(prs))
 		}
 	}
 

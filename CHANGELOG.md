@@ -263,6 +263,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The lists scroll, fill their panel, and show where you are in them** —
+  every list panel sized its scroll window differently from what it drew. The
+  dashboard measured its window in workflows against a budget counted in rows,
+  and a workflow occupies two rows, so the window came out roughly twice the
+  panel; the issues and pull request lists rendered a fixed page of fifty while
+  also scrolling inside that page, so two offsets described one list; and the
+  click hit-tests each computed a window again, differently. A window too large
+  to fit is also a window large enough to hold the whole list, so the offset
+  never moved: the lists overflowed their panel and stopped scrolling at the
+  same time, which is why neither the wheel nor `j`/`k` appeared to do anything
+  while the detail pane followed the selection. One window function now sizes
+  every list in rows from the space its panel has, and the renderer and the
+  hit-test both call it. The fifty-item pagination is gone: `n` and PageUp move
+  the selection a screenful at a time, and the footer reports where the
+  selection sits in the whole list. A list with more to show than fits draws a
+  scroll indicator down its right edge.
 - **clean no longer deletes a branch that has an open pull request** — cleanup
   matched branches against merged pull requests by branch name. Release
   tooling reuses one branch for every release, so a name whose earlier

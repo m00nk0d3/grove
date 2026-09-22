@@ -15,6 +15,7 @@ import (
 	"github.com/m00nk0d3/grove/internal/herdr"
 	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
+	"github.com/m00nk0d3/grove/internal/tui/styles"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2130,35 +2131,36 @@ func TestModel_ErrorModalClearsAfter5s(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPagination_NextPageAdvancesIndex(t *testing.T) {
-	// Build a model with 120 issues (> pageSize of 50)
 	m := NewModel()
 	for i := 1; i <= 120; i++ {
 		m.issues = append(m.issues, domain.Issue{Number: i, Title: fmt.Sprintf("Issue %d", i)})
 	}
 	m.view = viewIssues
+	m.height = 30
+	step := m.listPageStep(len(m.issues))
+	require.Greater(t, step, 1, "a 30-row terminal shows more than two issues at a time")
 
-	assert.Equal(t, 0, m.currentPage, "starts on page 0")
+	assert.Equal(t, 0, m.selectedIssueIdx, "starts at the top of the list")
 
-	// Simulate pressing n (next page)
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m2 := updated.(*Model)
-	assert.Equal(t, 1, m2.currentPage, "after n: page 1")
-	assert.Equal(t, pageSize, m2.selectedIssueIdx, "selectedIssueIdx jumps to page start")
+	assert.Equal(t, step, m2.selectedIssueIdx, "n moves one screenful down")
 
-	// Pressing n again (page 2)
 	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m3 := updated2.(*Model)
-	assert.Equal(t, 2, m3.currentPage, "after second n: page 2")
+	assert.Equal(t, 2*step, m3.selectedIssueIdx, "a second n moves another screenful")
 
-	// Pressing n at last page doesn't go further
-	updated3, _ := m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m4 := updated3.(*Model)
-	assert.Equal(t, 2, m4.currentPage, "clamped at last page")
+	// Walk to the end and confirm it clamps at the last issue rather than past it.
+	m4 := m3
+	for i := 0; i < len(m.issues)/step+2; i++ {
+		updated, _ := m4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+		m4 = updated.(*Model)
+	}
+	assert.Equal(t, len(m.issues)-1, m4.selectedIssueIdx, "clamped at the last issue")
 
-	// Press PageUp to go back
 	updated4, _ := m4.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 	m5 := updated4.(*Model)
-	assert.Equal(t, 1, m5.currentPage, "PageUp: back to page 1")
+	assert.Equal(t, len(m.issues)-1-step, m5.selectedIssueIdx, "PageUp moves one screenful back")
 }
 
 func TestDebounce_CollapsesRapidUpdates(t *testing.T) {
@@ -2201,13 +2203,12 @@ func TestPagination_PrevPageClampsAtZero(t *testing.T) {
 		m.issues = append(m.issues, domain.Issue{Number: i, Title: fmt.Sprintf("Issue %d", i)})
 	}
 	m.view = viewIssues
-	m.currentPage = 0
+	m.height = 30
 
-	// Pressing PageUp on page 0 should stay at page 0 (no underflow)
+	// Pressing PageUp at the top of the list stays there (no underflow).
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 	m2 := updated.(*Model)
-	assert.Equal(t, 0, m2.currentPage, "PageUp on first page stays at page 0")
-	assert.Equal(t, 0, m2.selectedIssueIdx, "selectedIssueIdx unchanged when already at first page")
+	assert.Equal(t, 0, m2.selectedIssueIdx, "selectedIssueIdx unchanged when already at the top")
 }
 
 // ---------------------------------------------------------------------------
@@ -3842,7 +3843,6 @@ func TestFuzzyConfirmSelection_WorktreeSelection(t *testing.T) {
 	assert.Equal(t, viewWorktrees, m.view, "should switch to worktrees view")
 	assert.Equal(t, 1, m.selectedIdx, "should select /wt/beta (index 1)")
 	assert.Equal(t, 0, m.ctxScrollOffset)
-	assert.Equal(t, 0, m.currentPage)
 }
 
 func TestFuzzyConfirmSelection_IssueSelection(t *testing.T) {
@@ -4409,53 +4409,35 @@ func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
 	}
 }
 
-func TestModel_IssueListPageFollowsSelection(t *testing.T) {
+// The lists once rendered a fixed page of fifty while the selection moved
+// through the whole list, so past the first page the list appeared frozen: the
+// detail pane followed the selection, because it reads the selected item
+// directly, while the list carried on drawing page one. There is now one window,
+// and what it has to guarantee is that the selected row is in it.
+func TestRenderIssueList_SelectionIsAlwaysInTheWindow(t *testing.T) {
 	issues := make([]domain.Issue, 120)
 	for i := range issues {
 		issues[i] = domain.Issue{Number: i + 1, Title: fmt.Sprintf("issue %d", i+1)}
 	}
-	m := &Model{view: viewIssues, issues: issues}
+	theme := styles.NewTheme(styles.Themes[0])
 
-	// Selecting inside the first page leaves it alone.
-	m.selectedIssueIdx = 10
-	m.syncPageToSelection()
-	assert.Equal(t, 0, m.currentPage)
-
-	// Moving past the end of a page brings the page with it. Without this the
-	// detail pane followed the selection while the list kept drawing page one.
-	m.selectedIssueIdx = 50
-	m.syncPageToSelection()
-	assert.Equal(t, 1, m.currentPage)
-
-	m.selectedIssueIdx = 119
-	m.syncPageToSelection()
-	assert.Equal(t, 2, m.currentPage)
-
-	// And coming back up brings it back.
-	m.selectedIssueIdx = 3
-	m.syncPageToSelection()
-	assert.Equal(t, 0, m.currentPage)
-
-	// A list that fits on one page never leaves it.
-	short := &Model{view: viewIssues, issues: issues[:10], currentPage: 0, selectedIssueIdx: 9}
-	short.syncPageToSelection()
-	assert.Equal(t, 0, short.currentPage)
+	for _, selected := range []int{0, 1, 17, 49, 50, 51, 99, 119} {
+		out := renderIssueList(issues, selected, nil, theme, 120, 20, true)
+		assert.Contains(t, out, fmt.Sprintf("issue %d", issues[selected].Number),
+			"issue at index %d should be on screen when it is selected", selected)
+	}
 }
 
-func TestModel_PullRequestListPageFollowsSelection(t *testing.T) {
+func TestRenderPRList_SelectionIsAlwaysInTheWindow(t *testing.T) {
 	prs := make([]domain.PullRequest, 120)
 	for i := range prs {
-		prs[i] = domain.PullRequest{Number: i + 1}
+		prs[i] = domain.PullRequest{Number: i + 1, Title: fmt.Sprintf("pull request %d", i+1)}
 	}
-	m := &Model{view: viewPRs, prs: prs}
+	theme := styles.NewTheme(styles.Themes[0])
 
-	m.selectedPRIdx = 60
-	m.syncPageToSelection()
-	assert.Equal(t, 1, m.currentPage)
-
-	// The issues page is not moved by a pull request selection, and vice versa.
-	m.view = viewIssues
-	m.selectedPRIdx = 110
-	m.syncPageToSelection()
-	assert.Equal(t, 1, m.currentPage)
+	for _, selected := range []int{0, 1, 17, 49, 50, 51, 99, 119} {
+		out := renderPRList(prs, selected, theme, 120, 20, true)
+		assert.Contains(t, out, fmt.Sprintf("pull request %d", prs[selected].Number),
+			"pull request at index %d should be on screen when it is selected", selected)
+	}
 }
