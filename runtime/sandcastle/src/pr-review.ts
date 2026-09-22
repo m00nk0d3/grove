@@ -17,11 +17,16 @@ import {
 } from "./pull-request-review.js";
 import {
   detectRepo,
+  getProjectProfilePath,
   getWorkflowStatePath,
+  pullRequestChangedFiles,
   requireCleanWorktree,
   resolveAgentBackend,
   runCommand,
 } from "./workflow-utils.js";
+import { detectStackProjects } from "./stack-detector.js";
+import { loadProfile } from "./project-profile.js";
+import { personaFor } from "./specialists.js";
 
 interface ReviewCliOptions {
   requestedRepo: string | null;
@@ -214,11 +219,24 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
 
   console.log(`\x1b[32m[Pull Request]\x1b[0m ${repo}#${prNumber}: ${metadata.title}`);
   console.log(`\x1b[36m[Worktree]\x1b[0m ${worktreePath}`);
+
+  // A pull request confined to one project is reviewed by that project's
+  // specialist, rather than by a composite describing trees the diff never
+  // touches.
+  const projects = detectStackProjects(worktreePath);
+  const reviewPersona = personaFor(
+    "review",
+    projects,
+    loadProfile(getProjectProfilePath(repoRoot), worktreePath, projects).profile,
+    pullRequestChangedFiles(worktreePath, metadata.baseRefName),
+  );
+
   fs.rmSync(verdictPath, { force: true });
   try {
     runSpecialistInPane({
       role: "pull-request-reviewer",
       promptText: buildPullRequestReviewPrompt(
+        reviewPersona,
         repo,
         prNumber,
         JSON.stringify(metadata, null, 2),

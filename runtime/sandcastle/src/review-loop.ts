@@ -38,6 +38,39 @@ export interface AuditVerdict {
   blockers: string[];
 }
 
+// Several reviewers produce several verdicts, and the implementation specialist
+// reads one. Combining them keeps each finding attributed to the concern that
+// raised it, so a fix knows which checklist it is answering.
+export function combineAuditVerdicts(
+  results: { id: string; title: string; verdict: AuditVerdict }[],
+  skipped: { id: string; title: string; matchCount: number }[] = [],
+): AuditVerdict {
+  const blockers: string[] = [];
+  const reviewedAreas: string[] = [];
+  const summaries: string[] = [];
+
+  for (const { id, title, verdict } of results) {
+    for (const blocker of verdict.blockers) blockers.push(`${id} | ${blocker}`);
+    for (const area of verdict.reviewedAreas) reviewedAreas.push(`${id} | ${area}`);
+    summaries.push(`${title}: ${verdict.summary}`);
+  }
+
+  // A concern the cap left out is recorded where the implementer and any later
+  // reader will see it, rather than only in the console.
+  for (const pass of skipped) {
+    reviewedAreas.push(
+      `${pass.id} | not reviewed: the review cap was reached (matched ${pass.matchCount} changed ${pass.matchCount === 1 ? "file" : "files"})`,
+    );
+  }
+
+  return {
+    verdict: blockers.length > 0 ? "blockers" : "approved",
+    summary: summaries.join(" ") || "No concerns were raised by this change.",
+    reviewedAreas,
+    blockers,
+  };
+}
+
 export function readAuditVerdict(
   verdictPath: string,
   label = "audit",

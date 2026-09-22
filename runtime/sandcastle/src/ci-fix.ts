@@ -5,10 +5,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseWorktrees } from "./cleanup.js";
+import { detectStackProjects } from "./stack-detector.js";
+import { loadProfile } from "./project-profile.js";
+import { personaFor } from "./specialists.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import { runTrackedWorkflow } from "./runtime-state.js";
 import {
   detectRepo,
+  getProjectProfilePath,
+  pullRequestChangedFiles,
   requireCleanWorktree,
   runCommand,
   verifyWorktree,
@@ -20,6 +25,7 @@ export interface PullRequestMetadata {
   url: string;
   headRefName: string;
   headRefOid: string;
+  baseRefName: string;
   isCrossRepository: boolean;
   state: string;
   headRepository: { name?: string; nameWithOwner?: string } | null;
@@ -113,11 +119,14 @@ export function extractActionsRunIds(checks: PullRequestCheck[]): string[] {
 }
 
 export function buildCiFixPrompt(
+  persona: string,
   metadata: PullRequestMetadata,
   failedChecks: PullRequestCheck[],
   diagnosticsPath: string,
 ): string {
   return `
+${persona}
+
 You are fixing CI failures for pull request #${metadata.number}: ${metadata.title}
 PR: ${metadata.url}
 Head branch: ${metadata.headRefName}
@@ -157,7 +166,7 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     "--repo",
     repo,
     "--json",
-    "number,title,url,headRefName,headRefOid,isCrossRepository,state,headRepository,headRepositoryOwner",
+    "number,title,url,headRefName,headRefOid,baseRefName,isCrossRepository,state,headRepository,headRepositoryOwner",
   ]);
   const value = JSON.parse(output) as Partial<PullRequestMetadata>;
   if (
@@ -166,10 +175,13 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     typeof value.url !== "string" ||
     typeof value.headRefName !== "string" ||
     typeof value.headRefOid !== "string" ||
+    typeof value.baseRefName !== "string" ||
     typeof value.isCrossRepository !== "boolean" ||
-    typeof value.state !== "string" ||
-    !value.headRepository ||
-    typeof value.headRepository.nameWithOwner !== "string"
+    typeof value.state !== "string"
+    // The head repository is deliberately not required here. GitHub omits it
+    // once the fork it lived in is deleted, and isCrossRepository remains the
+    // authoritative answer, so its absence belongs to the fork check rather
+    // than being reported as malformed metadata.
   ) {
     throw new Error(`GitHub returned invalid metadata for ${repo}#${prNumber}.`);
   }
@@ -206,6 +218,108 @@ export function safePathComponent(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+export type WorktreeDrift =
+  | { kind: "current" }
+  | { kind: "behind"; behind: number }
+  | { kind: "ahead"; ahead: number }
+  | { kind: "diverged"; ahead: number; behind: number }
+  | { kind: "unreachable" };
+
+// How the checkout stands relative to what the pull request actually contains.
+// The callers fetch before reaching here, so a head that is still unknown was
+// rewritten rather than merely missed.
+export function classifyWorktreeDrift(
+  worktreePath: string,
+  headRefOid: string,
+): WorktreeDrift {
+  const head = runCommand("git", ["rev-parse", "HEAD"], { cwd: worktreePath });
+  if (head === headRefOid) {
+    return { kind: "current" };
+  }
+  const known =
+    spawnSync("git", ["cat-file", "-e", `${headRefOid}^{commit}`], {
+      cwd: worktreePath,
+    }).status === 0;
+  if (!known) {
+    return { kind: "unreachable" };
+  }
+  const [ahead, behind] = runCommand(
+    "git",
+    ["rev-list", "--left-right", "--count", `HEAD...${headRefOid}`],
+    { cwd: worktreePath },
+  )
+    .split(/\s+/)
+    .map((value) => Number(value));
+  if (ahead === 0) {
+    return { kind: "behind", behind };
+  }
+  if (behind === 0) {
+    return { kind: "ahead", ahead };
+  }
+  return { kind: "diverged", ahead, behind };
+}
+
+function commitCount(count: number): string {
+  return `${count} commit${count === 1 ? "" : "s"}`;
+}
+
+// A pull request branch moves while work is in flight: a suggestion committed
+// from the web interface, a push from another checkout, an assessment asked for
+// mid-review. A worktree that is merely behind is the ordinary case and only
+// needs catching up. Every other shape of drift means the checkout holds
+// something the pull request does not, which is a decision for the caller.
+export function syncWorktreeToPullRequestHead(
+  worktreePath: string,
+  headRefOid: string,
+  commandName = "ci",
+): void {
+  const drift = classifyWorktreeDrift(worktreePath, headRefOid);
+  if (drift.kind === "current") {
+    return;
+  }
+  const head = headRefOid.slice(0, 7);
+  if (drift.kind === "unreachable") {
+    throw new Error(
+      `The pull request head ${head} is not in this repository, so the worktree cannot be moved to it:\n` +
+        `  ${worktreePath}\n` +
+        "The branch was most likely force-pushed after this checkout last fetched.\n" +
+        `Run \`git fetch --prune origin\` and start ${commandName} again.`,
+    );
+  }
+  if (drift.kind === "ahead") {
+    throw new Error(
+      `This worktree is ${commitCount(drift.ahead)} ahead of the pull request head ${head}:\n` +
+        `  ${worktreePath}\n` +
+        `Those commits are not in the pull request, so ${commandName} would work on code no reviewer has seen.\n` +
+        "Push them, or reset the worktree to the pull request head, then run it again.",
+    );
+  }
+  if (drift.kind === "diverged") {
+    throw new Error(
+      `This worktree and the pull request head ${head} have diverged: ` +
+        `${commitCount(drift.ahead)} here, ${commitCount(drift.behind)} on the pull request.\n` +
+        `  ${worktreePath}\n` +
+        "A rebase or an amend on one side leaves no safe automatic answer.\n" +
+        "Reconcile the branch by hand, then run it again.",
+    );
+  }
+  const dirty = runCommand("git", ["status", "--porcelain"], {
+    cwd: worktreePath,
+  });
+  if (dirty) {
+    throw new Error(
+      `The pull request head ${head} is ${commitCount(drift.behind)} ahead of this worktree, ` +
+        "which has uncommitted changes:\n" +
+        `  ${worktreePath}\n` +
+        "Commit or stash them so the worktree can be fast-forwarded, then run it again.",
+    );
+  }
+  runCommand("git", ["merge", "--ff-only", headRefOid], { cwd: worktreePath });
+  console.log(
+    `\x1b[32m[Worktree]\x1b[0m Fast-forwarded ${commitCount(drift.behind)} to the pull request head ${head}.`,
+  );
+}
+
 // The worktree is keyed by the pull request branch, so a second workflow on
 // the same pull request reuses the checkout the first one made.
 export function prepareWorktree(
@@ -221,12 +335,11 @@ export function prepareWorktree(
     (worktree) => worktree.branch === metadata.headRefName,
   );
   if (existing) {
-    const head = runCommand("git", ["rev-parse", "HEAD"], { cwd: existing.path });
-    if (head !== metadata.headRefOid) {
-      throw new Error(
-        `Existing worktree is not at the PR head ${metadata.headRefOid}: ${existing.path}`,
-      );
-    }
+    syncWorktreeToPullRequestHead(
+      existing.path,
+      metadata.headRefOid,
+      subdirectory,
+    );
     const ciRoot = path.join(repoRoot, ".sandcastle", subdirectory);
     const relativeToCiRoot = path.relative(ciRoot, existing.path);
     const isCiWorktree =
@@ -386,9 +499,22 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   console.log();
 
+  const projects = detectStackProjects(targetDir);
+  const profile = loadProfile(
+    getProjectProfilePath(repoRoot),
+    targetDir,
+    projects,
+  ).profile;
+  const persona = personaFor(
+    "implementation",
+    projects,
+    profile,
+    pullRequestChangedFiles(targetDir, metadata.baseRefName),
+  );
+
   runSpecialistInPane({
     role: "ci-fixer",
-    promptText: buildCiFixPrompt(metadata, failedChecks, diagnosticsPath),
+    promptText: buildCiFixPrompt(persona, metadata, failedChecks, diagnosticsPath),
     targetDir,
     issueOrPrNumber: prNumber,
   });
@@ -403,7 +529,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     );
   }
 
-  verifyWorktree(targetDir);
+  verifyWorktree(targetDir, undefined, profile);
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
   runCommand("git", ["add", "-A"], { cwd: targetDir });
   runCommand(

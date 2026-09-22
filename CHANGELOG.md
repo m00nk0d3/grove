@@ -68,6 +68,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   builds a changelog. The rewrite happens only while the branch has never
   been pushed, only when the subject is still the placeholder, and never when
   it cannot be proven unpublished.
+- **`resolve` no longer calls your own pull requests forks** — the fork check
+  compared the head repository name `gh pr view` returns, which is an empty
+  string, so every same-repository pull request was rejected with "comes from a
+  fork". `ci` and `address` were fixed earlier; `resolve` now shares that check
+  instead of keeping its own copy. `isCrossRepository` is the authority, and a
+  head repository is only compared by name when GitHub actually identified one.
+  A pull request whose fork has since been deleted reports as a fork rather
+  than as malformed metadata.
+- **Specialists know the framework, not only the language** — the prompt
+  engineer was never asked about frameworks, so a React app and a plain Node
+  service got the same TypeScript specialist, and Alembic, SQLAlchemy and
+  Entity Framework were invisible. Detection now reads each project's declared
+  dependencies and hands them over as evidence; the prompt engineer names the
+  frameworks and says what each one means *in this repository*. The dependency
+  names are read, never interpreted by a built-in table: a curated list of
+  known frameworks would rebuild the closed set this work exists to escape.
+- **A directory with a job but no manifest is a surface** — SQL migrations,
+  a stylesheet tree, infrastructure definitions. Recognised by what the files
+  are rather than what the directory is called, so a folder named `database`
+  holding TypeScript is not one, and three files of one kind are needed before
+  anything is. A surface names the project whose tests cover it, which fixes a
+  measured oddity: a change to one migration used to belong to no project and
+  so validated **every** project in the repository. It now runs the suite that
+  covers it. A surface that names no owner keeps the old conservative answer,
+  because too slow is a better failure than unvalidated.
+- **The review fans out, one specialist per concern** — the three domain audits
+  were merged into a single agent for speed, which was right for three neutral
+  concerns and wrong once database, design and framework concerns joined them:
+  one prompt carrying six checklists reviews each of them less well. Each
+  concern the work raises now gets its own reviewer, in its own pane, with its
+  own clean context and its own verdict file. One concern raised is still one
+  agent.
+  - Concerns are **ranked** by how much of the diff each one actually matches,
+    and **capped** per run (`AGENT_FLOW_MAX_REVIEW_PASSES`, default 5). What
+    the cap left out is reported in the log *and* in the verdict the
+    implementation specialist reads, never dropped silently.
+  - **A built-in audit is counted against the cap but never cut by it.** Match
+    count systematically under-ranks a small, severe change: one file that
+    drops a column matches once, while a broad rename in an auth-adjacent
+    directory matches a dozen times. Losing a security audit because a token
+    refresh touched eight stylesheets is the wrong way to be wrong.
+  - After a fix, only the reviewers that blocked are asked again.
+  - The workflow's step list, its checkpoint and the dashboard are unchanged:
+    all of this happens inside the `domain-review` step, which already looped.
+- **A prompt engineer writes the specialists for each repository** — the
+  runtime shipped four hand-written personas and picked one, so a repository in
+  any other language was told it was being edited by a "Senior TypeScript
+  Engineer" and validated with `npm test`. Only six of the fifteen specialists
+  knew the stack at all; the planner, test engineer, verifier, reviewer and
+  documentation specialist were given the issue and left to infer the language.
+
+  A `prompt-engineer` agent now reads the repository and writes the specialist
+  for every stage of the workflow, together with the commands that validate
+  each project and the review concerns its own vocabulary raises. It adds no
+  workflow step and appears in no checkpoint.
+
+  - **Detection runs on every workflow** and is itself the staleness check. It
+    is a filesystem walk, so it costs nothing beside an agent turn; when what
+    it finds still matches the profile, no agent runs at all.
+  - **The specialist follows the code the step will touch.** Before a diff
+    exists that comes from the issue's own paths and area labels; afterwards
+    from the diff. A pull request confined to one project is reviewed by that
+    project's specialist rather than by a composite naming trees it never
+    touches.
+  - **A generated command must be proven.** The prompt engineer runs each test
+    command once and records the evidence; an unverified command never
+    displaces one that already works, so the four built-in stacks behave
+    exactly as they did.
+  - **A project nothing can validate stops the run before any agent starts**,
+    naming the project and `--refresh-profile`, rather than failing inside a
+    repair loop that cannot fix a missing test command.
+  - **Dependency setup is no longer npm-only.** A profile names the command
+    that prepares a fresh checkout and the path whose presence means it has
+    already been done.
+  - The profile lives in the git common directory, alongside the workflow
+    checkpoints. **Nothing is added to the repositories sandcastle is pointed
+    at.**
+
+  `seedlookups` is gone from the database-review gate: it was one repository's
+  idiom sitting in a shared default, and it belongs in that repository's
+  profile.
+- **Claude specialists no longer stall on PowerShell** — Windows exposes
+  PowerShell as a tool separate from Bash, and it was missing from the tools a
+  Claude specialist launches with. Leaving it out did not stop an agent using
+  it; it made every call wait for a person, which ends the run with
+  `agent_blocked`. A specialist working in a .NET or Windows repository reaches
+  for PowerShell unprompted, so the step that inspects or builds the solution
+  was the one that stalled. PowerShell is now allowed alongside Bash.
+- **A JavaScript project is no longer tested without its dependencies** — a
+  git worktree is populated from tracked files alone, so `node_modules` never
+  came with it and `npm test` failed before running a single test. Every
+  workflow on a repository with a JavaScript project hit this, and the agent
+  had to notice and install by hand. Verification now installs them first when
+  they are missing, from the lockfile when the project has one, and says so.
+  A project that already has them is untouched, so repair cycles pay nothing.
+- **A failing test command reports the failure, not its whole transcript** — a
+  failing command handed the agent everything it had printed: the restore log,
+  every compiler warning, and the failure somewhere inside. The lines that name
+  a failure are now selected, along with the three lines after each one so an
+  assertion keeps its expected and actual values, and the rest is dropped. A
+  15,000-character .NET transcript becomes about 500 characters without losing
+  the failing test, its assertion, or the closing tally. When nothing in the
+  output names a failure, the end of it is shown instead.
+- **Installing the runtime a second time actually replaces it** — the
+  installers and `make install-runtime` handed npm a package whose version had
+  not changed, so npm reported success and left the previously installed files
+  in place. Every upgrade that did not bump the runtime version silently kept
+  the old runtime, and the installed commands went on running it. The install
+  now removes the installed package before writing the new one.
+- **Cross-compiled binaries are no longer committable** — a 20 MB
+  `grove-linux-amd64` build artifact was tracked in the repository. It is
+  removed, and the Linux and macOS build outputs are ignored alongside the
+  Windows one that already was.
+- **A pull request that moved on is caught up, not refused** — `ci`, `address`,
+  and `resolve` reuse the worktree already checked out for the branch, and
+  refused outright whenever its HEAD was not the pull request head. A branch
+  moving mid-review is ordinary: a suggestion committed from the web interface,
+  a push from another checkout, an assessment asked for while work is in
+  flight. The commands now compare the two and act on the difference:
+  - **Behind and clean** — fast-forwarded to the pull request head, and the run
+    continues.
+  - **Ahead** — refused, naming how many commits the checkout holds that the
+    pull request does not, because the run would otherwise work on code no
+    reviewer has seen.
+  - **Diverged** — refused with both counts. A rebase or an amend on one side
+    has no safe automatic answer.
+  - **Behind with uncommitted changes** — refused, because a fast-forward would
+    disturb them.
+  - **A head this repository has never seen** — reported as a force-push, with
+    the fetch to run.
+
+  A refusal leaves the checkout exactly as it found it.
 - **Shorter workflows for the same review coverage** — the full workflow ran 18
   steps; it now runs 10, and the lean workflow 10, without dropping a single
   check:
@@ -131,6 +263,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The lists scroll, fill their panel, and show where you are in them** —
+  every list panel sized its scroll window differently from what it drew. The
+  dashboard measured its window in workflows against a budget counted in rows,
+  and a workflow occupies two rows, so the window came out roughly twice the
+  panel; the issues and pull request lists rendered a fixed page of fifty while
+  also scrolling inside that page, so two offsets described one list; and the
+  click hit-tests each computed a window again, differently. A window too large
+  to fit is also a window large enough to hold the whole list, so the offset
+  never moved: the lists overflowed their panel and stopped scrolling at the
+  same time, which is why neither the wheel nor `j`/`k` appeared to do anything
+  while the detail pane followed the selection. One window function now sizes
+  every list in rows from the space its panel has, and the renderer and the
+  hit-test both call it. The fifty-item pagination is gone: `n` and PageUp move
+  the selection a screenful at a time, and the footer reports where the
+  selection sits in the whole list. A list with more to show than fits draws a
+  scroll indicator down its right edge.
 - **clean no longer deletes a branch that has an open pull request** — cleanup
   matched branches against merged pull requests by branch name. Release
   tooling reuses one branch for every release, so a name whose earlier

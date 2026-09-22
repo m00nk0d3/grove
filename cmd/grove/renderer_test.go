@@ -1914,48 +1914,39 @@ func TestRenderFull_IssueBody_ControlCharsStripped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: Pagination renderer tests
+// List position renderer tests
 // ---------------------------------------------------------------------------
 
-func TestRenderFooterBar_ShowsPageInfo_Issues(t *testing.T) {
+func TestRenderFooterBar_ShowsListPosition_Issues(t *testing.T) {
 	theme := styles.NewTheme("digital-noir")
 	issues := make([]domain.Issue, 120)
 	for i := range issues {
 		issues[i] = domain.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
 	}
 
-	// Page 1 of 3 (items 1-50 of 120)
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, nil, 0)
-	assert.Contains(t, footer, "Page 1/3", "should show page 1/3")
-	assert.Contains(t, footer, "1-50 of 120 issues", "should show item range")
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, 0, nil, 0)
+	assert.Contains(t, footer, "1/120 issues", "should show the selection's place in the list")
 
-	// Page 3 of 3 (items 101-120 of 120)
-	footer2 := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, nil, 2)
-	assert.Contains(t, footer2, "Page 3/3", "should show page 3/3")
-	assert.Contains(t, footer2, "101-120 of 120 issues", "should show last page range")
+	footer2 := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, 119, nil, 0)
+	assert.Contains(t, footer2, "120/120 issues", "should show the last issue as the last of the list")
 }
 
-func TestRenderFooterBar_ShowsPageInfo_PRs(t *testing.T) {
+func TestRenderFooterBar_ShowsListPosition_PRs(t *testing.T) {
 	theme := styles.NewTheme("digital-noir")
 	prs := make([]domain.PullRequest, 60)
 	for i := range prs {
 		prs[i] = domain.PullRequest{Number: i + 1, Title: fmt.Sprintf("PR %d", i+1)}
 	}
 
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewPRs, nil, prs, 1)
-	assert.Contains(t, footer, "Page 2/2", "should show page 2/2")
-	assert.Contains(t, footer, "51-60 of 60 PRs", "should show last PR page range")
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewPRs, nil, 0, prs, 50)
+	assert.Contains(t, footer, "51/60 PRs", "should show the selection's place in the list")
 }
 
-func TestRenderFooterBar_NoPageInfo_WhenListFitsOnOnePage(t *testing.T) {
+func TestRenderFooterBar_NoListPosition_WhenListEmpty(t *testing.T) {
 	theme := styles.NewTheme("digital-noir")
-	issues := make([]domain.Issue, 10)
-	for i := range issues {
-		issues[i] = domain.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
-	}
 
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, nil, 0)
-	assert.NotContains(t, footer, "Page", "no page info when list fits in one page")
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, nil, 0, nil, 0)
+	assert.NotContains(t, footer, "issues", "no position readout when there are no issues")
 }
 
 // ---------------------------------------------------------------------------
@@ -2561,4 +2552,45 @@ func TestRenderSessionBlock_DegradedReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFormatFinishedAt(t *testing.T) {
+	now := time.Date(2026, time.September, 22, 16, 30, 0, 0, time.Local)
+
+	cases := []struct {
+		name     string
+		finished time.Time
+		want     string
+	}{
+		// A run from today is placed by its time; the date would be noise.
+		{"today", time.Date(2026, time.September, 22, 15, 42, 0, 0, time.Local), "15:04 shape"},
+		{"yesterday", time.Date(2026, time.September, 21, 9, 13, 0, 0, time.Local), "yesterday 09:13"},
+		{"earlier this year", time.Date(2026, time.March, 4, 11, 5, 0, 0, time.Local), "4 Mar 11:05"},
+		{"a previous year", time.Date(2025, time.December, 31, 23, 59, 0, 0, time.Local), "31 Dec 2025"},
+	}
+	for _, tc := range cases {
+		got := formatFinishedAt(tc.finished, now)
+		if tc.name == "today" {
+			assert.Equal(t, "15:42", got)
+			continue
+		}
+		assert.Equal(t, tc.want, got, tc.name)
+	}
+}
+
+func TestMissionFinishedAtPrefersTheLastUpdate(t *testing.T) {
+	started := time.Date(2026, time.September, 22, 15, 0, 0, 0, time.UTC)
+	updated := time.Date(2026, time.September, 22, 15, 42, 0, 0, time.UTC)
+
+	// The runtime writes the record once more as it exits, so the last update
+	// is when the run finished.
+	withBoth := dashboardMission{workflow: domain.WorkflowRunRef{StartedAt: started, UpdatedAt: updated}}
+	assert.Equal(t, updated, missionFinishedAt(withBoth))
+
+	// A run that never reported an update still shows when it began.
+	startedOnly := dashboardMission{workflow: domain.WorkflowRunRef{StartedAt: started}}
+	assert.Equal(t, started, missionFinishedAt(startedOnly))
+
+	// One that reported neither is blank rather than the zero date.
+	assert.True(t, missionFinishedAt(dashboardMission{}).IsZero())
 }

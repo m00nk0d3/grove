@@ -8,17 +8,32 @@ import { fileURLToPath } from "url";
 import {
   SPECIALISTS,
   buildImplementationPersona,
+  builtinReviewSections,
   getImplementationPrompt,
+  personaFor,
 } from "./specialists.js";
 import {
   detectStack,
   detectStackProjects,
+  detectSurfaces,
+  readDirectDependencies,
+  stackLabel,
   TechStack,
 } from "./stack-detector.js";
+import {
+  fingerprintRepoShape,
+  loadProfile,
+  readProfileDraft,
+  writeProfile,
+  type RepoProfile,
+  type RoleKey,
+} from "./project-profile.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import {
   collectChangedFiles,
   hasDocumentationSurface,
+  planReviewPasses,
+  resolveMaxReviewPasses,
   selectConditionalSpecialists,
   type ConditionalSpecialist,
 } from "./specialist-gating.js";
@@ -30,6 +45,7 @@ import {
   classifyIssue,
   explicitClassification,
   parseIssueMetadata,
+  scopeFilesFromIssue,
 } from "./issue-classifier.js";
 import {
   confirmAnotherReviewBatch,
@@ -38,16 +54,19 @@ import {
   formatReviewVerdict,
   postReviewComment,
   readJsonArtifactWithRetry,
+  combineAuditVerdicts,
   readAuditVerdict,
   readReviewVerdict,
   REVIEW_BATCH_SIZE,
 } from "./review-loop.js";
-import { type ReviewVerdict } from "./review-loop.js";
+import { type AuditVerdict, type ReviewVerdict } from "./review-loop.js";
 import {
   assertModeOverrideCompatible,
   detectRepo,
   FULL_WORKFLOW_STEPS,
   planVerification,
+  unresolvedProjects,
+  getProjectProfilePath,
   getWorkflowStatePath,
   loadWorkflowState,
   LEAN_WORKFLOW_STEPS,
@@ -65,13 +84,34 @@ import {
   type WorkflowStep,
 } from "./workflow-utils.js";
 
+// The path to ignore may be a single artifact — a planner's handoff — or a
+// directory holding one file per reviewer. Matching it exactly was enough for
+// the first and silently wrong for the second: every verdict written inside the
+// directory read as a file the stage should not have touched, and the fan-out
+// accused each reviewer of editing the implementation.
+function isIgnoredPath(file: string, ignoredRelativePath: string): boolean {
+  return (
+    file === ignoredRelativePath ||
+    file.startsWith(`${ignoredRelativePath}/`)
+  );
+}
+
 export function captureWorktreeState(
   targetDir: string,
   ignoredRelativePath: string,
 ): string {
   const trackedDiff = runCommand(
     "git",
-    ["diff", "--binary", "HEAD", "--", ".", `:(exclude)${ignoredRelativePath}`],
+    [
+      "diff",
+      "--binary",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "HEAD",
+      "--",
+      ".",
+      `:(exclude)${ignoredRelativePath}`,
+    ],
     { cwd: targetDir },
   );
   const untracked = runCommand(
@@ -80,7 +120,7 @@ export function captureWorktreeState(
     { cwd: targetDir },
   )
     .split("\0")
-    .filter((file) => file && file !== ignoredRelativePath)
+    .filter((file) => file && !isIgnoredPath(file, ignoredRelativePath))
     .map((file) => {
       const absolutePath = path.join(targetDir, file);
       const content = fs.lstatSync(absolutePath).isSymbolicLink()
@@ -90,6 +130,76 @@ export function captureWorktreeState(
     })
     .sort(([left], [right]) => left.localeCompare(right));
   return JSON.stringify({ trackedDiff, untracked });
+}
+
+// An accusation with no evidence is unactionable: "the reviewer modified the
+// implementation" leaves whoever reads it with no idea what moved, and the
+// worktree is preserved but unexplained. Name the paths.
+export function describeWorktreeChange(before: string, after: string): string {
+  let a: { trackedDiff: string; untracked: [string, string][] };
+  let b: typeof a;
+  try {
+    a = JSON.parse(before);
+    b = JSON.parse(after);
+  } catch {
+    return "the worktree changed, but the captured state could not be compared";
+  }
+
+  const notes: string[] = [];
+  const names = (state: typeof a) => new Map(state.untracked);
+  const beforeFiles = names(a);
+  const afterFiles = names(b);
+
+  const added = [...afterFiles.keys()].filter((file) => !beforeFiles.has(file));
+  const removed = [...beforeFiles.keys()].filter((file) => !afterFiles.has(file));
+  const rewritten = [...afterFiles.keys()].filter(
+    (file) => beforeFiles.has(file) && beforeFiles.get(file) !== afterFiles.get(file),
+  );
+
+  const list = (label: string, files: string[]) => {
+    if (files.length === 0) return;
+    const shown = files.slice(0, 10).join(", ");
+    notes.push(
+      `${label}: ${shown}${files.length > 10 ? ` and ${files.length - 10} more` : ""}`,
+    );
+  };
+  list("new untracked files", added);
+  list("removed untracked files", removed);
+  list("rewritten untracked files", rewritten);
+
+  if (a.trackedDiff !== b.trackedDiff) {
+    // The diff itself is large and binary-safe; its changed paths are enough.
+    const changed = [
+      ...new Set(
+        [...b.trackedDiff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((match) => match[1]),
+      ),
+    ];
+    list("tracked files", changed.length > 0 ? changed : ["(see git diff)"]);
+  }
+
+  return notes.length > 0 ? notes.join("; ") : "no difference could be identified";
+}
+
+// GitHub closes an issue when a merged pull request's description says so in as
+// many words. A bare "#1172" links the two and closes nothing, which is what the
+// reports carried: every issue had to be closed by hand after its own change
+// shipped.
+//
+// The keyword is written here rather than asked of the reporter, because a
+// linkage that matters should not depend on an agent remembering a phrase.
+const CLOSING_REFERENCE = /\b(clos(e|es|ed)|fix(e[sd])?|resolv(e|es|ed))\s+#(\d+)\b/gi;
+
+export function ensureIssueClosingReference(
+  body: string,
+  issueNum: string,
+): string {
+  for (const match of body.matchAll(CLOSING_REFERENCE)) {
+    if (match[5] === issueNum) {
+      return body; // the reporter already said it; do not say it twice
+    }
+  }
+  const trimmed = body.replace(/\s+$/, "");
+  return `${trimmed}\n\nCloses #${issueNum}\n`;
 }
 
 export function implementationSessionId(repo: string, issueNum: string): string {
@@ -224,13 +334,18 @@ export function createLeanReport(
   stack: TechStack,
   targetDir: string,
   evidence: LeanReportEvidence,
+  profile: RepoProfile | null = null,
 ): string {
   const changedFiles = runCommand(
     "git",
     ["diff", "--name-status", baseCommit, "HEAD"],
     { cwd: targetDir },
   );
-  const verification = planVerification(detectStackProjects(targetDir), [])
+  const verification = planVerification(
+    detectStackProjects(targetDir),
+    [],
+    profile,
+  )
     .map((task) => task.label)
     .join(" && ");
   const head = runCommand("git", ["rev-parse", "--short", "HEAD"], {
@@ -378,7 +493,8 @@ export function readLeanReportEvidence(evidencePath: string): LeanReportEvidence
 }
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<void> {
-  const { requestedRepo, issueNum, modeOverride } = parseCliArgs(args);
+  const { requestedRepo, issueNum, modeOverride, refreshProfile } =
+    parseCliArgs(args);
   if (process.env.HERDR_ENV !== "1") {
     throw new Error("agent-flow must be run from a Herdr-managed pane.");
   }
@@ -404,18 +520,21 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   let modeReport: string;
   if (state) assertModeOverrideCompatible(state, modeOverride);
+  // Read on every run, not only when starting one: a resumed workflow still has
+  // to know which part of the repository the issue is about, in order to pick
+  // the specialists its remaining stages run in.
+  const issueMetadata = parseIssueMetadata(
+    runCommand("gh", [
+      "issue",
+      "view",
+      issueNum,
+      "--repo",
+      repo,
+      "--json",
+      "title,body,labels",
+    ]),
+  );
   if (!state) {
-    const issueMetadata = parseIssueMetadata(
-      runCommand("gh", [
-        "issue",
-        "view",
-        issueNum,
-        "--repo",
-        repo,
-        "--json",
-        "title,body,labels",
-      ]),
-    );
     const classification = modeOverride
       ? explicitClassification(modeOverride)
       : classifyIssue(issueMetadata);
@@ -445,7 +564,15 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   saveWorkflowState(statePath, state);
   const issueTitle = state.issueTitle;
   const branchName = state.branchName;
-  const agentDir = path.join(".agent", `issue-${issueNum}`);
+  // Posix separators, deliberately, and not path.join. Every artifact path below
+  // is built by string concatenation and then compared against paths git prints,
+  // which are always forward-slashed. path.join produced ".agent\issue-N" on
+  // Windows and the concatenation made ".agent\issue-N/LEAN_PLAN.md", which
+  // matched nothing git reported: the lean planner's own handoff was counted as a
+  // file it should not have touched, and the stage failed every time. Windows
+  // accepts forward slashes in filesystem calls, so path.join(targetDir, agentDir)
+  // still works.
+  const agentDir = `.agent/issue-${issueNum}`;
 
   console.log(`\x1b[32m[Target Repository]\x1b[0m ${repo} | Issue #${issueNum}`);
   console.log(`\x1b[34m[Workflow Mode]\x1b[0m ${modeReport}`);
@@ -496,7 +623,13 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     }
 
     const stack: TechStack = detectStack(targetDir);
-    const persona = buildImplementationPersona(detectStackProjects(targetDir));
+    // Detection runs on every workflow: it is a filesystem walk, it costs
+    // nothing next to an agent turn, and it is what decides whether the
+    // repository's specialists are still the right ones.
+    const projects = detectStackProjects(targetDir);
+    const surfaces = detectSurfaces(targetDir, projects);
+    const profilePath = getProjectProfilePath(repoRoot);
+    const profileDraftPath = `${agentDir}/project-profile.json`;
     const requirementsPath = `${agentDir}/REQUIREMENTS.md`;
     const contextPath = `${agentDir}/CONTEXT.md`;
     const planPath = `${agentDir}/PLAN.md`;
@@ -630,11 +763,15 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const verifyWithRepair = (handoffPath: string): void => {
       // Name every command the gate runs, so a repair in a multi-stack
       // repository knows which project it has to make pass.
-      const verification = planVerification(detectStackProjects(targetDir), [])
+      const verification = planVerification(
+        detectStackProjects(targetDir),
+        [],
+        profile,
+      )
         .map((task) => task.label)
         .join(" && ");
       runValidationWithRepair(
-        () => verifyWorktree(targetDir),
+        () => verifyWorktree(targetDir, undefined, profile),
         (failure) =>
           runSpecialist(
             `${stack.toLowerCase()}-validation-repair`,
@@ -679,53 +816,124 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     // the same diff for what is one pass over one change.
     const runDomainReview = (handoffPath: string): void => {
       runStep("domain-review", () => {
-        const domains = selectedSpecialists().filter(
+        const builtinDomains = selectedSpecialists().filter(
           (specialist) => specialist !== "documentation",
         );
-        if (domains.length === 0) {
+        // One specialist per concern, ranked by how much of the diff each one
+        // actually matches. A generated concern either extends a built-in
+        // checklist or stands as a review of its own, so a repository whose
+        // vocabulary the built-in patterns never matched still gets the review
+        // it needs.
+        const plan = planReviewPasses({
+          changedFiles: collectChangedFiles(targetDir),
+          builtins: builtinDomains,
+          builtinSections: builtinReviewSections(),
+          concerns: profile?.concerns ?? [],
+          maxPasses: resolveMaxReviewPasses(),
+        });
+        if (plan.passes.length === 0) {
           console.log(
-            "[33m[Specialists][0m Skipping domain-review: the diff raises none of its concerns.",
+            "\x1b[33m[Specialists]\x1b[0m Skipping domain-review: the diff raises none of its concerns.",
           );
           return;
         }
         console.log(
-          `[36m[Specialists][0m Domain review covering: ${domains.join(", ")}`,
+          `\x1b[36m[Specialists]\x1b[0m Domain review, one specialist each: ${plan.passes
+            .map((pass) => `${pass.title} (${pass.matchCount})`)
+            .join(", ")}`,
         );
-        // Keep the verdict inside the worktree: Claude needs approval to write
+        if (plan.skipped.length > 0) {
+          console.log(
+            `\x1b[33m[Specialists]\x1b[0m Not reviewed, the pass cap was reached: ${plan.skipped
+              .map((pass) => `${pass.title} (${pass.matchCount})`)
+              .join(", ")}`,
+          );
+        }
+        // Keep the verdicts inside the worktree: Claude needs approval to write
         // outside its working directory, and .agent/ is removed at delivery.
-        const verdictRelativePath = `${agentDir
-          .split(path.sep)
-          .join("/")}/domain-review-verdict.json`;
-        const verdictPath = path.join(targetDir, verdictRelativePath);
-        fs.mkdirSync(path.dirname(verdictPath), { recursive: true });
+        const reviewDirRelative = `${agentDir}/domain-review`;
+        const verdictPath = path.join(
+          targetDir,
+          reviewDirRelative,
+          "combined.json",
+        );
+        fs.mkdirSync(path.join(targetDir, reviewDirRelative), {
+          recursive: true,
+        });
 
+        let due = plan.passes;
         for (let cycle = 1; cycle <= REVIEW_BATCH_SIZE; cycle += 1) {
-          fs.rmSync(verdictPath, { force: true });
-          const stateBefore = captureWorktreeState(
-            targetDir,
-            verdictRelativePath,
-          );
-          runSpecialist(
-            `domain-review-${cycle}`,
-            SPECIALISTS.DOMAIN_REVIEWER(issueNum, repo, verdictPath, domains),
-            [verdictPath],
-            () => {
-              readAuditVerdict(verdictPath, "domain-review");
-            },
-          );
-          if (
-            captureWorktreeState(targetDir, verdictRelativePath) !== stateBefore
-          ) {
-            throw new Error(
-              "The domain reviewer modified the implementation instead of reporting blockers.",
+          const results: {
+            id: string;
+            title: string;
+            verdict: AuditVerdict;
+          }[] = [];
+          for (const pass of due) {
+            const passPath = path.join(
+              targetDir,
+              reviewDirRelative,
+              `${pass.slug}.json`,
             );
+            fs.rmSync(passPath, { force: true });
+            // The whole review directory is excluded, so one reviewer's verdict
+            // is never mistaken for another reviewer editing the implementation.
+            const stateBefore = captureWorktreeState(
+              targetDir,
+              reviewDirRelative,
+            );
+            runSpecialist(
+              `${pass.slug}-${cycle}`,
+              SPECIALISTS.DOMAIN_REVIEWER(
+                diffPersonaOf("review"),
+                issueNum,
+                repo,
+                passPath,
+                pass,
+              ),
+              [passPath],
+              () => {
+                readAuditVerdict(passPath, pass.title);
+              },
+            );
+            const stateAfter = captureWorktreeState(targetDir, reviewDirRelative);
+            if (stateAfter !== stateBefore) {
+              throw new Error(
+                `The ${pass.title} reviewer modified the implementation instead of reporting blockers — ` +
+                  `${describeWorktreeChange(stateBefore, stateAfter)}.`,
+              );
+            }
+            results.push({
+              id: pass.id,
+              title: pass.title,
+              verdict: readAuditVerdict(passPath, pass.title),
+            });
           }
-          if (readAuditVerdict(verdictPath, "domain-review").verdict === "approved") {
+
+          const combined = combineAuditVerdicts(results, plan.skipped);
+          if (combined.verdict === "approved") {
             return;
           }
-          console.log(
-            `[33m[domain-review][0m Blockers reported in cycle ${cycle}; returning control to the implementation specialist.`,
+          // One fix agent per cycle rather than one per reviewer. The
+          // implementation specialist holds a single session, and several
+          // sequential fix turns would multiply the cost and let two fixes
+          // conflict over the same file.
+          fs.writeFileSync(
+            verdictPath,
+            `${JSON.stringify(combined, null, 2)}\n`,
           );
+          const blocking = results.filter(
+            (result) => result.verdict.verdict === "blockers",
+          );
+          console.log(
+            `\x1b[33m[domain-review]\x1b[0m Blockers from ${blocking
+              .map((result) => result.title)
+              .join(", ")} in cycle ${cycle}; returning control to the implementation specialist.`,
+          );
+          // Only the reviewers that blocked are asked again. Re-running a
+          // specialist that already approved costs an agent run to be told the
+          // same thing twice, and is what would make the cap expensive.
+          const blocked = new Set(blocking.map((result) => result.id));
+          due = plan.passes.filter((pass) => blocked.has(pass.id));
           runSpecialist(
             `${stack.toLowerCase()}-domain-review-fix-${cycle}`,
             SPECIALISTS.IMPLEMENTER_REVIEW_FIXES(
@@ -757,7 +965,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         }
         runSpecialist(
           "documentation-specialist",
-          SPECIALISTS.DOCUMENTATION_SPECIALIST(issueNum, repo, issueTitle),
+          SPECIALISTS.DOCUMENTATION_SPECIALIST(
+            diffPersonaOf("documentation"),
+            issueNum,
+            repo,
+            issueTitle,
+          ),
         );
         verifyWithRepair(handoffPath);
       });
@@ -779,7 +992,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       if (!status) {
         throw new Error("The workflow produced no changes to commit.");
       }
-      verifyWorktree(targetDir);
+      verifyWorktree(targetDir, undefined, profile);
       runCommand("git", ["add", "-A"], { cwd: targetDir });
       runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
       runCommand(
@@ -796,11 +1009,129 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       requireCleanWorktree(targetDir);
     };
 
+    // The specialists this repository gets are written for it, once per shape of
+    // the repository rather than once per workflow. This runs before the first
+    // stage and outside runStep: it produces no workflow step, appears in no
+    // checkpoint, and after it succeeds the profile is fresh, so the next run
+    // does not repeat it.
+    const loaded = loadProfile(profilePath, targetDir, projects, surfaces);
+    let profile = loaded.profile;
+    {
+      if (projects.length === 0) {
+        // Nothing to profile yet: a repository with no manifest has no project
+        // for the prompt engineer to describe, and the validator refuses a
+        // profile that lists none. Generating here would fail, retry, and fail
+        // again. The fingerprint moves the moment a manifest appears, and the
+        // profile is written then.
+        console.log(
+          "\x1b[33m[Prompt Engineer]\x1b[0m No project detected yet, so there is nothing to write specialists for. This runs once the repository has a manifest.",
+        );
+      } else if (refreshProfile || loaded.status !== "fresh") {
+        const why = refreshProfile
+          ? "a refresh was requested"
+          : loaded.reason;
+        console.log(
+          `\x1b[36m[Prompt Engineer]\x1b[0m Writing this repository's specialists: ${why}.`,
+        );
+        fs.mkdirSync(path.join(targetDir, agentDir), { recursive: true });
+        const absoluteDraftPath = path.join(targetDir, profileDraftPath);
+        runSpecialist(
+          "prompt-engineer",
+          SPECIALISTS.PROMPT_ENGINEER(
+            repo,
+            profileDraftPath,
+            projects.map((project) => ({
+              root: project.root,
+              marker: project.marker,
+              label: stackLabel(project),
+              // Facts, read from the manifest. The prompt engineer decides what
+              // they mean; it does not decide what they are.
+              dependencies: readDirectDependencies(
+                path.join(targetDir, project.marker),
+              ),
+            })),
+            surfaces,
+          ),
+          [absoluteDraftPath],
+          () => {
+            readProfileDraft(absoluteDraftPath, projects);
+          },
+        );
+        profile = writeProfile(
+          profilePath,
+          readProfileDraft(absoluteDraftPath, projects),
+          fingerprintRepoShape(targetDir, projects, surfaces),
+        );
+        fs.rmSync(absoluteDraftPath, { force: true });
+        // The profile decides what this workflow will execute, so what it chose
+        // is stated plainly at the moment it is adopted rather than left to be
+        // discovered in a log.
+        for (const project of profile.projects) {
+          const where = project.root || "the repository root";
+          console.log(
+            `\x1b[36m[Prompt Engineer]\x1b[0m ${where} (${project.label}): ${project.test.command} ${project.test.args.join(" ")}` +
+              (project.test.verified ? "" : " [unverified]"),
+          );
+          if (project.setup) {
+            console.log(
+              `\x1b[36m[Prompt Engineer]\x1b[0m ${where} setup: ${project.setup.command} ${project.setup.args.join(" ")}`,
+            );
+          }
+          if (project.frameworks.length > 0) {
+            console.log(
+              `\x1b[36m[Prompt Engineer]\x1b[0m ${where} frameworks: ${project.frameworks
+                .map((framework) => framework.name)
+                .join(", ")}`,
+            );
+          } else {
+            // Frameworks are the structured field later stages can act on, and
+            // a profile that puts them in prose instead is silently poorer. A
+            // project that declares dependencies but names none is worth saying
+            // out loud rather than discovering by reading the file.
+            const declared = readDirectDependencies(
+              path.join(targetDir, project.marker),
+            );
+            if (declared.length > 0) {
+              console.log(
+                `\x1b[33m[Prompt Engineer]\x1b[0m ${where} names no frameworks, though it declares ${declared.length} dependencies. Rerun with --refresh-profile to have them identified.`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // A project nothing can validate is refused here, before any agent runs: the
+    // repair loop cannot fix a missing test command, and would spend three
+    // attempts discovering that.
+    const unresolved = unresolvedProjects(projects, profile, targetDir);
+    if (unresolved.length > 0) {
+      const names = unresolved
+        .map((project) => `${project.root || "the repository root"} (${project.marker})`)
+        .join(", ");
+      throw new Error(
+        `No test command is known for ${names}.\n` +
+          `Run 'imp ${issueNum} --refresh-profile' to have the prompt engineer establish one, ` +
+          `or add it to ${profilePath}.`,
+      );
+    }
+
+    // What a step will touch decides which specialist it gets. Before any diff
+    // exists that comes from the issue; afterwards, from the diff itself, so a
+    // change confined to one project is reviewed by that project's specialist.
+    const issueScope = scopeFilesFromIssue(issueMetadata, projects);
+    const personaOf = (role: RoleKey, scopeFiles?: string[]): string =>
+      personaFor(role, projects, profile, scopeFiles ?? issueScope);
+    const diffPersonaOf = (role: RoleKey): string =>
+      personaFor(role, projects, profile, collectChangedFiles(targetDir));
+    const persona = personaOf("implementation");
+
     if (state.mode === "full") {
       runStep("planning", () =>
         runSpecialist(
           "planner",
           SPECIALISTS.PLANNER(
+            personaOf("planning"),
             issueNum,
             repo,
             requirementsPath,
@@ -818,6 +1149,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         runSpecialist(
           "test-engineer",
           SPECIALISTS.TEST_ENGINEER(
+            personaOf("tests"),
             issueNum,
             requirementsPath,
             contextPath,
@@ -843,7 +1175,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       runStep("verification", () => {
         runSpecialist(
           "verifier",
-          SPECIALISTS.VERIFIER(issueNum, requirementsPath, planPath),
+          SPECIALISTS.VERIFIER(
+            diffPersonaOf("verification"),
+            issueNum,
+            requirementsPath,
+            planPath,
+          ),
         );
         verifyWithRepair(planPath);
       });
@@ -854,12 +1191,20 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         const stateBefore = captureWorktreeState(targetDir, leanPlanPath);
         runSpecialist(
           "lean-planner",
-          SPECIALISTS.LEAN_PLANNER(issueNum, repo, leanPlanPath),
+          SPECIALISTS.LEAN_PLANNER(
+            personaOf("planning"),
+            issueNum,
+            repo,
+            leanPlanPath,
+          ),
           [path.join(targetDir, leanPlanPath)],
         );
         const stateAfter = captureWorktreeState(targetDir, leanPlanPath);
         if (stateAfter !== stateBefore) {
-          throw new Error("Lean planner modified files outside its handoff artifact.");
+          throw new Error(
+            "Lean planner modified files outside its handoff artifact — " +
+              `${describeWorktreeChange(stateBefore, stateAfter)}.`,
+          );
         }
         const absoluteLeanPlanPath = path.join(targetDir, leanPlanPath);
         if (
@@ -885,6 +1230,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           runSpecialist(
             `lean-verifier-reviewer-${cycle}`,
             SPECIALISTS.LEAN_REVIEWER(
+              diffPersonaOf("review"),
               issueNum,
               repo,
               leanPlanPath,
@@ -1026,6 +1372,15 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         ],
         { cwd: targetDir },
       );
+      // Written into the file both branches below publish from, so the pull
+      // request carries it whether it is being opened or updated.
+      fs.writeFileSync(
+        reportPath,
+        ensureIssueClosingReference(
+          fs.readFileSync(reportPath, "utf8"),
+          issueNum,
+        ),
+      );
       if (!prUrl) {
         prUrl = runCommand(
           "gh",
@@ -1080,7 +1435,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
         runSpecialist(
           `pr-review-${cycle}`,
-          SPECIALISTS.PR_REVIEWER(repo, issueNum, prUrl, verdictPath, cycle),
+          SPECIALISTS.PR_REVIEWER(
+            diffPersonaOf("review"),
+            repo,
+            issueNum,
+            prUrl,
+            verdictPath,
+            cycle,
+          ),
           [verdictPath],
           async () => {
             await readJsonArtifactWithRetry(verdictPath);

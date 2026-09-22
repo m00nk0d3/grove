@@ -12,11 +12,18 @@ import type {
   WorkflowMode,
   WorkflowModeSource,
 } from "./issue-classifier.js";
+import {
+  profileProjectFor,
+  projectsInScope,
+  type RepoProfile,
+} from "./project-profile.js";
 
 export interface CliOptions {
   issueNum: string;
   requestedRepo: string | null;
   modeOverride: WorkflowMode | null;
+  /** Rewrite this repository's specialists even when they are current. */
+  refreshProfile: boolean;
 }
 
 // Steps are agent stages first and bookkeeping second. Git and filesystem work
@@ -103,7 +110,19 @@ const DEFAULT_PI_PROVIDER = "lm-studio";
 const DEFAULT_PI_MODEL = "qwen/qwen3.5-9b";
 const DEFAULT_OPENCODE_MODEL = "lmstudio/qwen/qwen3.5-9b";
 const DEFAULT_CLAUDE_PERMISSION_MODE = "acceptEdits";
-const DEFAULT_CLAUDE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
+// PowerShell is a separate tool from Bash on Windows, and a specialist working in
+// a .NET or Windows repository reaches for it unprompted. Leaving it out does not
+// stop the agent using it — it makes every call wait for a person, which surfaces
+// as agent_blocked and ends the workflow.
+const DEFAULT_CLAUDE_TOOLS = [
+  "Read",
+  "Write",
+  "Edit",
+  "Bash",
+  "PowerShell",
+  "Glob",
+  "Grep",
+];
 export const PI_COMPACTION_GUARD_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "pi-compaction-guard.js",
@@ -237,22 +256,81 @@ export interface VerificationTask {
   /** Directory to run in, relative to the repository root ("" = root). */
   root: string;
   label: string;
+  /** Dependency install for projects whose ecosystem needs one. */
+  setup?: { command: string; args: string[]; skipWhenPresent?: string };
+  source: "builtin" | "profile";
 }
 
-function taskFor(project: StackProject): VerificationTask {
-  const base = getVerificationCommand(project.stack);
-  const args =
-    project.stack === "CSHARP"
-      ? ["test", project.marker.slice(project.marker.lastIndexOf("/") + 1)]
-      : base.args;
+// resolveVerificationTask decides what validates a project, preferring a command
+// the prompt engineer actually ran over one this runtime assumes.
+//
+// The precedence is deliberately conservative: a generated command the profiler
+// could not run never displaces a built-in that works today. That, rather than
+// declining to profile familiar repositories, is what keeps the four built-in
+// stacks behaving exactly as they did.
+export function resolveVerificationTask(
+  project: StackProject,
+  profile: RepoProfile | null,
+  targetDir?: string,
+): VerificationTask | null {
+  const entry = profileProjectFor(profile, project.root);
+  const builtin = getVerificationCommand(project.stack, targetDir);
   const where = project.root ? ` (in ${project.root})` : "";
-  return {
+
+  const fromProfile = (): VerificationTask => ({
     stack: project.stack,
-    command: base.command,
-    args,
+    command: entry!.test.command,
+    args: entry!.test.args,
     root: project.root,
-    label: `${base.command} ${args.join(" ")}${where}`,
-  };
+    label: `${entry!.test.command} ${entry!.test.args.join(" ")}${where}`,
+    ...(entry!.setup
+      ? {
+          setup: {
+            command: entry!.setup.command,
+            args: entry!.setup.args,
+            skipWhenPresent: entry!.setup.skipWhenPresent,
+          },
+        }
+      : {}),
+    source: "profile",
+  });
+
+  if (entry?.test.verified) {
+    return fromProfile();
+  }
+  if (builtin) {
+    const args =
+      project.stack === "CSHARP"
+        ? ["test", project.marker.slice(project.marker.lastIndexOf("/") + 1)]
+        : builtin.args;
+    return {
+      stack: project.stack,
+      command: builtin.command,
+      args,
+      root: project.root,
+      label: `${builtin.command} ${args.join(" ")}${where}`,
+      source: "builtin",
+    };
+  }
+  if (entry) {
+    console.log(
+      `\x1b[33m[Validation]\x1b[0m Using an unverified command for ${project.root || "the repository root"}: ${entry.test.evidence}`,
+    );
+    return fromProfile();
+  }
+  return null;
+}
+
+// unresolvedProjects names the projects nothing can validate, so a run can refuse
+// early with something actionable instead of failing inside a repair loop.
+export function unresolvedProjects(
+  projects: StackProject[],
+  profile: RepoProfile | null,
+  targetDir?: string,
+): StackProject[] {
+  return projects.filter(
+    (project) => resolveVerificationTask(project, profile, targetDir) === null,
+  );
 }
 
 // planVerification chooses which projects a change has to be validated against.
@@ -262,57 +340,120 @@ function taskFor(project: StackProject): VerificationTask {
 export function planVerification(
   projects: StackProject[],
   changedFiles: string[],
+  profile: RepoProfile | null = null,
 ): VerificationTask[] {
   if (projects.length === 0) {
-    // No recognised project: preserve the historical repository-root default.
+    // No recognised project. A profile entry for the repository root is a
+    // deliberate statement about how to test it and wins; otherwise the
+    // historical repository-root default is preserved.
+    const rootEntry = profileProjectFor(profile, "");
+    if (rootEntry) {
+      return [
+        {
+          stack: "UNKNOWN",
+          command: rootEntry.test.command,
+          args: rootEntry.test.args,
+          root: "",
+          label: `${rootEntry.test.command} ${rootEntry.test.args.join(" ")}`,
+          ...(rootEntry.setup
+            ? {
+                setup: {
+                  command: rootEntry.setup.command,
+                  args: rootEntry.setup.args,
+                  skipWhenPresent: rootEntry.setup.skipWhenPresent,
+                },
+              }
+            : {}),
+          source: "profile",
+        },
+      ];
+    }
     const fallback = getVerificationCommand("TYPESCRIPT");
     return [
       {
         stack: "TYPESCRIPT",
-        command: fallback.command,
-        args: fallback.args,
+        command: fallback!.command,
+        args: fallback!.args,
         root: "",
-        label: `${fallback.command} ${fallback.args.join(" ")}`,
+        label: `${fallback!.command} ${fallback!.args.join(" ")}`,
+        source: "builtin",
       },
     ];
   }
 
-  const ownerOf = (file: string): StackProject | undefined => {
-    const normalized = file.replace(/\\/g, "/");
-    let owner: StackProject | undefined;
-    for (const project of projects) {
-      const matches =
-        project.root === "" || normalized.startsWith(`${project.root}/`);
-      // The deepest matching root wins, so frontend/ beats a root project.
-      if (matches && (!owner || project.root.length > owner.root.length)) {
-        owner = project;
-      }
-    }
-    return owner;
-  };
-
-  const affected = new Set<StackProject>();
+  // A change confined to a surface — a migration directory, a stylesheet tree —
+  // belongs to no project, and without this it falls through to "unattributable,
+  // so validate everything" and runs every suite in the repository. The profile
+  // names the project whose tests actually cover each surface.
+  const ownedRoots = new Set(
+    projects
+      .filter((project) => project.root !== "")
+      .map((project) => project.root),
+  );
+  const delegated = new Set<string>();
+  let sawSurfaceFile = false;
   for (const file of changedFiles) {
-    const owner = ownerOf(file);
-    if (owner) {
-      affected.add(owner);
+    const normalized = file.replace(/\\/g, "/");
+    if ([...ownedRoots].some((root) => normalized.startsWith(`${root}/`))) {
+      continue; // a project already owns it
     }
+    const surface = deepestSurfaceFor(profile, normalized);
+    if (!surface) continue;
+    sawSurfaceFile = true;
+    if (surface.validatedBy) delegated.add(surface.validatedBy);
   }
 
-  // Nothing attributable — a root-level config or an unknown change — means the
-  // safe answer is to validate everything rather than guess.
+  const scoped = projectsInScope(projects, changedFiles);
+  // Only narrow when every surface that was touched said who validates it.
+  // A surface with nothing declared keeps the conservative answer: too slow is a
+  // better failure than unvalidated.
   const selected =
-    affected.size > 0
-      ? projects.filter((project) => affected.has(project))
-      : projects;
+    sawSurfaceFile && delegated.size > 0
+      ? projects.filter(
+          (project) =>
+            delegated.has(project.root) || scopedOwnsAProject(scoped, projects, changedFiles, project),
+        )
+      : scoped;
 
-  return selected.map(taskFor);
+  return selected
+    .map((project) => resolveVerificationTask(project, profile))
+    .filter((task): task is VerificationTask => task !== null);
 }
 
+function deepestSurfaceFor(
+  profile: RepoProfile | null,
+  normalizedFile: string,
+): { root: string; validatedBy?: string } | undefined {
+  let best: { root: string; validatedBy?: string } | undefined;
+  for (const surface of profile?.surfaces ?? []) {
+    if (!normalizedFile.startsWith(`${surface.root}/`)) continue;
+    if (!best || surface.root.length > best.root.length) best = surface;
+  }
+  return best;
+}
+
+// A project stays selected when a changed file genuinely lives inside it, as
+// opposed to having been swept in by the "nothing attributable" fallback.
+function scopedOwnsAProject(
+  scoped: StackProject[],
+  projects: StackProject[],
+  changedFiles: string[],
+  project: StackProject,
+): boolean {
+  if (!scoped.includes(project)) return false;
+  if (project.root === "") return false;
+  return changedFiles.some((file) =>
+    file.replace(/\\/g, "/").startsWith(`${project.root}/`),
+  );
+}
+
+// Returns null for a project this runtime has no built-in command for. The switch
+// stays exhaustive, so adding a stack forces a decision here rather than silently
+// falling through to npm.
 export function getVerificationCommand(
   stack: TechStack,
   targetDir?: string,
-): { command: string; args: string[] } {
+): { command: string; args: string[] } | null {
   switch (stack) {
     case "GO":
       return { command: "go", args: ["test", "./..."] };
@@ -327,6 +468,8 @@ export function getVerificationCommand(
       const project = targetDir ? findDotNetProject(targetDir) : undefined;
       return { command: "dotnet", args: project ? ["test", project] : ["test"] };
     }
+    case "UNKNOWN":
+      return null;
   }
 }
 
@@ -338,13 +481,21 @@ export function parseCliArgs(args: string[]): CliOptions {
   }
   if (leanCount > 1 || fullCount > 1) throw new Error(usage());
 
-  const positional = args.filter((arg) => arg !== "--lean" && arg !== "--full");
+  const refreshProfile = args.includes("--refresh-profile");
+  const positional = args.filter(
+    (arg) => arg !== "--lean" && arg !== "--full" && arg !== "--refresh-profile",
+  );
   if (positional.some((arg) => arg.startsWith("--"))) throw new Error(usage());
   const modeOverride: WorkflowMode | null =
     leanCount === 1 ? "lean" : fullCount === 1 ? "full" : null;
 
   if (positional.length === 1 && ISSUE_PATTERN.test(positional[0])) {
-    return { requestedRepo: null, issueNum: positional[0], modeOverride };
+    return {
+      requestedRepo: null,
+      issueNum: positional[0],
+      modeOverride,
+      refreshProfile,
+    };
   }
   if (
     positional.length === 2 &&
@@ -355,6 +506,7 @@ export function parseCliArgs(args: string[]): CliOptions {
       requestedRepo: positional[0],
       issueNum: positional[1],
       modeOverride,
+      refreshProfile,
     };
   }
   throw new Error(usage());
@@ -372,8 +524,54 @@ export function assertModeOverrideCompatible(
   }
 }
 
+// The profile describes the repository, not one issue, so it lives beside the
+// workflow checkpoints in the git common directory — shared by every worktree of
+// the repository and never part of its tracked tree.
+export function getProjectProfilePath(repoRoot: string): string {
+  const gitCommonDir = runCommand("git", ["rev-parse", "--git-common-dir"], {
+    cwd: repoRoot,
+  });
+  return path.join(
+    path.resolve(repoRoot, gitCommonDir),
+    "agent-flow",
+    "project-profile.json",
+  );
+}
+
+// The files a pull request changes, which is the scope that decides which
+// specialist reviews or repairs it. A Python pull request in a repository that
+// also holds a TypeScript app should summon a Python reviewer.
+export function pullRequestChangedFiles(
+  targetDir: string,
+  baseRefName: string,
+  runner: CommandRunner = runCommand,
+): string[] {
+  // Without a base there is nothing to diff against, and shelling out with
+  // "origin/undefined" would spend two failed git calls to reach the same
+  // answer. An empty scope means every project, which is the safe reading.
+  if (!baseRefName) return [];
+  for (const base of [`origin/${baseRefName}`, baseRefName]) {
+    try {
+      return runner("git", ["diff", "--name-only", `${base}...HEAD`], {
+        cwd: targetDir,
+      })
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch {
+      // Try the local ref, then give up: an empty scope means every project is
+      // in scope, which is the conservative answer rather than a wrong one.
+    }
+  }
+  return [];
+}
+
 function usage(): string {
-  return "Usage: imp <issue_number> [--lean|--full] OR imp <owner/repo> <issue_number> [--lean|--full] (agent-flow is an alias)";
+  return (
+    "Usage: imp <issue_number> [--lean|--full] [--refresh-profile] OR " +
+    "imp <owner/repo> <issue_number> [--lean|--full] [--refresh-profile] " +
+    "(agent-flow is an alias)"
+  );
 }
 
 // A worktree repeats its branch slug in its directory name, so every character
@@ -733,16 +931,168 @@ function collectTrackedChanges(targetDir: string): string[] {
   return files;
 }
 
-export function verifyWorktree(targetDir: string, touched?: string[]): void {
-  const tasks = planVerification(
-    detectStackProjects(targetDir),
-    touched ?? collectTrackedChanges(targetDir),
+// A git worktree is populated from tracked files alone, so a JavaScript project
+// checked out for a workflow has no node_modules and its test command fails
+// before it runs a single test. Install them once, honouring a lockfile when the
+// project has one.
+export function ensureJavaScriptDependencies(
+  projectDir: string,
+  runner: CommandRunner = runCommand,
+): "present" | "installed" {
+  if (fs.existsSync(path.join(projectDir, "node_modules"))) {
+    return "present";
+  }
+  const locked = ["package-lock.json", "npm-shrinkwrap.json"].some((lockfile) =>
+    fs.existsSync(path.join(projectDir, lockfile)),
   );
+  runner("npm", locked ? ["ci"] : ["install"], { cwd: projectDir });
+  return "installed";
+}
+
+// The same idea for any ecosystem: a profile names the command that prepares a
+// fresh checkout and the path whose presence means it has already been done, so
+// an ordinary run and every repair cycle pay nothing.
+export function ensureProjectSetup(
+  setup: NonNullable<VerificationTask["setup"]>,
+  projectDir: string,
+  runner: CommandRunner = runCommand,
+): "present" | "installed" {
+  if (
+    setup.skipWhenPresent &&
+    fs.existsSync(path.join(projectDir, setup.skipWhenPresent))
+  ) {
+    return "present";
+  }
+  runner(setup.command, setup.args, { cwd: projectDir });
+  return "installed";
+}
+
+const FAILURE_LINE =
+  /\b(error|errors|fail|fails|failed|failing|failure|failures|assert)\b/i;
+const MAX_FAILURE_CHARS = 4000;
+const FAILURE_TAIL_LINES = 20;
+const FAILURE_CONTEXT_LINES = 3;
+const LEADING_NAMED_LINES = 30;
+
+// A failing test command reports through its whole transcript: a restore log,
+// every compiler warning, and only then the failure. Handing all of it to an
+// agent buries the one thing it has to act on, so a transcript past a readable
+// size is reduced to the lines that name a failure. When nothing names one, the
+// end of the output is the only signal there is.
+export function summarizeCommandFailure(
+  label: string,
+  status: number | null,
+  output: string,
+): string {
+  const header = `${label} failed with exit code ${status ?? "unknown"}`;
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return `${header}. The command produced no output.`;
+  }
+  if (trimmed.length <= MAX_FAILURE_CHARS) {
+    return `${header}:\n${trimmed}`;
+  }
+  const lines = trimmed.split(/\r?\n/);
+  // A line naming a failure rarely carries the detail: an assertion prints its
+  // expected and actual values on the lines that follow, so they come along.
+  const keep = new Set<number>();
+  lines.forEach((line, index) => {
+    if (!FAILURE_LINE.test(line)) return;
+    for (let offset = 0; offset <= FAILURE_CONTEXT_LINES; offset += 1) {
+      if (index + offset < lines.length) keep.add(index + offset);
+    }
+  });
+  if (keep.size === 0) {
+    return cap(
+      `${header}, showing the end of its output:\n` +
+        lines.slice(-FAILURE_TAIL_LINES).join("\n"),
+    );
+  }
+  const selected = [...keep].sort((a, b) => a - b);
+  const kept: string[] = [];
+  let previous: number | undefined;
+  for (const index of selected) {
+    if (previous !== undefined && index > previous + 1) {
+      kept.push("...");
+    }
+    kept.push(lines[index]);
+    previous = index;
+  }
+  return cap(
+    `${header}, showing the lines that name a failure:\n${kept.join("\n")}`,
+  );
+}
+
+function cap(summary: string): string {
+  return summary.length <= MAX_FAILURE_CHARS
+    ? summary
+    : `${summary.slice(0, MAX_FAILURE_CHARS)}\n... (output truncated)`;
+}
+
+// Verification commands are run here rather than through runCommand so the
+// transcript survives long enough to be summarized; runCommand folds it into an
+// error message whole.
+function runVerificationTask(task: VerificationTask, cwd: string): void {
+  const result = spawnSync(task.command, task.args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.error) {
+    throw new Error(`Unable to run ${task.label}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      summarizeCommandFailure(
+        task.label,
+        result.status,
+        `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+      ),
+    );
+  }
+}
+
+export function verifyWorktree(
+  targetDir: string,
+  touched?: string[],
+  profile: RepoProfile | null = null,
+): void {
+  const projects = detectStackProjects(targetDir);
+  const tasks = planVerification(
+    projects,
+    touched ?? collectTrackedChanges(targetDir),
+    profile,
+  );
+  // A project nothing can validate resolves to no task, and a task list that
+  // filtered every one of them away would let the gate pass having run nothing.
+  // Silence is the one answer verification must never give.
+  if (tasks.length === 0 && projects.length > 0) {
+    const names = unresolvedProjects(projects, profile, targetDir)
+      .map((project) => `${project.root || "the repository root"} (${project.marker})`)
+      .join(", ");
+    throw new Error(
+      `Nothing can validate this change. No test command is known for ${names || "any project in this repository"}.\n` +
+        "Add one to the project profile, or run with --refresh-profile so the prompt engineer establishes it.",
+    );
+  }
   for (const task of tasks) {
+    const cwd = task.root ? path.join(targetDir, task.root) : targetDir;
+    if (task.setup) {
+      if (ensureProjectSetup(task.setup, cwd) === "installed") {
+        console.log(
+          `\x1b[32m[Validation]\x1b[0m Prepared ${task.root || "."} with ${task.setup.command} ${task.setup.args.join(" ")}`,
+        );
+      }
+    } else if (
+      task.stack === "TYPESCRIPT" &&
+      ensureJavaScriptDependencies(cwd) === "installed"
+    ) {
+      console.log(
+        `\x1b[32m[Validation]\x1b[0m Installed JavaScript dependencies in ${task.root || "."}`,
+      );
+    }
     console.log(`\x1b[36m[Validation]\x1b[0m ${task.label}`);
-    runCommand(task.command, task.args, {
-      cwd: task.root ? path.join(targetDir, task.root) : targetDir,
-    });
+    runVerificationTask(task, cwd);
   }
   // Strip trailing whitespace from all tracked files before diff --check
   const changedFiles = runCommand(

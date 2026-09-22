@@ -5,11 +5,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import {
+  syncWorktreeToPullRequestHead,
+  validateFixablePullRequest,
+} from "./ci-fix.js";
 import { parseWorktrees } from "./cleanup.js";
+import { detectStackProjects } from "./stack-detector.js";
+import { loadProfile } from "./project-profile.js";
+import { personaFor } from "./specialists.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import { runTrackedWorkflow } from "./runtime-state.js";
 import {
   detectRepo,
+  getProjectProfilePath,
+  pullRequestChangedFiles,
   requireCleanWorktree,
   runCommand,
   verifyWorktree,
@@ -24,7 +33,8 @@ interface PullRequestMetadata {
   baseRefName: string;
   isCrossRepository: boolean;
   state: string;
-  headRepository: { nameWithOwner: string };
+  headRepository: { name?: string; nameWithOwner?: string } | null;
+  headRepositoryOwner?: { login?: string } | null;
 }
 
 interface MergeResult {
@@ -39,22 +49,14 @@ export function parseResolveArgs(args: string[]): string {
   throw new Error("Usage: resolve <pr_number>");
 }
 
+// The open-and-not-a-fork requirement is the same one `ci` and `address`
+// enforce, so resolve shares their check rather than keeping a second copy
+// that once read the head repository name GitHub leaves empty.
 export function validateResolvablePullRequest(
   metadata: PullRequestMetadata,
   repo: string,
 ): void {
-  if (metadata.state !== "OPEN") {
-    throw new Error(`Pull request #${metadata.number} is ${metadata.state.toLowerCase()}.`);
-  }
-  if (
-    metadata.isCrossRepository ||
-    metadata.headRepository.nameWithOwner.toLowerCase() !== repo.toLowerCase()
-  ) {
-    throw new Error(
-      `Pull request #${metadata.number} comes from a fork. ` +
-        "The resolve command only pushes branches owned by this repository.",
-    );
-  }
+  validateFixablePullRequest(metadata, repo, "resolve");
 }
 
 function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
@@ -65,7 +67,7 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     "--repo",
     repo,
     "--json",
-    "number,title,url,headRefName,headRefOid,baseRefName,isCrossRepository,state,headRepository",
+    "number,title,url,headRefName,headRefOid,baseRefName,isCrossRepository,state,headRepository,headRepositoryOwner",
   ]);
   const value = JSON.parse(output) as Partial<PullRequestMetadata>;
   if (
@@ -76,9 +78,11 @@ function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
     typeof value.headRefOid !== "string" ||
     typeof value.baseRefName !== "string" ||
     typeof value.isCrossRepository !== "boolean" ||
-    typeof value.state !== "string" ||
-    !value.headRepository ||
-    typeof value.headRepository.nameWithOwner !== "string"
+    typeof value.state !== "string"
+    // The head repository is deliberately not required here. GitHub omits it
+    // once the fork it lived in is deleted, and isCrossRepository remains the
+    // authoritative answer, so its absence belongs to the fork check rather
+    // than being reported as malformed metadata.
   ) {
     throw new Error(`GitHub returned invalid metadata for ${repo}#${prNumber}.`);
   }
@@ -101,12 +105,7 @@ function prepareWorktree(
   );
   if (existing) {
     requireCleanWorktree(existing.path);
-    const head = runCommand("git", ["rev-parse", "HEAD"], { cwd: existing.path });
-    if (head !== metadata.headRefOid) {
-      throw new Error(
-        `Existing worktree is not at the PR head ${metadata.headRefOid}: ${existing.path}`,
-      );
-    }
+    syncWorktreeToPullRequestHead(existing.path, metadata.headRefOid, "resolve");
     return existing.path;
   }
 
@@ -178,10 +177,13 @@ function mergeWithoutCommit(
 }
 
 export function buildConflictPrompt(
+  persona: string,
   metadata: PullRequestMetadata,
   conflictedFiles: string[],
 ): string {
   return `
+${persona}
+
 You are resolving merge conflicts for pull request #${metadata.number}: ${metadata.title}
 PR: ${metadata.url}
 Head branch: ${metadata.headRefName}
@@ -262,13 +264,26 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  const projects = detectStackProjects(targetDir);
+  const profile = loadProfile(
+    getProjectProfilePath(repoRoot),
+    targetDir,
+    projects,
+  ).profile;
+  const persona = personaFor(
+    "implementation",
+    projects,
+    profile,
+    pullRequestChangedFiles(targetDir, metadata.baseRefName),
+  );
+
   if (conflictedFiles.length > 0) {
     console.log("## 🚧 Conflicts");
     for (const file of conflictedFiles) console.log(`- ${file}`);
     console.log();
     runSpecialistInPane({
       role: "conflict-resolver",
-      promptText: buildConflictPrompt(metadata, conflictedFiles),
+      promptText: buildConflictPrompt(persona, metadata, conflictedFiles),
       targetDir,
       issueOrPrNumber: prNumber,
     });
@@ -288,7 +303,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (currentHead !== originalHead) {
     throw new Error("The conflict resolver committed changes unexpectedly.");
   }
-  verifyWorktree(targetDir);
+  verifyWorktree(targetDir, undefined, profile);
   runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
 
   console.log("\n## ✅ Resolution Ready\n");
