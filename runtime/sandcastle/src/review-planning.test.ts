@@ -511,3 +511,63 @@ test("a command only reads pull request fields it actually asks GitHub for", asy
   assert.deepEqual(pullRequestChangedFiles("/nowhere", "", runner), []);
   assert.equal(called, 0, "a missing base ref must not shell out");
 });
+
+test("a stage's own handoff artifact is not counted as a file it touched", async () => {
+  const { captureWorktreeState } = await import("./orchestrator.js");
+  const { execFileSync } = await import("node:child_process");
+  const root = scratch("handoff-");
+  const git = (args: string[]) =>
+    execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git(["init", "--quiet", "-b", "main"]);
+    git(["config", "core.autocrlf", "false"]);
+    fs.writeFileSync(path.join(root, "file.txt"), "x");
+    git(["add", "-A"]);
+    git([
+      "-c", "user.name=T", "-c", "user.email=t@e.com",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init",
+    ]);
+
+    // Built exactly as the orchestrator builds it. On Windows this used to be
+    // ".agent\issue-42/LEAN_PLAN.md" while git reports ".agent/issue-42/...",
+    // so the exclusion matched nothing and the lean planner's own handoff read
+    // as a file it should not have touched. Lean mode failed on every run.
+    const agentDir = `.agent/issue-42`;
+    const leanPlanPath = `${agentDir}/LEAN_PLAN.md`;
+
+    const before = captureWorktreeState(root, leanPlanPath);
+    fs.mkdirSync(path.join(root, agentDir), { recursive: true });
+    fs.writeFileSync(path.join(root, leanPlanPath), "the plan");
+    assert.equal(
+      captureWorktreeState(root, leanPlanPath),
+      before,
+      "writing only the handoff must leave the captured state unchanged",
+    );
+
+    // A file outside the handoff is still caught, which is the point of the guard.
+    fs.writeFileSync(path.join(root, "file.txt"), "modified");
+    assert.notEqual(captureWorktreeState(root, leanPlanPath), before);
+
+    // And the path must carry no backslash, whatever platform built it.
+    assert.ok(!leanPlanPath.includes("\\"), "artifact paths are posix");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("artifact paths are built posix, not with the platform separator", async () => {
+  const { fileURLToPath } = await import("node:url");
+  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const source = fs.readFileSync(path.join(srcDir, "orchestrator.ts"), "utf8");
+
+  // agentDir is concatenated into artifact paths that are compared against the
+  // forward-slashed paths git prints. Building it with path.join gave
+  // ".agent\issue-N" on Windows and broke every one of those comparisons.
+  const declaration = source.match(/const agentDir = ([^;]+);/);
+  assert.ok(declaration, "agentDir declaration not found");
+  assert.ok(
+    !declaration[1].includes("path.join"),
+    `agentDir must be built posix, not with path.join: ${declaration[1].trim()}`,
+  );
+  assert.match(declaration[1], /\.agent\//, "agentDir should read as a posix path");
+});

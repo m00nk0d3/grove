@@ -473,7 +473,15 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   saveWorkflowState(statePath, state);
   const issueTitle = state.issueTitle;
   const branchName = state.branchName;
-  const agentDir = path.join(".agent", `issue-${issueNum}`);
+  // Posix separators, deliberately, and not path.join. Every artifact path below
+  // is built by string concatenation and then compared against paths git prints,
+  // which are always forward-slashed. path.join produced ".agent\issue-N" on
+  // Windows and the concatenation made ".agent\issue-N/LEAN_PLAN.md", which
+  // matched nothing git reported: the lean planner's own handoff was counted as a
+  // file it should not have touched, and the stage failed every time. Windows
+  // accepts forward slashes in filesystem calls, so path.join(targetDir, agentDir)
+  // still works.
+  const agentDir = `.agent/issue-${issueNum}`;
 
   console.log(`\x1b[32m[Target Repository]\x1b[0m ${repo} | Issue #${issueNum}`);
   console.log(`\x1b[34m[Workflow Mode]\x1b[0m ${modeReport}`);
@@ -752,9 +760,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         }
         // Keep the verdicts inside the worktree: Claude needs approval to write
         // outside its working directory, and .agent/ is removed at delivery.
-        const reviewDirRelative = `${agentDir
-          .split(path.sep)
-          .join("/")}/domain-review`;
+        const reviewDirRelative = `${agentDir}/domain-review`;
         const verdictPath = path.join(
           targetDir,
           reviewDirRelative,
