@@ -926,7 +926,16 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const loaded = loadProfile(profilePath, targetDir, projects, surfaces);
     let profile = loaded.profile;
     {
-      if (refreshProfile || loaded.status !== "fresh") {
+      if (projects.length === 0) {
+        // Nothing to profile yet: a repository with no manifest has no project
+        // for the prompt engineer to describe, and the validator refuses a
+        // profile that lists none. Generating here would fail, retry, and fail
+        // again. The fingerprint moves the moment a manifest appears, and the
+        // profile is written then.
+        console.log(
+          "\x1b[33m[Prompt Engineer]\x1b[0m No project detected yet, so there is nothing to write specialists for. This runs once the repository has a manifest.",
+        );
+      } else if (refreshProfile || loaded.status !== "fresh") {
         const why = refreshProfile
           ? "a refresh was requested"
           : loaded.reason;

@@ -598,3 +598,35 @@ test("the prompt engineer is told frameworks belong in the structured field", as
   // The schema shows a filled example rather than an empty placeholder.
   assert.match(prompt, /"frameworks": \[\s*\{ "name": "React"/);
 });
+
+test("a repository with no manifest yet is not profiled, and says so", async () => {
+  const { readProfileDraft } = await import("./project-profile.js");
+  const root = scratch("greenfield-");
+  const draftPath = path.join(root, "draft.json");
+  try {
+    fs.writeFileSync(path.join(root, "README.md"), "# new");
+    assert.deepEqual(detectStackProjects(root), [], "nothing to detect yet");
+
+    // The validator refuses a profile that lists no projects, so generating one
+    // here could only fail. That is why the orchestrator skips it rather than
+    // running the prompt engineer into a guaranteed retry-then-fail.
+    fs.writeFileSync(
+      draftPath,
+      JSON.stringify({ repoSummary: "new", projects: [], surfaces: [], concerns: [] }),
+    );
+    assert.throws(() => readProfileDraft(draftPath, []), /lists no projects/);
+
+    // And the orchestrator's own guard is the skip, stated in the source so the
+    // reason survives a refactor.
+    const { fileURLToPath } = await import("node:url");
+    const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
+    const source = fs.readFileSync(path.join(srcDir, "orchestrator.ts"), "utf8");
+    assert.match(
+      source,
+      /if \(projects\.length === 0\) \{[\s\S]{0,600}?No project detected yet/,
+      "the orchestrator must skip profiling when nothing is detected",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
