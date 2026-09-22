@@ -41,6 +41,9 @@ runtime-test:
 install-runtime:
 	cd runtime/sandcastle && npm install --no-audit --no-fund
 	cd runtime/sandcastle && npm run build
+# npm treats a package whose version has not changed as already satisfied, so
+# reinstalling over the previous build reports success without replacing it.
+	-npm uninstall --global @grove/sandcastle-runtime
 	npm install --global ./runtime/sandcastle
 
 install: install-runtime

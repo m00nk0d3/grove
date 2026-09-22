@@ -76,6 +76,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   head repository is only compared by name when GitHub actually identified one.
   A pull request whose fork has since been deleted reports as a fork rather
   than as malformed metadata.
+- **Installing the runtime a second time actually replaces it** — the
+  installers and `make install-runtime` handed npm a package whose version had
+  not changed, so npm reported success and left the previously installed files
+  in place. Every upgrade that did not bump the runtime version silently kept
+  the old runtime, and the installed commands went on running it. The install
+  now removes the installed package before writing the new one.
+- **Cross-compiled binaries are no longer committable** — a 20 MB
+  `grove-linux-amd64` build artifact was tracked in the repository. It is
+  removed, and the Linux and macOS build outputs are ignored alongside the
+  Windows one that already was.
 - **A pull request that moved on is caught up, not refused** — `ci`, `address`,
   and `resolve` reuse the worktree already checked out for the branch, and
   refused outright whenever its HEAD was not the pull request head. A branch

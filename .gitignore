@@ -4,6 +4,10 @@
 /nexus.exe
 /grove
 /grove.exe
+/grove-linux-amd64
+/grove-linux-arm64
+/grove-darwin-amd64
+/grove-darwin-arm64
 /runtime/sandcastle/dist/
 /runtime/sandcastle/node_modules/
 /.sandcastle/

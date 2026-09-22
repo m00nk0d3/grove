@@ -75,6 +75,15 @@ try {
         throw "Release archive is missing the Grove Sandcastle runtime."
     }
     Write-Host "Installing private Grove Sandcastle runtime..."
+    # npm treats a package whose version has not changed as already satisfied,
+    # so an upgrade that keeps the runtime version leaves the previously
+    # installed files in place. Remove the installed package first, so every run
+    # delivers the runtime it is installing rather than reporting success over a
+    # stale copy.
+    $installedRuntime = Join-Path $RuntimePrefix "node_modules\@grove\sandcastle-runtime"
+    if (Test-Path $installedRuntime) {
+        Remove-Item -Recurse -Force $installedRuntime
+    }
     & (Join-Path $NodeDir "npm.cmd") install --prefix $RuntimePrefix --omit=dev --install-links --no-audit --no-fund $runtimePath
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install Grove Sandcastle runtime."

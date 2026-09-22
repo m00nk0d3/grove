@@ -136,6 +136,11 @@ if [ ! -d "$TMP_DIR/runtime/sandcastle" ]; then
 fi
 echo "Installing private Grove Sandcastle runtime..."
 mkdir -p "$RUNTIME_PREFIX"
+# npm treats a package whose version has not changed as already satisfied, so
+# an upgrade that keeps the runtime version leaves the previously installed
+# files in place. Remove the installed package first, so every run delivers the
+# runtime it is installing rather than reporting success over a stale copy.
+rm -rf "$RUNTIME_PREFIX/node_modules/@grove/sandcastle-runtime"
 PATH="$NODE_HOME/bin:$PATH" "$NODE_HOME/bin/npm" install \
   --prefix "$RUNTIME_PREFIX" \
   --omit=dev \
