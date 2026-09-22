@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { syncWorktreeToPullRequestHead } from "./ci-fix.js";
 import { parseWorktrees } from "./cleanup.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import { runTrackedWorkflow } from "./runtime-state.js";
@@ -101,12 +102,7 @@ function prepareWorktree(
   );
   if (existing) {
     requireCleanWorktree(existing.path);
-    const head = runCommand("git", ["rev-parse", "HEAD"], { cwd: existing.path });
-    if (head !== metadata.headRefOid) {
-      throw new Error(
-        `Existing worktree is not at the PR head ${metadata.headRefOid}: ${existing.path}`,
-      );
-    }
+    syncWorktreeToPullRequestHead(existing.path, metadata.headRefOid, "resolve");
     return existing.path;
   }
 

@@ -68,6 +68,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   builds a changelog. The rewrite happens only while the branch has never
   been pushed, only when the subject is still the placeholder, and never when
   it cannot be proven unpublished.
+- **A pull request that moved on is caught up, not refused** — `ci`, `address`,
+  and `resolve` reuse the worktree already checked out for the branch, and
+  refused outright whenever its HEAD was not the pull request head. A branch
+  moving mid-review is ordinary: a suggestion committed from the web interface,
+  a push from another checkout, an assessment asked for while work is in
+  flight. The commands now compare the two and act on the difference:
+  - **Behind and clean** — fast-forwarded to the pull request head, and the run
+    continues.
+  - **Ahead** — refused, naming how many commits the checkout holds that the
+    pull request does not, because the run would otherwise work on code no
+    reviewer has seen.
+  - **Diverged** — refused with both counts. A rebase or an amend on one side
+    has no safe automatic answer.
+  - **Behind with uncommitted changes** — refused, because a fast-forward would
+    disturb them.
+  - **A head this repository has never seen** — reported as a force-push, with
+    the fetch to run.
+
+  A refusal leaves the checkout exactly as it found it.
 - **Shorter workflows for the same review coverage** — the full workflow ran 18
   steps; it now runs 10, and the lean workflow 10, without dropping a single
   check:
