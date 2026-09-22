@@ -1053,11 +1053,24 @@ export function verifyWorktree(
   touched?: string[],
   profile: RepoProfile | null = null,
 ): void {
+  const projects = detectStackProjects(targetDir);
   const tasks = planVerification(
-    detectStackProjects(targetDir),
+    projects,
     touched ?? collectTrackedChanges(targetDir),
     profile,
   );
+  // A project nothing can validate resolves to no task, and a task list that
+  // filtered every one of them away would let the gate pass having run nothing.
+  // Silence is the one answer verification must never give.
+  if (tasks.length === 0 && projects.length > 0) {
+    const names = unresolvedProjects(projects, profile, targetDir)
+      .map((project) => `${project.root || "the repository root"} (${project.marker})`)
+      .join(", ");
+    throw new Error(
+      `Nothing can validate this change. No test command is known for ${names || "any project in this repository"}.\n` +
+        "Add one to the project profile, or run with --refresh-profile so the prompt engineer establishes it.",
+    );
+  }
   for (const task of tasks) {
     const cwd = task.root ? path.join(targetDir, task.root) : targetDir;
     if (task.setup) {

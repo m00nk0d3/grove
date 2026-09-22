@@ -228,6 +228,9 @@ export function readDirectDependencies(absoluteMarkerPath: string): string[] {
   } catch {
     return [];
   }
+  // A UTF-8 byte order mark is legal in these files and makes JSON.parse throw,
+  // which would silently cost every framework fact the manifest holds.
+  raw = raw.replace(/^﻿/, "");
   const name = path.basename(absoluteMarkerPath);
   try {
     if (name === "package.json") return packageJsonDependencies(raw);
@@ -352,6 +355,15 @@ const SURFACE_KINDS: Array<{ label: string; extensions: string[] }> = [
 const MIN_SURFACE_FILES = 3;
 const MIN_SURFACE_SHARE = 0.6;
 
+function isOwned(root: string, owned: Set<string>): boolean {
+  for (const projectRoot of owned) {
+    // "" is the repository root, which owns every directory below it.
+    if (projectRoot === "") return true;
+    if (root === projectRoot || root.startsWith(`${projectRoot}/`)) return true;
+  }
+  return false;
+}
+
 export function detectSurfaces(
   targetDir: string,
   projects: StackProject[],
@@ -368,8 +380,11 @@ export function detectSurfaces(
       return;
     }
     const root = toPosix(path.relative(targetDir, dir));
-    // A project owns its whole tree, including any migrations inside it.
-    if (root !== "" && owned.has(root)) return;
+    // A project owns its whole tree, not just its own directory: migrations
+    // inside a project are already covered by that project's tests and its
+    // specialists. A project at the repository root therefore owns everything,
+    // and the repository has no surfaces at all.
+    if (isOwned(root, owned)) return;
 
     const files = entries.filter((entry) => entry.isFile()).map((e) => e.name);
     if (root !== "" && files.length >= MIN_SURFACE_FILES) {

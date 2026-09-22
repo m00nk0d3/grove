@@ -358,3 +358,125 @@ test("the review cap is configurable and refuses nonsense", () => {
     DEFAULT_MAX_REVIEW_PASSES,
   );
 });
+
+// --------------------------------------------------------------------------
+// Regressions found by an adversarial sweep. Each one was a real defect.
+// --------------------------------------------------------------------------
+
+test("a project owns its whole tree, so no surface forms inside it", () => {
+  const root = scratch("adv-owned-");
+  try {
+    // A project at the repository root owns everything below it.
+    fs.writeFileSync(path.join(root, "package.json"), "{}");
+    fs.mkdirSync(path.join(root, "migrations"));
+    for (const n of ["1.sql", "2.sql", "3.sql"]) {
+      fs.writeFileSync(path.join(root, "migrations", n), "");
+    }
+    assert.deepEqual(detectSurfaces(root, detectStackProjects(root)), []);
+
+    // And so does a nested one.
+    const nested = scratch("adv-owned-nested-");
+    try {
+      fs.mkdirSync(path.join(nested, "backend"));
+      fs.writeFileSync(path.join(nested, "backend", "pyproject.toml"), "[project]");
+      fs.mkdirSync(path.join(nested, "backend", "migrations"));
+      for (const n of ["1.sql", "2.sql", "3.sql"]) {
+        fs.writeFileSync(path.join(nested, "backend", "migrations", n), "");
+      }
+      assert.deepEqual(detectSurfaces(nested, detectStackProjects(nested)), []);
+    } finally {
+      fs.rmSync(nested, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a byte order mark does not hide a manifest's dependencies", () => {
+  const root = scratch("adv-bom-");
+  try {
+    const manifest = path.join(root, "package.json");
+    fs.writeFileSync(manifest, "﻿" + JSON.stringify({ dependencies: { react: "18" } }));
+    assert.deepEqual(readDirectDependencies(manifest), ["react"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a pattern that can take exponential time to match is refused", async () => {
+  const { readProfileDraft } = await import("./project-profile.js");
+  const root = scratch("adv-redos-");
+  const draftPath = path.join(root, "draft.json");
+  const personas = Object.fromEntries(
+    ["planning", "tests", "implementation", "verification", "review", "documentation"].map(
+      (role) => [role, "You are a Senior Engineer for this repository and follow its conventions."],
+    ),
+  );
+  const detected = [
+    { stack: "PYTHON" as const, root: "backend", marker: "backend/pyproject.toml" },
+  ];
+  const base = {
+    repoSummary: "x",
+    projects: [
+      {
+        root: "backend",
+        marker: "backend/pyproject.toml",
+        label: "PYTHON",
+        ecosystem: "svc",
+        frameworks: [],
+        personas,
+        test: { command: "node", args: [], verified: true, evidence: "ran" },
+      },
+    ],
+    surfaces: [],
+    concerns: [] as unknown[],
+  };
+  const write = (concerns: unknown[]) =>
+    fs.writeFileSync(draftPath, JSON.stringify({ ...base, concerns }));
+  try {
+    // /^(a+)+$/ against a 41-character path never returns, and a JavaScript
+    // regex cannot be interrupted: the run would stall for ever with no error.
+    write([{ id: "evil", title: "evil", pathPatterns: ["^(a+)+$"], checklist: ["x"] }]);
+    assert.throws(
+      () => readProfileDraft(draftPath, detected),
+      /exponential time/,
+    );
+
+    // An ordinary path vocabulary is still accepted.
+    write([
+      { id: "fine", title: "fine", pathPatterns: ["(^|/)migrations?(/|$)"], checklist: ["x"] },
+    ]);
+    assert.equal(readProfileDraft(draftPath, detected).concerns.length, 1);
+
+    // Everything rendered into a prompt is bounded.
+    write([
+      {
+        id: "huge",
+        title: "huge",
+        pathPatterns: ["(^|/)x/"],
+        checklist: Array.from({ length: 2000 }, (_, i) => `item ${i}`),
+      },
+    ]);
+    assert.throws(() => readProfileDraft(draftPath, detected), /checklist items/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("verification refuses when nothing can validate the change", async () => {
+  const { verifyWorktree } = await import("./workflow-utils.js");
+  const root = scratch("adv-nothing-");
+  try {
+    // A project this runtime has no command for, and no profile to supply one.
+    fs.mkdirSync(path.join(root, "engine"));
+    fs.writeFileSync(path.join(root, "engine", "Cargo.toml"), "[package]");
+    // Silently running nothing would let the delivery gate pass on an
+    // unvalidated change, which is the one answer verification must never give.
+    assert.throws(
+      () => verifyWorktree(root, ["engine/src/main.rs"], null),
+      /Nothing can validate this change/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

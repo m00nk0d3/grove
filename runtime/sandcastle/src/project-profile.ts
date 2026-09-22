@@ -245,6 +245,41 @@ const COMMAND_PATTERN = /^[A-Za-z0-9._\/\\-]+$/;
 const MIN_PERSONA_LENGTH = 40;
 const MAX_PERSONA_LENGTH = 6000;
 const MAX_PATTERN_LENGTH = 200;
+const MAX_PATH_PATTERNS = 12;
+const MAX_CHECKLIST_ITEMS = 12;
+const MAX_CHECKLIST_ITEM_LENGTH = 400;
+const MAX_CONCERNS = 24;
+const MAX_FRAMEWORKS = 24;
+const MAX_PROJECTS = 24;
+const MAX_SURFACES = 24;
+
+// A quantifier applied to a group that itself contains one — (a+)+, (x*)* — is
+// the shape that makes a regular expression take exponential time. These
+// patterns are authored by an agent and then run against every changed file on
+// every workflow, and a JavaScript regex cannot be interrupted once it starts:
+// a single bad pattern stalls the run for ever with no error to report. One
+// 41-character path against /^(a+)+$/ never returns.
+const NESTED_QUANTIFIER = /\([^()]*[*+}][^()]*\)\s*[*+{]/;
+
+function assertUsablePattern(pattern: string, where: string): void {
+  if (pattern.length > MAX_PATTERN_LENGTH) {
+    fail(`${where} has a path pattern longer than ${MAX_PATTERN_LENGTH} characters.`);
+  }
+  if (NESTED_QUANTIFIER.test(pattern)) {
+    fail(
+      `${where} has a path pattern that can take exponential time to match: ${pattern}. ` +
+        "A repeated group that already contains a repetition cannot be run safely; " +
+        "match the path segments directly instead.",
+    );
+  }
+  try {
+    new RegExp(pattern);
+  } catch {
+    fail(
+      `${where} has a path pattern that is not a valid regular expression: ${pattern}`,
+    );
+  }
+}
 
 function fail(message: string): never {
   throw new Error(message);
@@ -337,6 +372,9 @@ function readFrameworks(value: unknown, where: string): ProfileFramework[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
     fail(`${where} frameworks must be a list.`);
+  }
+  if (value.length > MAX_FRAMEWORKS) {
+    fail(`${where} lists ${value.length} frameworks; at most ${MAX_FRAMEWORKS} are allowed.`);
   }
   return value.map((entry, index) => {
     if (!entry || typeof entry !== "object") {
@@ -448,17 +486,16 @@ function readConcern(value: unknown, index: number): ProfileConcern {
   ) {
     fail(`Profile concern '${candidate.id}' lists no path patterns.`);
   }
+  if (candidate.pathPatterns.length > MAX_PATH_PATTERNS) {
+    fail(
+      `Profile concern '${candidate.id}' lists ${candidate.pathPatterns.length} path patterns; at most ${MAX_PATH_PATTERNS} are allowed.`,
+    );
+  }
   for (const pattern of candidate.pathPatterns) {
-    if (typeof pattern !== "string" || pattern.length > MAX_PATTERN_LENGTH) {
+    if (typeof pattern !== "string") {
       fail(`Profile concern '${candidate.id}' has an unusable path pattern.`);
     }
-    try {
-      new RegExp(pattern);
-    } catch {
-      fail(
-        `Profile concern '${candidate.id}' has a path pattern that is not a valid regular expression: ${pattern}`,
-      );
-    }
+    assertUsablePattern(pattern, `Profile concern '${candidate.id}'`);
   }
   if (
     !Array.isArray(candidate.checklist) ||
@@ -466,6 +503,22 @@ function readConcern(value: unknown, index: number): ProfileConcern {
     candidate.checklist.some((item) => typeof item !== "string" || !item.trim())
   ) {
     fail(`Profile concern '${candidate.id}' has an empty checklist.`);
+  }
+  // Every checklist item is rendered into a reviewer's prompt, so an unbounded
+  // list is an unbounded prompt.
+  if (candidate.checklist.length > MAX_CHECKLIST_ITEMS) {
+    fail(
+      `Profile concern '${candidate.id}' has ${candidate.checklist.length} checklist items; at most ${MAX_CHECKLIST_ITEMS} are allowed.`,
+    );
+  }
+  if (
+    candidate.checklist.some(
+      (item) => (item as string).length > MAX_CHECKLIST_ITEM_LENGTH,
+    )
+  ) {
+    fail(
+      `Profile concern '${candidate.id}' has a checklist item longer than ${MAX_CHECKLIST_ITEM_LENGTH} characters.`,
+    );
   }
   const concern: ProfileConcern = {
     id: candidate.id,
@@ -513,6 +566,11 @@ export function readProfileDraft(
   if (!Array.isArray(candidate.projects) || candidate.projects.length === 0) {
     throw new Error("The project profile lists no projects.");
   }
+  if (candidate.projects.length > MAX_PROJECTS) {
+    throw new Error(
+      `The project profile lists ${candidate.projects.length} projects; at most ${MAX_PROJECTS} are allowed.`,
+    );
+  }
   const projects = candidate.projects.map(readProject);
 
   const seen = new Set<string>();
@@ -540,6 +598,11 @@ export function readProfileDraft(
     }
   }
 
+  if (Array.isArray(candidate.surfaces) && candidate.surfaces.length > MAX_SURFACES) {
+    throw new Error(
+      `The project profile lists ${candidate.surfaces.length} surfaces; at most ${MAX_SURFACES} are allowed.`,
+    );
+  }
   const surfaces = Array.isArray(candidate.surfaces)
     ? candidate.surfaces.map(readSurface)
     : [];
@@ -549,6 +612,13 @@ export function readProfileDraft(
       throw new Error(`The project profile has two surfaces for '${surface.root}'.`);
     }
     surfaceRoots.add(surface.root);
+    // A directory cannot be both, or a change there would be attributed twice
+    // and validated by whichever rule happened to run first.
+    if (seen.has(surface.root)) {
+      throw new Error(
+        `Profile surface '${surface.root}' is also a project in this repository.`,
+      );
+    }
     // A surface validated by a project that does not exist would silently fall
     // back to validating everything, which is the behaviour surfaces exist to fix.
     if (surface.validatedBy !== undefined && !seen.has(surface.validatedBy)) {
@@ -558,6 +628,11 @@ export function readProfileDraft(
     }
   }
 
+  if (Array.isArray(candidate.concerns) && candidate.concerns.length > MAX_CONCERNS) {
+    throw new Error(
+      `The project profile lists ${candidate.concerns.length} concerns; at most ${MAX_CONCERNS} are allowed.`,
+    );
+  }
   const concerns = Array.isArray(candidate.concerns)
     ? candidate.concerns.map(readConcern)
     : [];
