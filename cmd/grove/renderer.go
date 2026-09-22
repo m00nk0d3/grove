@@ -586,9 +586,12 @@ func listWindow(available, rowsPerItem, total, selected int) (start, count int) 
 	if count <= 0 {
 		return 0, 0
 	}
-	if selected >= count {
-		start = selected - count + 1
-	}
+	// Hold the selection in the middle of the window and move the list under it,
+	// rather than pushing the selection against whichever edge it is travelling
+	// towards. The clamps below stop the window running off either end, so the
+	// selection does reach the top and bottom rows, but only at the ends of the
+	// list, where there is nothing further to scroll to.
+	start = selected - (count-1)/2
 	if start+count > total {
 		start = total - count
 	}

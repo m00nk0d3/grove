@@ -76,6 +76,35 @@ func TestListWindow_ShortListIsNotPadded(t *testing.T) {
 	assert.Equal(t, 3, count, "a list shorter than the panel shows every item and no more")
 }
 
+// The selection sits in the middle of the window and the list moves under it,
+// so the eye stays in one place while scrolling. It only reaches the top and
+// bottom rows at the ends of the list, where there is nothing left to scroll.
+func TestListWindow_KeepsSelectionCentred(t *testing.T) {
+	const total, rows = 120, 11
+	middle := (rows - 1) / 2
+
+	for _, selected := range []int{20, 50, 99} {
+		start, count := listWindow(rows, 1, total, selected)
+		require.Equal(t, rows, count)
+		assert.Equal(t, middle, selected-start,
+			"selection %d should sit in the middle row of the window", selected)
+	}
+
+	// At the top of the list there is nothing above to scroll to, so the window
+	// stays put and the selection walks down to the middle.
+	for selected := 0; selected <= middle; selected++ {
+		start, _ := listWindow(rows, 1, total, selected)
+		assert.Equal(t, 0, start, "the window should not scroll above the first item")
+		assert.Equal(t, selected, selected-start, "selection %d should be on its own row", selected)
+	}
+
+	// And at the bottom it stops with the last item on the last row.
+	start, count := listWindow(rows, 1, total, total-1)
+	assert.Equal(t, total-rows, start, "the window should not scroll past the last item")
+	assert.Equal(t, total, start+count)
+	assert.Equal(t, rows-1, (total-1)-start, "the last item sits on the last row")
+}
+
 func TestListWindow_LastWindowEndsAtTheLastItem(t *testing.T) {
 	start, count := listWindow(10, 1, 25, 24)
 	assert.Equal(t, 15, start)
