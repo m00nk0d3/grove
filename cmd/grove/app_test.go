@@ -4408,3 +4408,54 @@ func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
 		})
 	}
 }
+
+func TestModel_IssueListPageFollowsSelection(t *testing.T) {
+	issues := make([]domain.Issue, 120)
+	for i := range issues {
+		issues[i] = domain.Issue{Number: i + 1, Title: fmt.Sprintf("issue %d", i+1)}
+	}
+	m := &Model{view: viewIssues, issues: issues}
+
+	// Selecting inside the first page leaves it alone.
+	m.selectedIssueIdx = 10
+	m.syncPageToSelection()
+	assert.Equal(t, 0, m.currentPage)
+
+	// Moving past the end of a page brings the page with it. Without this the
+	// detail pane followed the selection while the list kept drawing page one.
+	m.selectedIssueIdx = 50
+	m.syncPageToSelection()
+	assert.Equal(t, 1, m.currentPage)
+
+	m.selectedIssueIdx = 119
+	m.syncPageToSelection()
+	assert.Equal(t, 2, m.currentPage)
+
+	// And coming back up brings it back.
+	m.selectedIssueIdx = 3
+	m.syncPageToSelection()
+	assert.Equal(t, 0, m.currentPage)
+
+	// A list that fits on one page never leaves it.
+	short := &Model{view: viewIssues, issues: issues[:10], currentPage: 0, selectedIssueIdx: 9}
+	short.syncPageToSelection()
+	assert.Equal(t, 0, short.currentPage)
+}
+
+func TestModel_PullRequestListPageFollowsSelection(t *testing.T) {
+	prs := make([]domain.PullRequest, 120)
+	for i := range prs {
+		prs[i] = domain.PullRequest{Number: i + 1}
+	}
+	m := &Model{view: viewPRs, prs: prs}
+
+	m.selectedPRIdx = 60
+	m.syncPageToSelection()
+	assert.Equal(t, 1, m.currentPage)
+
+	// The issues page is not moved by a pull request selection, and vice versa.
+	m.view = viewIssues
+	m.selectedPRIdx = 110
+	m.syncPageToSelection()
+	assert.Equal(t, 1, m.currentPage)
+}

@@ -3299,21 +3299,25 @@ func (m *Model) clampSelectedIdx() {
 
 func (m *Model) clampIssueIdx() {
 	if len(m.issues) == 0 {
-		m.selectedIssueIdx = 0
+		m.selectedIssueIdx = 0
+		m.syncPageToSelection()
 		return
 	}
 	if m.selectedIssueIdx >= len(m.issues) {
-		m.selectedIssueIdx = len(m.issues) - 1
+		m.selectedIssueIdx = len(m.issues) - 1
+		m.syncPageToSelection()
 	}
 }
 
 func (m *Model) clampPRIdx() {
 	if len(m.prs) == 0 {
-		m.selectedPRIdx = 0
+		m.selectedPRIdx = 0
+		m.syncPageToSelection()
 		return
 	}
 	if m.selectedPRIdx >= len(m.prs) {
-		m.selectedPRIdx = len(m.prs) - 1
+		m.selectedPRIdx = len(m.prs) - 1
+		m.syncPageToSelection()
 	}
 }
 
@@ -3378,7 +3382,8 @@ func (m *Model) moveDown() {
 			for ti, r := range tree {
 				if r.originalIdx == m.selectedIssueIdx {
 					if ti < len(tree)-1 {
-						m.selectedIssueIdx = tree[ti+1].originalIdx
+						m.selectedIssueIdx = tree[ti+1].originalIdx
+						m.syncPageToSelection()
 						m.ctxScrollOffset = 0
 					}
 					break
@@ -3428,7 +3433,8 @@ func (m *Model) moveUp() {
 			for ti, r := range tree {
 				if r.originalIdx == m.selectedIssueIdx {
 					if ti > 0 {
-						m.selectedIssueIdx = tree[ti-1].originalIdx
+						m.selectedIssueIdx = tree[ti-1].originalIdx
+						m.syncPageToSelection()
 						m.ctxScrollOffset = 0
 					}
 					break
@@ -3475,7 +3481,8 @@ func (m *Model) fuzzyConfirmSelection() tea.Cmd {
 		if iss, ok := result.Payload.(domain.Issue); ok {
 			for i, issue := range m.issues {
 				if issue.Number == iss.Number {
-					m.selectedIssueIdx = i
+					m.selectedIssueIdx = i
+					m.syncPageToSelection()
 					break
 				}
 			}
@@ -3487,7 +3494,8 @@ func (m *Model) fuzzyConfirmSelection() tea.Cmd {
 		if pr, ok := result.Payload.(domain.PullRequest); ok {
 			for i, p := range m.prs {
 				if p.Number == pr.Number {
-					m.selectedPRIdx = i
+					m.selectedPRIdx = i
+					m.syncPageToSelection()
 					break
 				}
 			}
@@ -3632,5 +3640,27 @@ func (m *Model) performCleanupCmd(worktreePaths []string, branches []string) tea
 		}
 
 		return cleanupDoneMsg{deleted: deleted, err: errors.Join(errs...)}
+	}
+}
+
+// The issues and pull request lists render one page at a time while the
+// selection moves through the whole list. Nothing kept the two in step, so past
+// the first page the selection walked off the rendered slice: the detail pane
+// followed it, because it reads the selected item directly, while the list
+// carried on drawing page one and appeared frozen.
+//
+// The page is derived from the selection rather than tracked beside it, so the
+// two cannot drift apart again. The explicit page keys move the selection to the
+// start of their page, so they land on the same answer.
+func (m *Model) syncPageToSelection() {
+	switch m.view {
+	case viewIssues:
+		if len(m.issues) > pageSize && m.selectedIssueIdx >= 0 {
+			m.currentPage = m.selectedIssueIdx / pageSize
+		}
+	case viewPRs:
+		if len(m.prs) > pageSize && m.selectedPRIdx >= 0 {
+			m.currentPage = m.selectedPRIdx / pageSize
+		}
 	}
 }

@@ -425,6 +425,13 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 			target = filepath.Base(mission.worktreePath)
 		}
 		detail := fmt.Sprintf("%d agent  •  %s", mission.agentCount, target)
+		// On the completed tab the run is over, so "0 agent" says nothing and
+		// when it finished says a lot.
+		if selectedTab == dashboardTabCompleted {
+			if finished := missionFinishedAt(mission); !finished.IsZero() {
+				detail = fmt.Sprintf("%s  •  %s", detail, formatFinishedAt(finished, time.Now()))
+			}
+		}
 		nameWidth := listInner - 18
 		if nameWidth < 12 {
 			nameWidth = 12
@@ -566,6 +573,41 @@ func isDismissed(workflow domain.WorkflowRunRef, dismissed map[string]bool) bool
 		runID = workflow.WorkflowID
 	}
 	return runID != "" && dismissed[runID]
+}
+
+// missionFinishedAt reports when a run stopped. The runtime rewrites the
+// workflow's record on every change and once more as it exits, so on a finished
+// run the last update is the completion. A run that never reported an update
+// falls back to when it started, and one that reported neither is left blank
+// rather than shown as the zero date.
+func missionFinishedAt(mission dashboardMission) time.Time {
+	if !mission.workflow.UpdatedAt.IsZero() {
+		return mission.workflow.UpdatedAt
+	}
+	return mission.workflow.StartedAt
+}
+
+// A timestamp is read at a glance or not at all: today's runs want the time,
+// this year's want the day, and anything older wants the year.
+func formatFinishedAt(finished, now time.Time) string {
+	finished = finished.Local()
+	now = now.Local()
+	switch {
+	case sameDay(finished, now):
+		return finished.Format("15:04")
+	case sameDay(finished, now.AddDate(0, 0, -1)):
+		return "yesterday " + finished.Format("15:04")
+	case finished.Year() == now.Year():
+		return finished.Format("2 Jan 15:04")
+	default:
+		return finished.Format("2 Jan 2006")
+	}
+}
+
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
 }
 
 func missionFromWorkflow(workflow domain.WorkflowRunRef, item domain.WorkItem) dashboardMission {

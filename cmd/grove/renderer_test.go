@@ -2562,3 +2562,44 @@ func TestRenderSessionBlock_DegradedReason(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatFinishedAt(t *testing.T) {
+	now := time.Date(2026, time.September, 22, 16, 30, 0, 0, time.Local)
+
+	cases := []struct {
+		name     string
+		finished time.Time
+		want     string
+	}{
+		// A run from today is placed by its time; the date would be noise.
+		{"today", time.Date(2026, time.September, 22, 15, 42, 0, 0, time.Local), "15:04 shape"},
+		{"yesterday", time.Date(2026, time.September, 21, 9, 13, 0, 0, time.Local), "yesterday 09:13"},
+		{"earlier this year", time.Date(2026, time.March, 4, 11, 5, 0, 0, time.Local), "4 Mar 11:05"},
+		{"a previous year", time.Date(2025, time.December, 31, 23, 59, 0, 0, time.Local), "31 Dec 2025"},
+	}
+	for _, tc := range cases {
+		got := formatFinishedAt(tc.finished, now)
+		if tc.name == "today" {
+			assert.Equal(t, "15:42", got)
+			continue
+		}
+		assert.Equal(t, tc.want, got, tc.name)
+	}
+}
+
+func TestMissionFinishedAtPrefersTheLastUpdate(t *testing.T) {
+	started := time.Date(2026, time.September, 22, 15, 0, 0, 0, time.UTC)
+	updated := time.Date(2026, time.September, 22, 15, 42, 0, 0, time.UTC)
+
+	// The runtime writes the record once more as it exits, so the last update
+	// is when the run finished.
+	withBoth := dashboardMission{workflow: domain.WorkflowRunRef{StartedAt: started, UpdatedAt: updated}}
+	assert.Equal(t, updated, missionFinishedAt(withBoth))
+
+	// A run that never reported an update still shows when it began.
+	startedOnly := dashboardMission{workflow: domain.WorkflowRunRef{StartedAt: started}}
+	assert.Equal(t, started, missionFinishedAt(startedOnly))
+
+	// One that reported neither is blank rather than the zero date.
+	assert.True(t, missionFinishedAt(dashboardMission{}).IsZero())
+}
