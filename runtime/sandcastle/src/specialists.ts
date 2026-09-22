@@ -250,12 +250,20 @@ Required work:
    its CI workflow under .github/, any Makefile, justfile or Taskfile, and its
    README or CONTRIBUTING. Establish what the project is and how this repository
    actually builds, tests and lints it.
-2. Name the frameworks each project is built with. The dependency list above is
-   evidence, not an answer: report the ones that change how code here is written,
-   and say what each one does *in this repository* rather than what it does in
-   general. "Alembic, and autogenerate is disabled here, so migrations are
-   written by hand" is useful; "Alembic is a migration tool" is not. A project
-   with no framework worth naming gets an empty list.
+2. Fill in 'frameworks' for each project. Work down the dependency list above and
+   name every entry that changes how code here is written — the web framework,
+   the ORM, the migration tool, the UI library, the styling system, the test
+   runner, the data-fetching layer. For each, say what it does *in this
+   repository* rather than what it does in general: "Alembic, and autogenerate is
+   disabled here, so migrations are written by hand" is useful; "Alembic is a
+   migration tool" is not.
+   - This is a structured field and it is the only place framework facts are
+     readable later. Naming them in 'ecosystem' or inside a persona does not
+     count, because nothing can act on prose. A project whose dependency list
+     names a framework must have it here.
+   - 'ecosystem' stays one sentence of orientation. It is not where this goes.
+   - Leave the list empty only when the project genuinely depends on nothing but
+     its language's own standard library.
 3. For each project write six personas, one per role: planning, tests,
    implementation, verification, review, documentation. Each is three to six
    lines, written in the second person, naming the frameworks and the conventions
@@ -306,6 +314,10 @@ Completion criteria:
         "marker": "<as listed above>",
         "label": "<UPPERCASE, as listed above>",
         "ecosystem": "one sentence a person would recognise the project by",
+        "frameworks": [
+          { "name": "React", "role": "renders the SPA; feature folders under src/features/", "evidence": "react in package.json" },
+          { "name": "TanStack Query", "role": "owns all server state; hooks need scope-aware query keys", "evidence": "@tanstack/react-query in package.json" }
+        ],
         "personas": {
           "planning": "...", "tests": "...", "implementation": "...",
           "verification": "...", "review": "...", "documentation": "..."

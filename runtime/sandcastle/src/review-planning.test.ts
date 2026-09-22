@@ -571,3 +571,30 @@ test("artifact paths are built posix, not with the platform separator", async ()
   );
   assert.match(declaration[1], /\.agent\//, "agentDir should read as a posix path");
 });
+
+test("the prompt engineer is told frameworks belong in the structured field", async () => {
+  const { SPECIALISTS } = await import("./specialists.js");
+  const prompt = SPECIALISTS.PROMPT_ENGINEER(
+    "owner/repo",
+    ".agent/issue-1/draft.json",
+    [
+      {
+        root: "frontend",
+        marker: "frontend/package.json",
+        label: "TYPESCRIPT",
+        dependencies: ["react", "@tanstack/react-query", "tailwindcss"],
+      },
+    ],
+    [],
+  );
+
+  // The detected dependencies are handed over as evidence.
+  assert.match(prompt, /react, @tanstack\/react-query, tailwindcss/);
+  // And the instruction closes the loophole that left the field empty: the
+  // first profile generated on a real repository put React and Vite in the
+  // ecosystem prose and left `frameworks` as [].
+  assert.match(prompt, /Naming them in 'ecosystem' or inside a persona does not\s+count/);
+  assert.match(prompt, /must have it here/);
+  // The schema shows a filled example rather than an empty placeholder.
+  assert.match(prompt, /"frameworks": \[\s*\{ "name": "React"/);
+});

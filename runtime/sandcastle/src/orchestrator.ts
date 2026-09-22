@@ -977,6 +977,26 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
               `\x1b[36m[Prompt Engineer]\x1b[0m ${where} setup: ${project.setup.command} ${project.setup.args.join(" ")}`,
             );
           }
+          if (project.frameworks.length > 0) {
+            console.log(
+              `\x1b[36m[Prompt Engineer]\x1b[0m ${where} frameworks: ${project.frameworks
+                .map((framework) => framework.name)
+                .join(", ")}`,
+            );
+          } else {
+            // Frameworks are the structured field later stages can act on, and
+            // a profile that puts them in prose instead is silently poorer. A
+            // project that declares dependencies but names none is worth saying
+            // out loud rather than discovering by reading the file.
+            const declared = readDirectDependencies(
+              path.join(targetDir, project.marker),
+            );
+            if (declared.length > 0) {
+              console.log(
+                `\x1b[33m[Prompt Engineer]\x1b[0m ${where} names no frameworks, though it declares ${declared.length} dependencies. Rerun with --refresh-profile to have them identified.`,
+              );
+            }
+          }
         }
       }
     }
