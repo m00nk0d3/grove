@@ -76,6 +76,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   head repository is only compared by name when GitHub actually identified one.
   A pull request whose fork has since been deleted reports as a fork rather
   than as malformed metadata.
+- **A JavaScript project is no longer tested without its dependencies** — a
+  git worktree is populated from tracked files alone, so `node_modules` never
+  came with it and `npm test` failed before running a single test. Every
+  workflow on a repository with a JavaScript project hit this, and the agent
+  had to notice and install by hand. Verification now installs them first when
+  they are missing, from the lockfile when the project has one, and says so.
+  A project that already has them is untouched, so repair cycles pay nothing.
+- **A failing test command reports the failure, not its whole transcript** — a
+  failing command handed the agent everything it had printed: the restore log,
+  every compiler warning, and the failure somewhere inside. The lines that name
+  a failure are now selected, along with the three lines after each one so an
+  assertion keeps its expected and actual values, and the rest is dropped. A
+  15,000-character .NET transcript becomes about 500 characters without losing
+  the failing test, its assertion, or the closing tally. When nothing in the
+  output names a failure, the end of it is shown instead.
 - **Installing the runtime a second time actually replaces it** — the
   installers and `make install-runtime` handed npm a package whose version had
   not changed, so npm reported success and left the previously installed files

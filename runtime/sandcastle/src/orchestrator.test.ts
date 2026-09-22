@@ -7,8 +7,10 @@ import {
   getAgentLaunchConfig,
   getClaudeAgentArgs,
   getPiAgentArgs,
+  ensureJavaScriptDependencies,
   getVerificationCommand,
   planVerification,
+  summarizeCommandFailure,
   LEAN_WORKFLOW_STEPS,
   loadWorkflowState,
   parseCliArgs,
@@ -2096,4 +2098,97 @@ test("the delivery commit is retitled only while it is still unpublished", () =>
     retitleDeliveryCommit("/wt", "agent/x-1086", title, already.runner),
     "skipped",
   );
+});
+
+test("a JavaScript project checked out without its dependencies gets them installed", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), ".js-deps-"));
+  try {
+    const calls: { args: string[]; cwd?: string }[] = [];
+    const runner = (_command: string, args: string[], options?: { cwd?: string }) => {
+      calls.push({ args, cwd: options?.cwd });
+      return "";
+    };
+
+    // A git worktree carries no ignored files, so this is what every fresh
+    // checkout of a JavaScript project looks like.
+    fs.writeFileSync(path.join(root, "package.json"), "{}");
+    fs.writeFileSync(path.join(root, "package-lock.json"), "{}");
+    assert.equal(ensureJavaScriptDependencies(root, runner), "installed");
+    assert.deepEqual(calls, [{ args: ["ci"], cwd: root }], "a lockfile means ci");
+
+    // Without a lockfile there is nothing for ci to honour.
+    calls.length = 0;
+    fs.rmSync(path.join(root, "package-lock.json"));
+    assert.equal(ensureJavaScriptDependencies(root, runner), "installed");
+    assert.deepEqual(calls, [{ args: ["install"], cwd: root }]);
+
+    // Already installed: nothing is run, so verification does not pay for an
+    // install on every repair cycle.
+    calls.length = 0;
+    fs.mkdirSync(path.join(root, "node_modules"));
+    assert.equal(ensureJavaScriptDependencies(root, runner), "present");
+    assert.deepEqual(calls, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a failing verification command reports the failure, not the whole transcript", () => {
+  // Short output is worth reading in full.
+  const short = summarizeCommandFailure("npm test", 1, "  1 test failed  ");
+  assert.equal(short, "npm test failed with exit code 1:\n1 test failed");
+
+  assert.match(
+    summarizeCommandFailure("npm test", null, "   "),
+    /produced no output/,
+  );
+
+  // A long transcript: a restore log and hundreds of warnings, one real
+  // failure in the middle, and the summary at the end.
+  const noise = Array.from(
+    { length: 400 },
+    (_, index) => `warning CS0618: 'Transform' is obsolete [project ${index}]`,
+  );
+  const transcript = [
+    ...noise.slice(0, 200),
+    "  X KpiRollupsTests.SuppressesEmptyGroups [FAIL]",
+    "  Assert.Equal() Failure: Values differ",
+    "  Expected: 3",
+    "  Actual:   4",
+    ...noise.slice(200),
+    "Failed!  - Failed:     1, Passed:  2438, Skipped:     0, Total:  2439",
+  ].join("\n");
+
+  const summary = summarizeCommandFailure(
+    "dotnet test OPS.sln (in backend)",
+    1,
+    transcript,
+  );
+  assert.ok(
+    summary.length < transcript.length / 4,
+    "the transcript is cut down rather than passed along",
+  );
+  assert.match(summary, /dotnet test OPS\.sln \(in backend\) failed with exit code 1/);
+  assert.match(summary, /SuppressesEmptyGroups \[FAIL\]/, "the failing test survives");
+  assert.match(summary, /Assert\.Equal\(\) Failure/, "so does its assertion");
+  assert.match(
+    summary,
+    /Expected: 3[\s\S]*Actual:   4/,
+    "an assertion's values follow the line naming it, so they come along",
+  );
+  assert.match(summary, /Failed:     1, Passed:  2438/, "and the closing summary");
+  assert.ok(
+    !summary.includes("[project 100]"),
+    "the wall of obsolete-API warnings names no failure and is dropped",
+  );
+
+  // Nothing in the transcript names a failure, so the end of it is all the
+  // signal there is and it is shown rather than dropped.
+  const silent = Array.from(
+    { length: 500 },
+    (_, index) => `step ${index} completed`,
+  ).join("\n");
+  const fallback = summarizeCommandFailure("npm test", 1, silent);
+  assert.match(fallback, /showing the end of its output/);
+  assert.match(fallback, /step 499 completed/);
 });

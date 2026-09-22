@@ -733,16 +733,126 @@ function collectTrackedChanges(targetDir: string): string[] {
   return files;
 }
 
+// A git worktree is populated from tracked files alone, so a JavaScript project
+// checked out for a workflow has no node_modules and its test command fails
+// before it runs a single test. Install them once, honouring a lockfile when the
+// project has one.
+export function ensureJavaScriptDependencies(
+  projectDir: string,
+  runner: CommandRunner = runCommand,
+): "present" | "installed" {
+  if (fs.existsSync(path.join(projectDir, "node_modules"))) {
+    return "present";
+  }
+  const locked = ["package-lock.json", "npm-shrinkwrap.json"].some((lockfile) =>
+    fs.existsSync(path.join(projectDir, lockfile)),
+  );
+  runner("npm", locked ? ["ci"] : ["install"], { cwd: projectDir });
+  return "installed";
+}
+
+const FAILURE_LINE =
+  /\b(error|errors|fail|fails|failed|failing|failure|failures|assert)\b/i;
+const MAX_FAILURE_CHARS = 4000;
+const FAILURE_TAIL_LINES = 20;
+const FAILURE_CONTEXT_LINES = 3;
+const LEADING_NAMED_LINES = 30;
+
+// A failing test command reports through its whole transcript: a restore log,
+// every compiler warning, and only then the failure. Handing all of it to an
+// agent buries the one thing it has to act on, so a transcript past a readable
+// size is reduced to the lines that name a failure. When nothing names one, the
+// end of the output is the only signal there is.
+export function summarizeCommandFailure(
+  label: string,
+  status: number | null,
+  output: string,
+): string {
+  const header = `${label} failed with exit code ${status ?? "unknown"}`;
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return `${header}. The command produced no output.`;
+  }
+  if (trimmed.length <= MAX_FAILURE_CHARS) {
+    return `${header}:\n${trimmed}`;
+  }
+  const lines = trimmed.split(/\r?\n/);
+  // A line naming a failure rarely carries the detail: an assertion prints its
+  // expected and actual values on the lines that follow, so they come along.
+  const keep = new Set<number>();
+  lines.forEach((line, index) => {
+    if (!FAILURE_LINE.test(line)) return;
+    for (let offset = 0; offset <= FAILURE_CONTEXT_LINES; offset += 1) {
+      if (index + offset < lines.length) keep.add(index + offset);
+    }
+  });
+  if (keep.size === 0) {
+    return cap(
+      `${header}, showing the end of its output:\n` +
+        lines.slice(-FAILURE_TAIL_LINES).join("\n"),
+    );
+  }
+  const selected = [...keep].sort((a, b) => a - b);
+  const kept: string[] = [];
+  let previous: number | undefined;
+  for (const index of selected) {
+    if (previous !== undefined && index > previous + 1) {
+      kept.push("...");
+    }
+    kept.push(lines[index]);
+    previous = index;
+  }
+  return cap(
+    `${header}, showing the lines that name a failure:\n${kept.join("\n")}`,
+  );
+}
+
+function cap(summary: string): string {
+  return summary.length <= MAX_FAILURE_CHARS
+    ? summary
+    : `${summary.slice(0, MAX_FAILURE_CHARS)}\n... (output truncated)`;
+}
+
+// Verification commands are run here rather than through runCommand so the
+// transcript survives long enough to be summarized; runCommand folds it into an
+// error message whole.
+function runVerificationTask(task: VerificationTask, cwd: string): void {
+  const result = spawnSync(task.command, task.args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.error) {
+    throw new Error(`Unable to run ${task.label}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      summarizeCommandFailure(
+        task.label,
+        result.status,
+        `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+      ),
+    );
+  }
+}
+
 export function verifyWorktree(targetDir: string, touched?: string[]): void {
   const tasks = planVerification(
     detectStackProjects(targetDir),
     touched ?? collectTrackedChanges(targetDir),
   );
   for (const task of tasks) {
+    const cwd = task.root ? path.join(targetDir, task.root) : targetDir;
+    if (
+      task.stack === "TYPESCRIPT" &&
+      ensureJavaScriptDependencies(cwd) === "installed"
+    ) {
+      console.log(
+        `\x1b[32m[Validation]\x1b[0m Installed JavaScript dependencies in ${task.root || "."}`,
+      );
+    }
     console.log(`\x1b[36m[Validation]\x1b[0m ${task.label}`);
-    runCommand(task.command, task.args, {
-      cwd: task.root ? path.join(targetDir, task.root) : targetDir,
-    });
+    runVerificationTask(task, cwd);
   }
   // Strip trailing whitespace from all tracked files before diff --check
   const changedFiles = runCommand(
