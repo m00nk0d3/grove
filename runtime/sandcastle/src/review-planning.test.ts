@@ -363,18 +363,31 @@ test("the review cap is configurable and refuses nonsense", () => {
 // Regressions found by an adversarial sweep. Each one was a real defect.
 // --------------------------------------------------------------------------
 
-test("a project owns its whole tree, so no surface forms inside it", () => {
+test("a nested project owns its whole tree; the repository root does not", () => {
   const root = scratch("adv-owned-");
   try {
-    // A project at the repository root owns everything below it.
+    // A manifest at the repository root is usually tooling sitting above the
+    // real work, so it does not claim the tree. Letting it do so meant a
+    // backend added later was never detected at all.
     fs.writeFileSync(path.join(root, "package.json"), "{}");
     fs.mkdirSync(path.join(root, "migrations"));
     for (const n of ["1.sql", "2.sql", "3.sql"]) {
       fs.writeFileSync(path.join(root, "migrations", n), "");
     }
-    assert.deepEqual(detectSurfaces(root, detectStackProjects(root)), []);
+    assert.deepEqual(
+      detectSurfaces(root, detectStackProjects(root)).map((s) => s.root),
+      ["migrations"],
+      "a root manifest must not hide a surface beneath it",
+    );
+    // A project added below the root is seen, rather than swallowed.
+    fs.mkdirSync(path.join(root, "backend"));
+    fs.writeFileSync(path.join(root, "backend", "pyproject.toml"), "[project]");
+    assert.deepEqual(
+      detectStackProjects(root).map((p) => `${p.root || "<root>"}:${p.stack}`),
+      ["<root>:TYPESCRIPT", "backend:PYTHON"],
+    );
 
-    // And so does a nested one.
+    // A nested project, however, still owns everything under it.
     const nested = scratch("adv-owned-nested-");
     try {
       fs.mkdirSync(path.join(nested, "backend"));

@@ -155,7 +155,15 @@ export function detectStackProjects(
         marker: root ? `${root}/${marker.marker}` : marker.marker,
         ...(marker.label ? { label: marker.label } : {}),
       });
-      return; // this directory owns a project; nested markers belong to it
+      // A nested project owns its subtree: a solution's individual projects and
+      // a workspace's packages must not each become entries of their own.
+      //
+      // The repository root is the exception. A manifest there is very often
+      // tooling — formatters, hooks, workspace declarations — sitting above the
+      // real projects, and letting it own everything made a backend added later
+      // invisible: no specialist, no test command, and no staleness when it
+      // appeared.
+      if (root !== "") return;
     }
     if (remaining <= 0) {
       return;
@@ -357,8 +365,11 @@ const MIN_SURFACE_SHARE = 0.6;
 
 function isOwned(root: string, owned: Set<string>): boolean {
   for (const projectRoot of owned) {
-    // "" is the repository root, which owns every directory below it.
-    if (projectRoot === "") return true;
+    // The repository root is deliberately not an owner here, for the same
+    // reason the walk descends past it: a manifest at the root is usually
+    // tooling above the real work, and letting it claim everything would mean a
+    // repository with a root package.json could never have a surface.
+    if (projectRoot === "") continue;
     if (root === projectRoot || root.startsWith(`${projectRoot}/`)) return true;
   }
   return false;
