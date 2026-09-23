@@ -287,6 +287,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A workflow started from a shell honours the configured agent** — Grove
+  passes the agent to the workflows it starts, but running `imp`, `review`, or
+  any other workflow command directly left `AGENT_FLOW_AGENT_BACKEND` unset, so
+  the runtime launched OpenCode regardless of `default_agent`. Without the
+  variable, the runtime now reads `[sandcastle].default_agent` from
+  `~/.grove/config.toml` before falling back to OpenCode.
 - **A workflow step is no longer recorded as done before it has finished** —
   `runStep` took a synchronous action and did not wait for it, so a step whose
   action was asynchronous was marked succeeded the moment it started, and

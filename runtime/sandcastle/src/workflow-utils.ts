@@ -195,16 +195,68 @@ function unsupportedBackendMessage(value: string): string {
   return `Unsupported AGENT_FLOW_AGENT_BACKEND '${value}'; expected one of ${expected}.`;
 }
 
+// groveConfigPath locates the Grove config the same way Grove does
+// (~/.grove/config.toml). The home directory comes from env rather than
+// os.homedir() so an empty test environment never reads the real config.
+export function groveConfigPath(env: NodeJS.ProcessEnv): string | null {
+  const home = env.USERPROFILE || env.HOME;
+  return home ? path.join(home, ".grove", "config.toml") : null;
+}
+
+// readConfiguredDefaultAgent returns [sandcastle].default_agent from the Grove
+// config, or null when the file or key is absent. Grove passes the agent
+// explicitly when it starts a workflow; this covers a workflow started directly
+// from a shell, which would otherwise ignore the configured agent.
+export function readConfiguredDefaultAgent(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const configPath = groveConfigPath(env);
+  if (!configPath) return null;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf8");
+  } catch {
+    return null;
+  }
+  let section = "";
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    const header = /^\[([^\]]+)\]$/.exec(trimmed);
+    if (header) {
+      section = header[1].trim();
+      continue;
+    }
+    if (section !== "sandcastle") continue;
+    const entry = /^default_agent\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(trimmed);
+    if (entry) return (entry[1] ?? entry[2]).trim() || null;
+  }
+  return null;
+}
+
 // resolveAgentBackend reports the configured backend without building a full
-// launch config, for callers that only need to label telemetry.
+// launch config, for callers that only need to label telemetry. The
+// AGENT_FLOW_AGENT_BACKEND variable wins, then the Grove config, then OpenCode.
 export function resolveAgentBackend(
   env: NodeJS.ProcessEnv = process.env,
 ): AgentBackend {
-  const backend = env.AGENT_FLOW_AGENT_BACKEND ?? "opencode";
-  if (!isAgentBackend(backend)) {
-    throw new Error(unsupportedBackendMessage(backend));
+  const fromEnv = env.AGENT_FLOW_AGENT_BACKEND;
+  if (fromEnv !== undefined) {
+    if (!isAgentBackend(fromEnv)) {
+      throw new Error(unsupportedBackendMessage(fromEnv));
+    }
+    return fromEnv;
   }
-  return backend;
+  const fromConfig = readConfiguredDefaultAgent(env);
+  if (fromConfig !== null) {
+    if (!isAgentBackend(fromConfig)) {
+      const expected = AGENT_BACKENDS.map((backend) => `'${backend}'`).join(", ");
+      throw new Error(
+        `Unsupported [sandcastle].default_agent '${fromConfig}' in ${groveConfigPath(env)}; expected one of ${expected}.`,
+      );
+    }
+    return fromConfig;
+  }
+  return "opencode";
 }
 
 export function getAgentLaunchConfig(

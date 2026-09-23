@@ -92,6 +92,7 @@ import {
 } from "./specialists.js";
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
@@ -469,6 +470,34 @@ test("resolveAgentBackend validates the configured backend", () => {
     () => resolveAgentBackend({ AGENT_FLOW_AGENT_BACKEND: "unknown" }),
     /Unsupported AGENT_FLOW_AGENT_BACKEND/,
   );
+});
+
+test("resolveAgentBackend falls back to the Grove config default agent", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "grove-agent-config-"));
+  try {
+    const env = { HOME: home, USERPROFILE: home };
+    assert.equal(resolveAgentBackend(env), "opencode");
+
+    fs.mkdirSync(path.join(home, ".grove"));
+    const configPath = path.join(home, ".grove", "config.toml");
+    fs.writeFileSync(
+      configPath,
+      "[herdr]\ndefault_agent = 'pi'\n\n[sandcastle]\nenabled = true\ndefault_agent = 'claude'\n",
+    );
+    assert.equal(resolveAgentBackend(env), "claude");
+    assert.equal(
+      resolveAgentBackend({ ...env, AGENT_FLOW_AGENT_BACKEND: "pi" }),
+      "pi",
+    );
+
+    fs.writeFileSync(configPath, '[sandcastle]\r\ndefault_agent = "bogus"\r\n');
+    assert.throws(
+      () => resolveAgentBackend(env),
+      /Unsupported \[sandcastle\]\.default_agent 'bogus'/,
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("agent startup recovers from a transient not-ready failure", () => {

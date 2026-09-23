@@ -325,6 +325,9 @@ Every workflow launches its specialists through the same backend, selected by
 | `claude` | [Claude Code](https://claude.com/claude-code) | Writes artifacts with its native `Write` tool. No local model server needed. |
 
 The backend is passed to the workflow process as `AGENT_FLOW_AGENT_BACKEND`.
+A workflow started directly from a shell (for example `imp 42`) without that
+variable reads `[sandcastle].default_agent` from `~/.grove/config.toml`, and
+falls back to `opencode` only when neither is set.
 Each backend reads its own optional overrides:
 
 | Variable | Backend | Default |
