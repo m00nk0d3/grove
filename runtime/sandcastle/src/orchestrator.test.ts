@@ -10,6 +10,9 @@ import {
   ensureJavaScriptDependencies,
   getVerificationCommand,
   describeVerificationTasks,
+  quoteForWindowsShell,
+  resolveWindowsScript,
+  runCommand,
   listVerificationCommands,
   planVerification,
   summarizeCommandFailure,
@@ -2346,4 +2349,77 @@ test("a single-project repository is described without directory noise", () => {
 test("a repository with nothing to run says so rather than going blank", () => {
   assert.match(listVerificationCommands([]), /No validation command is known/);
   assert.match(describeVerificationTasks([]), /No validation command is known/);
+});
+
+// Windows cannot start a .cmd the way it starts an .exe, and on Windows npm,
+// npx, yarn and pnpm are all .cmd shims — so this decides whether a JavaScript
+// project's suite can run at all. `npm.cmd` is refused with EINVAL because Node
+// will not spawn a script without a shell, and bare `npm` depends on the Node
+// doing the spawning: it resolves under Node 25 and fails with ENOENT under the
+// Node 22 this runtime ships. These tests must therefore not lean on whichever
+// Node happens to run them.
+const windowsOnly = { skip: process.platform !== "win32" ? "Windows only" : false };
+
+test("a command that needs an interpreter is recognised as one", windowsOnly, () => {
+  const npm = resolveWindowsScript("npm");
+  assert.ok(npm, "npm is a .cmd shim on Windows and has to be run through cmd.exe");
+  assert.match(npm!.toLowerCase(), /npm\.cmd$/);
+});
+
+test("a real executable is left to be spawned directly", windowsOnly, () => {
+  // git and dotnet are .exe files: routing them through cmd.exe would add a
+  // process and a layer of quoting for nothing.
+  assert.equal(resolveWindowsScript("git"), null);
+  assert.equal(resolveWindowsScript("node"), null);
+});
+
+test("a command that does not exist is left to fail as a missing command", windowsOnly, () => {
+  assert.equal(resolveWindowsScript("definitely-not-a-real-program-xyz"), null);
+});
+
+test("resolution is a no-op away from Windows", { skip: process.platform === "win32" ? "not Windows" : false }, () => {
+  assert.equal(resolveWindowsScript("npm"), null);
+});
+
+test("an argument is quoted so cmd.exe cannot read it as syntax", () => {
+  assert.equal(quoteForWindowsShell("test"), '"test"');
+  assert.equal(quoteForWindowsShell("a b"), '"a b"');
+  assert.equal(quoteForWindowsShell("a & b"), '"a & b"');
+  assert.equal(quoteForWindowsShell('say "hi"'), '"say ""hi"""');
+});
+
+// The reason for quoting rather than `shell: true`: a profile validates its
+// command as a single executable name but puts no such restriction on the
+// arguments, so an argument's own characters must never become syntax.
+test("an argument reaches a script intact, metacharacters and all", windowsOnly, () => {
+  const dir = fs.mkdtempSync(path.join(process.cwd(), "spawn-test-"));
+  try {
+    // The script reports its arguments through node rather than `echo`, which
+    // would strip the quotes back off and read the ampersand itself.
+    const script = path.join(dir, "echo-args.bat");
+    fs.writeFileSync(
+      script,
+      [
+        "@echo off",
+        `"${process.execPath}" -e "console.log(JSON.stringify(process.argv.slice(1)))" %*`,
+        "",
+      ].join("\r\n"),
+      "utf8",
+    );
+
+    const received = JSON.parse(runCommand(script, ["plain", "a & b", "has space"]));
+
+    assert.deepEqual(
+      received,
+      ["plain", "a & b", "has space"],
+      "each argument must arrive whole: an ampersand is not a command separator " +
+        "and a space does not split one argument into two",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("npm can actually be run, which is what the delivery gate needs", windowsOnly, () => {
+  assert.match(runCommand("npm", ["--version"]), /^\d+\.\d+\.\d+/);
 });

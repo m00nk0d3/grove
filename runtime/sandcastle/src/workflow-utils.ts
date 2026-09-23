@@ -1,4 +1,8 @@
-import { spawnSync } from "node:child_process";
+import {
+  spawnSync,
+  type SpawnSyncOptionsWithStringEncoding,
+  type SpawnSyncReturns,
+} from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -694,12 +698,108 @@ export function warnIfWindowsPathLimitLikely(
   );
 }
 
+// Windows cannot start a .cmd or .bat the way it starts an .exe: a script needs
+// a command interpreter. On Windows npm, npx, yarn and pnpm are all .cmd
+// shims, so this decides every JavaScript project's test command.
+//
+// Neither obvious spelling works on its own. Passing `npm.cmd` is refused with
+// EINVAL, because Node blocks spawning a script without a shell. Passing bare
+// `npm` depends on the Node running: it resolves under Node 25 and fails with
+// ENOENT under Node 22, which is the version this runtime ships in its bundle
+// — so the suite passed on the development machine while the shipped runtime
+// could not run a JavaScript suite at all.
+//
+// A command that resolves to a script is therefore run through the interpreter
+// with each argument quoted, rather than with `shell: true`, which would hand a
+// whole command line to cmd.exe and let an argument's own characters be read as
+// syntax. Anything that resolves to an executable is spawned directly, exactly
+// as before.
+const WINDOWS_SCRIPT_EXTENSIONS = [".cmd", ".bat"];
+
+function isFile(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// Resolves a command the way Windows does, walking PATH and trying each PATHEXT
+// in order, and reports whether what it found needs an interpreter. Returning
+// null means "spawn it directly", which covers every non-Windows platform, an
+// absolute path to a real executable, and a command that cannot be found at all
+// — the last so a genuinely missing program still fails as a missing program.
+export function resolveWindowsScript(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  const extensions = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((extension) => extension.trim().toLowerCase())
+    .filter(Boolean);
+
+  const named = path.extname(command).toLowerCase();
+  if (named) {
+    // Already spelled out, so there is nothing to resolve: it either is a
+    // script or it is not.
+    return WINDOWS_SCRIPT_EXTENSIONS.includes(named) ? command : null;
+  }
+
+  const directories =
+    command.includes("/") || command.includes("\\")
+      ? [""]
+      : (env.PATH ?? "").split(path.delimiter).filter(Boolean);
+
+  for (const directory of directories) {
+    // Within one directory Windows takes the first extension in PATHEXT order,
+    // so an .exe beside a .cmd wins and needs no interpreter.
+    for (const extension of extensions) {
+      const candidate = path.join(directory, command + extension);
+      if (!isFile(candidate)) {
+        continue;
+      }
+      return WINDOWS_SCRIPT_EXTENSIONS.includes(extension) ? candidate : null;
+    }
+  }
+  return null;
+}
+
+// cmd.exe reads its metacharacters outside double quotes only, so quoting each
+// argument keeps an argument an argument. A profile validates its command as a
+// single executable name but places no such restriction on the arguments.
+export function quoteForWindowsShell(token: string): string {
+  return `"${token.replace(/"/g, '""')}"`;
+}
+
+export function spawnProgram(
+  command: string,
+  args: string[],
+  options: SpawnSyncOptionsWithStringEncoding,
+): SpawnSyncReturns<string> {
+  const script = resolveWindowsScript(command);
+  if (!script) {
+    return spawnSync(command, args, options);
+  }
+  // `/d` skips any AutoRun command the machine has configured, and `/s` with
+  // the whole line wrapped in quotes makes cmd.exe strip only the outer pair
+  // and take the rest as written.
+  const line = [script, ...args].map(quoteForWindowsShell).join(" ");
+  return spawnSync(
+    process.env.ComSpec || "cmd.exe",
+    ["/d", "/s", "/c", `"${line}"`],
+    { ...options, windowsVerbatimArguments: true },
+  );
+}
+
 export const runCommand: CommandRunner = (
   command,
   args,
   options = {},
 ): string => {
-  const result = spawnSync(command, args, {
+  const result = spawnProgram(command, args, {
     cwd: options.cwd,
     env: options.env,
     encoding: "utf8",
@@ -1086,7 +1186,7 @@ function cap(summary: string): string {
 // transcript survives long enough to be summarized; runCommand folds it into an
 // error message whole.
 function runVerificationTask(task: VerificationTask, cwd: string): void {
-  const result = spawnSync(task.command, task.args, {
+  const result = spawnProgram(task.command, task.args, {
     cwd,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

@@ -263,6 +263,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A JavaScript project's tests can be run on Windows** — `npm`, `npx`, `yarn`
+  and `pnpm` are `.cmd` shims there, and Windows cannot start a script the way
+  it starts an executable, so the delivery gate failed with
+  `Unable to run npm run test (in frontend): spawnSync npm ENOENT` while the
+  .NET project beside it passed. Neither obvious spelling fixes it: `npm.cmd` is
+  refused with EINVAL, because Node will not spawn a script without a shell, and
+  bare `npm` depends on the Node doing the spawning — it resolves under Node 25
+  and fails under the Node 22 the runtime ships, so the suite passed in
+  development while the installed runtime could not validate a JavaScript
+  project at all. A command is now resolved the way Windows resolves it, walking
+  PATH in PATHEXT order, and one that turns out to be a script is run through
+  the command interpreter with each argument quoted individually. Executables
+  are spawned directly as before, and a command that does not exist still fails
+  as a missing command.
 - **A repair agent is told the directory each validation command runs in** —
   the delivery gate runs one command per project, each in that project's own
   directory, but the set was described to the agent by joining the commands with
