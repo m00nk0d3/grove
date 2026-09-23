@@ -24,7 +24,10 @@ import compactionGuard, {
   buildCompactionRecoveryMessage,
 } from "./pi-compaction-guard.js";
 import {
+  buildAssignmentPointerPrompt,
   buildCompletionRetryPrompt,
+  deliverablePrompt,
+  MAX_INLINE_PROMPT_CHARS,
   findMissingCompletionArtifacts,
   promptAgent,
   startAgentWithReadinessRecovery,
@@ -2212,4 +2215,53 @@ test("a failing verification command reports the failure, not the whole transcri
   const fallback = summarizeCommandFailure("npm test", 1, silent);
   assert.match(fallback, /showing the end of its output/);
   assert.match(fallback, /step 499 completed/);
+});
+
+// A prompt reaches herdr as one command-line argument, and Windows refuses a
+// command line past 32767 characters with ENAMETOOLONG. A review of a wide pull
+// request carries its metadata, which measured about 47 KB on the request that
+// first hit this, so the spawn failed before the agent existed.
+test("an assignment that fits a command line is sent as it is", () => {
+  const assignment = "x".repeat(MAX_INLINE_PROMPT_CHARS);
+  assert.equal(
+    deliverablePrompt(assignment, "/tmp/agent-flow/assignment.md"),
+    assignment,
+  );
+});
+
+test("an assignment too large for a command line is sent as a path to read", () => {
+  const assignmentPath = "/tmp/agent-flow-continuity-abc/assignment.md";
+  const assignment = "x".repeat(MAX_INLINE_PROMPT_CHARS + 1);
+
+  const delivered = deliverablePrompt(assignment, assignmentPath);
+
+  assert.notEqual(delivered, assignment);
+  assert.match(delivered, /assignment\.md/);
+  assert.ok(
+    delivered.includes(assignmentPath),
+    "the agent has to be told exactly which file to read",
+  );
+});
+
+test("the delivered prompt fits a Windows command line whatever the assignment size", () => {
+  // The platform limit, not this module's threshold: the threshold exists to
+  // stay under this, so the test is worth nothing if it only restates it.
+  const windowsCommandLineLimit = 32767;
+  for (const size of [0, 1, MAX_INLINE_PROMPT_CHARS, 50_000, 5_000_000]) {
+    const delivered = deliverablePrompt(
+      "x".repeat(size),
+      "/tmp/agent-flow-continuity-abc/assignment.md",
+    );
+    assert.ok(
+      delivered.length < windowsCommandLineLimit / 2,
+      `a ${size} character assignment produced a ${delivered.length} character prompt`,
+    );
+  }
+});
+
+test("the pointer prompt tells the agent to read the file first and not ask for a resend", () => {
+  const pointer = buildAssignmentPointerPrompt("/tmp/x/assignment.md");
+  assert.match(pointer, /before doing anything else/i);
+  assert.match(pointer, /do not ask/i);
+  assert.match(pointer, /complete assignment/i);
 });

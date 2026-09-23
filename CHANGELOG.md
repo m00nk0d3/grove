@@ -263,6 +263,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A large assignment no longer fails the agent before it starts** — a prompt
+  reaches Herdr as a single command-line argument, and Windows refuses a command
+  line longer than 32767 characters. A pull request review carries the request's
+  metadata, and a generated body alone can exceed 40 KB, so `review` died with
+  `Unable to run herdr: spawnSync herdr ENAMETOOLONG` before the specialist was
+  started. `herdr agent prompt` takes its text positionally and has no file or
+  stdin form, so an assignment above 16000 characters is now handed over as the
+  path of the file it is already written to, which the agent reads as its first
+  action. Smaller assignments are sent inline exactly as before, and the
+  threshold applies on every platform so a workflow behaves the same on each.
 - **The lists scroll, fill their panel, and show where you are in them** —
   every list panel sized its scroll window differently from what it drew. The
   dashboard measured its window in workflows against a budget counted in rows,
