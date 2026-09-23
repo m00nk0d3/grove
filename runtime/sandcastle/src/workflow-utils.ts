@@ -1,8 +1,11 @@
 import {
+  spawn,
+  type ChildProcess,
   spawnSync,
   type SpawnSyncOptionsWithStringEncoding,
   type SpawnSyncReturns,
 } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -774,24 +777,40 @@ export function quoteForWindowsShell(token: string): string {
   return `"${token.replace(/"/g, '""')}"`;
 }
 
-export function spawnProgram(
-  command: string,
-  args: string[],
-  options: SpawnSyncOptionsWithStringEncoding,
-): SpawnSyncReturns<string> {
+export interface SpawnPlan {
+  command: string;
+  args: string[];
+  verbatim: boolean;
+}
+
+// How a command is actually launched, shared by the synchronous and the
+// progress-reporting runners so both route a script the same way.
+export function planSpawn(command: string, args: string[]): SpawnPlan {
   const script = resolveWindowsScript(command);
   if (!script) {
-    return spawnSync(command, args, options);
+    return { command, args, verbatim: false };
   }
   // `/d` skips any AutoRun command the machine has configured, and `/s` with
   // the whole line wrapped in quotes makes cmd.exe strip only the outer pair
   // and take the rest as written.
   const line = [script, ...args].map(quoteForWindowsShell).join(" ");
-  return spawnSync(
-    process.env.ComSpec || "cmd.exe",
-    ["/d", "/s", "/c", `"${line}"`],
-    { ...options, windowsVerbatimArguments: true },
-  );
+  return {
+    command: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", `"${line}"`],
+    verbatim: true,
+  };
+}
+
+export function spawnProgram(
+  command: string,
+  args: string[],
+  options: SpawnSyncOptionsWithStringEncoding,
+): SpawnSyncReturns<string> {
+  const plan = planSpawn(command, args);
+  return spawnSync(plan.command, plan.args, {
+    ...options,
+    ...(plan.verbatim ? { windowsVerbatimArguments: true } : {}),
+  });
 }
 
 export const runCommand: CommandRunner = (
@@ -1182,34 +1201,231 @@ function cap(summary: string): string {
     : `${summary.slice(0, MAX_FAILURE_CHARS)}\n... (output truncated)`;
 }
 
+export const DEFAULT_VALIDATION_TIMEOUT_MS = 30 * 60 * 1000;
+const VALIDATION_HEARTBEAT_MS = 30 * 1000;
+const VALIDATION_MAX_OUTPUT = 64 * 1024 * 1024;
+
+export function resolveValidationTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const configured = Number(env.AGENT_FLOW_VALIDATION_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_VALIDATION_TIMEOUT_MS;
+}
+
+export function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, "0")}s` : `${seconds}s`;
+}
+
+// Windows ends cmd.exe without touching what it started, and a test runner's
+// workers are grandchildren, so a timeout that only kills the immediate child
+// leaves the suite running and the pipe open.
+function killProcessTree(child: ChildProcess): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
+      encoding: "utf8",
+    });
+    return;
+  }
+  child.kill("SIGKILL");
+}
+
+export interface ProgramRun {
+  status: number | null;
+  output: string;
+  timedOut: boolean;
+  elapsedMs: number;
+}
+
+// Runs a command while saying, periodically, that it is still running.
+//
+// A test runner writes to a terminal, not to a pipe: vitest's default reporter
+// produced 396 bytes across a 399-second run here, essentially all of it after
+// the last test. So nothing can be streamed that the child does not send, and a
+// healthy six-minute suite and a wedged one look exactly alike — a blank
+// terminal that never ends. The heartbeat comes from this side for that reason,
+// and reports the child's most recent line when there is one, so a chatty
+// command such as `dotnet test` shows progress without flooding the log.
+export function runProgramWithProgress(
+  command: string,
+  args: string[],
+  options: {
+    cwd: string;
+    label: string;
+    timeoutMs?: number;
+    heartbeatMs?: number;
+    log?: (message: string) => void;
+  },
+): Promise<ProgramRun> {
+  const log = options.log ?? ((message: string) => console.log(message));
+  const timeoutMs = options.timeoutMs ?? resolveValidationTimeoutMs();
+  const heartbeatMs = options.heartbeatMs ?? VALIDATION_HEARTBEAT_MS;
+  const plan = planSpawn(command, args);
+  const startedAt = Date.now();
+
+  return new Promise<ProgramRun>((resolve, reject) => {
+    const child = spawn(plan.command, plan.args, {
+      cwd: options.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(plan.verbatim ? { windowsVerbatimArguments: true } : {}),
+    });
+
+    let output = "";
+    let latestLine = "";
+    let truncated = false;
+    let timedOut = false;
+
+    const absorb = (chunk: Buffer): void => {
+      const text = chunk.toString("utf8");
+      if (output.length < VALIDATION_MAX_OUTPUT) {
+        output += text;
+      } else if (!truncated) {
+        truncated = true;
+        output += "\n... (output truncated)";
+      }
+      const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (lines.length > 0) {
+        latestLine = lines[lines.length - 1]!;
+      }
+    };
+    child.stdout?.on("data", absorb);
+    child.stderr?.on("data", absorb);
+
+    const heartbeat = setInterval(() => {
+      const elapsed = formatElapsed(Date.now() - startedAt);
+      const recent = latestLine ? `  ${latestLine.slice(0, 100)}` : "";
+      log(
+        `\x1b[36m[Validation]\x1b[0m ${options.label} — still running, ${elapsed} elapsed.${recent}`,
+      );
+      latestLine = "";
+    }, heartbeatMs);
+    heartbeat.unref?.();
+
+    const expiry = setTimeout(() => {
+      timedOut = true;
+      killProcessTree(child);
+    }, timeoutMs);
+    expiry.unref?.();
+
+    const finish = (): void => {
+      clearInterval(heartbeat);
+      clearTimeout(expiry);
+    };
+
+    child.on("error", (error) => {
+      finish();
+      reject(new Error(`Unable to run ${options.label}: ${error.message}`));
+    });
+    child.on("close", (status) => {
+      finish();
+      resolve({
+        status,
+        output,
+        timedOut,
+        elapsedMs: Date.now() - startedAt,
+      });
+    });
+  });
+}
+
 // Verification commands are run here rather than through runCommand so the
 // transcript survives long enough to be summarized; runCommand folds it into an
 // error message whole.
-function runVerificationTask(task: VerificationTask, cwd: string): void {
-  const result = spawnProgram(task.command, task.args, {
+async function runVerificationTask(
+  task: VerificationTask,
+  cwd: string,
+): Promise<void> {
+  const result = await runProgramWithProgress(task.command, task.args, {
     cwd,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+    label: task.label,
   });
-  if (result.error) {
-    throw new Error(`Unable to run ${task.label}: ${result.error.message}`);
+  if (result.timedOut) {
+    throw new Error(
+      `${task.label} was still running after ${formatElapsed(result.elapsedMs)} and was stopped.\n` +
+        "Raise AGENT_FLOW_VALIDATION_TIMEOUT_MS if this suite genuinely takes longer, " +
+        "or run the command yourself to see where it stops.\n" +
+        summarizeCommandFailure(task.label, null, result.output),
+    );
   }
   if (result.status !== 0) {
     throw new Error(
-      summarizeCommandFailure(
-        task.label,
-        result.status,
-        `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
-      ),
+      summarizeCommandFailure(task.label, result.status, result.output),
     );
   }
+  console.log(
+    `\x1b[32m[Validation]\x1b[0m ${task.label} passed in ${formatElapsed(result.elapsedMs)}.`,
+  );
 }
 
-export function verifyWorktree(
+// What the delivery gate last proved, and about which tree.
+//
+// The gate runs at verification, again after documentation, and again at
+// delivery, so a clean run validates three times. Between those points the tree
+// is often byte-identical — removing the agents' own scaffolding touches
+// nothing tracked — and on a repository whose suites take six minutes that is
+// twelve minutes spent re-proving an unchanged tree.
+//
+// Only a pass is remembered, so a failure is never cached into a success, and
+// the planned commands are part of the key, so a run that would execute
+// different commands is never skipped on the strength of an earlier one.
+const lastPassedFingerprint = new Map<string, string>();
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function worktreeFingerprint(
+  targetDir: string,
+  taskLabels: string[],
+): string {
+  const head = runCommand("git", ["rev-parse", "HEAD"], { cwd: targetDir });
+  const tracked = runCommand("git", ["diff", "--binary", "HEAD"], {
+    cwd: targetDir,
+  });
+  const untracked = runCommand(
+    "git",
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    { cwd: targetDir },
+  )
+    .split("\0")
+    .filter(Boolean)
+    .sort();
+  const parts = [head, hash(tracked), taskLabels.join("\u0000")];
+  for (const file of untracked) {
+    const absolute = path.join(targetDir, file);
+    let contents = "";
+    try {
+      contents = fs.lstatSync(absolute).isSymbolicLink()
+        ? fs.readlinkSync(absolute)
+        : fs.readFileSync(absolute).toString("base64");
+    } catch {
+      // A file that cannot be read now is a difference in itself; record the
+      // name and move on rather than failing the fingerprint.
+    }
+    parts.push(file, hash(contents));
+  }
+  return hash(parts.join("\u0000"));
+}
+
+export function forgetValidationCache(): void {
+  lastPassedFingerprint.clear();
+}
+
+export async function verifyWorktree(
   targetDir: string,
   touched?: string[],
   profile: RepoProfile | null = null,
-): void {
+): Promise<void> {
   const projects = detectStackProjects(targetDir);
   const tasks = planVerification(
     projects,
@@ -1228,6 +1444,19 @@ export function verifyWorktree(
         "Add one to the project profile, or run with --refresh-profile so the prompt engineer establishes it.",
     );
   }
+  const cacheKey = path.resolve(targetDir);
+  const labels = tasks.map((task) => task.label);
+  const fingerprint = worktreeFingerprint(targetDir, labels);
+  if (
+    !process.env.AGENT_FLOW_REVALIDATE_ALWAYS &&
+    lastPassedFingerprint.get(cacheKey) === fingerprint
+  ) {
+    console.log(
+      "\x1b[32m[Validation]\x1b[0m Skipped: nothing has changed in the worktree since these commands last passed.",
+    );
+    return;
+  }
+
   for (const task of tasks) {
     const cwd = task.root ? path.join(targetDir, task.root) : targetDir;
     if (task.setup) {
@@ -1245,7 +1474,7 @@ export function verifyWorktree(
       );
     }
     console.log(`\x1b[36m[Validation]\x1b[0m ${task.label}`);
-    runVerificationTask(task, cwd);
+    await runVerificationTask(task, cwd);
   }
   // Strip trailing whitespace from all tracked files before diff --check
   const changedFiles = runCommand(
@@ -1270,4 +1499,11 @@ export function verifyWorktree(
     }
   }
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
+
+  // Recorded after the whitespace strip above, so the remembered tree is the
+  // one this run leaves behind rather than the one it was handed.
+  lastPassedFingerprint.set(
+    cacheKey,
+    worktreeFingerprint(targetDir, labels),
+  );
 }

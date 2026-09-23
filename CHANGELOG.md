@@ -261,8 +261,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   signal for issues that are on no board. Requires the `read:project` token
   scope; without it the previous local-only behaviour applies unchanged.
 
+### Added
+
+- **Validation says that it is still running** — a test runner writes for a
+  terminal, not a pipe: vitest's default reporter produced 396 bytes across a
+  399-second run, nearly all of it after the last test. The gate captured that
+  output and showed none of it, so a healthy six-minute suite and a wedged one
+  were the same blank terminal. The gate now reports every 30 seconds how long a
+  command has been running, along with its most recent line when it has one, and
+  reports how long each command took when it passes.
+- **Validation cannot run for ever** — there was no timeout anywhere in the
+  gate, so a wedged suite stopped the workflow with no way out but killing it. A
+  command that outlives `AGENT_FLOW_VALIDATION_TIMEOUT_MS` (30 minutes by
+  default) is stopped, with its process tree, and reported as a timeout rather
+  than a test failure.
+- **An unchanged worktree is not validated twice** — the gate runs at
+  verification, again after documentation and again at delivery, and between
+  those points the tree is often byte-identical, since removing the agents'
+  scaffolding touches nothing tracked. On a repository whose suites take six
+  minutes that was twelve minutes spent re-proving an unchanged tree. A passing
+  run is now remembered against a fingerprint of the worktree and the commands
+  planned for it, and skipped only when both are identical. Only passes are
+  remembered, so a failure is never cached into a success. Set
+  `AGENT_FLOW_REVALIDATE_ALWAYS=1` to run every time regardless.
+
 ### Fixed
 
+- **A workflow step is no longer recorded as done before it has finished** —
+  `runStep` took a synchronous action and did not wait for it, so a step whose
+  action was asynchronous was marked succeeded the moment it started, and
+  anything it threw arrived after the step's error handling had already
+  returned. The lean review stage has passed an asynchronous action all along,
+  and every delivery gate is asynchronous now. Steps are awaited, and a test
+  reads the source to keep them awaited.
 - **A JavaScript project's tests can be run on Windows** — `npm`, `npx`, `yarn`
   and `pnpm` are `.cmd` shims there, and Windows cannot start a script the way
   it starts an executable, so the delivery gate failed with

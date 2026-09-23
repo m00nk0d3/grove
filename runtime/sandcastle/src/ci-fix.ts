@@ -529,7 +529,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     );
   }
 
-  verifyWorktree(targetDir, undefined, profile);
+  await verifyWorktree(targetDir, undefined, profile);
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
   runCommand("git", ["add", "-A"], { cwd: targetDir });
   runCommand(

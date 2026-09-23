@@ -303,7 +303,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (currentHead !== originalHead) {
     throw new Error("The conflict resolver committed changes unexpectedly.");
   }
-  verifyWorktree(targetDir, undefined, profile);
+  await verifyWorktree(targetDir, undefined, profile);
   runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
 
   console.log("\n## ✅ Resolution Ready\n");

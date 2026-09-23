@@ -303,23 +303,23 @@ export function retitleDeliveryCommit(
   return "retitled";
 }
 
-export function runValidationWithRepair(
-  validate: () => void,
-  repair: (failure: string) => void,
-): void {
+export async function runValidationWithRepair(
+  validate: () => void | Promise<void>,
+  repair: (failure: string) => void | Promise<void>,
+): Promise<void> {
   try {
-    validate();
+    await validate();
     return;
   } catch (error) {
     const failure = error instanceof Error ? error.message : String(error);
     console.log(
       "\x1b[33m[Validation Repair]\x1b[0m Returning the failure to the implementation specialist.",
     );
-    repair(failure);
+    await repair(failure);
   }
 
   try {
-    validate();
+    await validate();
   } catch (error) {
     const failure = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -708,10 +708,15 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       });
     };
 
-    const runStep = (
+    // A step's action may be asynchronous, and this has to wait for it. When it
+    // did not, an async step was recorded as succeeded the moment it started —
+    // before any of its work had happened — and anything it threw arrived after
+    // the try/catch below had already returned, so the failure handling never
+    // saw it. The lean review stage has passed an async action all along.
+    const runStep = async (
       step: WorkflowStep,
-      action: () => void,
-    ): void => {
+      action: () => void | Promise<void>,
+    ): Promise<void> => {
       if (state.completedSteps.includes(step)) {
         console.log(`\x1b[33m[Resume]\x1b[0m Skipping completed step: ${step}`);
         return;
@@ -723,7 +728,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       }
       updateTrackedWorkflow({ current_step: step, steps: runtimeSteps });
       try {
-        action();
+        await action();
         state.completedSteps.push(step);
         saveWorkflowState(statePath, state);
         if (trackedStep) {
@@ -759,13 +764,13 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       }
     };
 
-    const verifyWithRepair = (handoffPath: string): void => {
+    const verifyWithRepair = async (handoffPath: string): Promise<void> => {
       // Name every command the gate runs, so a repair in a multi-stack
       // repository knows which project it has to make pass.
       const verification = describeVerificationTasks(
         planVerification(detectStackProjects(targetDir), [], profile),
       );
-      runValidationWithRepair(
+      await runValidationWithRepair(
         () => verifyWorktree(targetDir, undefined, profile),
         (failure) =>
           runSpecialist(
@@ -809,8 +814,8 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     // One review covering whichever concerns the diff raises. Three separate
     // stages meant three agent runs, three pane boots and three re-reads of
     // the same diff for what is one pass over one change.
-    const runDomainReview = (handoffPath: string): void => {
-      runStep("domain-review", () => {
+    const runDomainReview = async (handoffPath: string): Promise<void> => {
+      await runStep("domain-review", async () => {
         const builtinDomains = selectedSpecialists().filter(
           (specialist) => specialist !== "documentation",
         );
@@ -942,7 +947,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             undefined,
             implementerSessionId,
           );
-          verifyWithRepair(handoffPath);
+          await verifyWithRepair(handoffPath);
         }
         throw new Error(
           `The domain reviewer still reports blockers after ${REVIEW_BATCH_SIZE} implementation cycles.`,
@@ -950,8 +955,8 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       });
     };
 
-    const runDocumentationStage = (handoffPath: string): void => {
-      runStep("documentation", () => {
+    const runDocumentationStage = async (handoffPath: string): Promise<void> => {
+      await runStep("documentation", async () => {
         if (!selectedSpecialists().includes("documentation")) {
           console.log(
             "\x1b[33m[Specialists]\x1b[0m Skipping documentation: the diff changes nothing this repository documents.",
@@ -967,7 +972,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             issueTitle,
           ),
         );
-        verifyWithRepair(handoffPath);
+        await verifyWithRepair(handoffPath);
       });
     };
 
@@ -982,12 +987,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       }
     };
 
-    const commitChanges = (subject: string): void => {
+    const commitChanges = async (subject: string): Promise<void> => {
       const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
       if (!status) {
         throw new Error("The workflow produced no changes to commit.");
       }
-      verifyWorktree(targetDir, undefined, profile);
+      await verifyWorktree(targetDir, undefined, profile);
       runCommand("git", ["add", "-A"], { cwd: targetDir });
       runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
       runCommand(
@@ -1122,7 +1127,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const persona = personaOf("implementation");
 
     if (state.mode === "full") {
-      runStep("planning", () =>
+      await runStep("planning", () =>
         runSpecialist(
           "planner",
           SPECIALISTS.PLANNER(
@@ -1140,7 +1145,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           ],
         ),
       );
-      runStep("tests", () =>
+      await runStep("tests", () =>
         runSpecialist(
           "test-engineer",
           SPECIALISTS.TEST_ENGINEER(
@@ -1152,7 +1157,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           ),
         ),
       );
-      runStep("implementation", () =>
+      await runStep("implementation", () =>
         runSpecialist(
           `${stack.toLowerCase()}-implementer`,
           getImplementationPrompt(
@@ -1167,7 +1172,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           implementerSessionId,
         ),
       );
-      runStep("verification", () => {
+      await runStep("verification", async () => {
         runSpecialist(
           "verifier",
           SPECIALISTS.VERIFIER(
@@ -1177,12 +1182,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             planPath,
           ),
         );
-        verifyWithRepair(planPath);
+        await verifyWithRepair(planPath);
       });
-      runDomainReview(planPath);
-      runDocumentationStage(planPath);
+      await runDomainReview(planPath);
+      await runDocumentationStage(planPath);
     } else {
-      runStep("lean-planning", () => {
+      await runStep("lean-planning", () => {
         const stateBefore = captureWorktreeState(targetDir, leanPlanPath);
         runSpecialist(
           "lean-planner",
@@ -1209,7 +1214,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           throw new Error("Lean planner did not produce a compact handoff.");
         }
       });
-      runStep("lean-implementation", () =>
+      await runStep("lean-implementation", () =>
         runSpecialist(
           `${stack.toLowerCase()}-lean-implementer`,
           SPECIALISTS.LEAN_IMPLEMENTER(persona, issueNum, repo, leanPlanPath),
@@ -1218,7 +1223,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           implementerSessionId,
         ),
       );
-      runStep("lean-review", async () => {
+      await runStep("lean-review", async () => {
         for (let cycle = 1; cycle <= REVIEW_BATCH_SIZE; cycle += 1) {
           fs.rmSync(leanCompletionPath, { force: true });
           const reviewState = captureWorktreeState(targetDir, "__no_ignored_file__");
@@ -1276,11 +1281,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           `Lean review still has blockers after ${REVIEW_BATCH_SIZE} implementation cycles.`,
         );
       });
-      runStep("verification", () => verifyWithRepair(leanPlanPath));
-      runDomainReview(leanPlanPath);
-      runDocumentationStage(leanPlanPath);
+      await runStep("verification", async () => await verifyWithRepair(leanPlanPath));
+      await runDomainReview(leanPlanPath);
+      await runDocumentationStage(leanPlanPath);
     }
-    runStep("delivery", () => {
+    await runStep("delivery", async () => {
       // Planning artifacts are scaffolding for the agents, not deliverables.
       removeAgentArtifacts();
       const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
@@ -1290,11 +1295,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           "\x1b[33m[Resume]\x1b[0m Changes are already committed; skipping duplicate Git work.",
         );
       } else {
-        commitChanges(`fix: resolve #${issueNum}`);
+        await commitChanges(`fix: resolve #${issueNum}`);
       }
       requireCleanWorktree(targetDir);
     });
-    runStep("report", () => {
+    await runStep("report", () => {
       fs.rmSync(reportPath, { force: true });
       fs.rmSync(prTitlePath, { force: true });
       if (state.mode === "full") {
@@ -1331,7 +1336,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       requireCleanWorktree(targetDir);
       console.log(`\n\x1b[36m[Implementation Report]\x1b[0m\n${fs.readFileSync(reportPath, "utf8")}`);
     });
-    runStep("publish", () => {
+    await runStep("publish", () => {
       // The reporter names what the change did; the issue title only says what
       // was asked for, which reads as boilerplate in a changelog.
       const pullRequestTitle = readPullRequestTitle(prTitlePath, issueTitle);
@@ -1483,7 +1488,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           implementerSessionId,
         );
         fs.rmSync(verdictPath, { force: true });
-        commitChanges(`fix: address PR review cycle ${cycle} (#${issueNum})`);
+        await commitChanges(`fix: address PR review cycle ${cycle} (#${issueNum})`);
         runCommand("git", ["push", "origin", branchName], { cwd: targetDir });
         saveWorkflowState(statePath, state);
         console.log(

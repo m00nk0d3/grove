@@ -10,7 +10,14 @@ import {
   ensureJavaScriptDependencies,
   getVerificationCommand,
   describeVerificationTasks,
+  DEFAULT_VALIDATION_TIMEOUT_MS,
+  formatElapsed,
+  forgetValidationCache,
   quoteForWindowsShell,
+  resolveValidationTimeoutMs,
+  runProgramWithProgress,
+  verifyWorktree,
+  worktreeFingerprint,
   resolveWindowsScript,
   runCommand,
   listVerificationCommands,
@@ -854,26 +861,28 @@ test("verifier is required to run the whitespace delivery gate", () => {
   assert.match(verifier, /fix whitespace errors/i);
 });
 
-test("validation failures receive one bounded implementation repair attempt", () => {
+test("validation failures receive one bounded implementation repair attempt", async () => {
   let validationAttempts = 0;
   const failures: string[] = [];
 
-  runValidationWithRepair(
+  await runValidationWithRepair(
     () => {
       validationAttempts += 1;
       if (validationAttempts === 1) {
         throw new Error("file.go:166: trailing whitespace.");
       }
     },
-    (failure) => failures.push(failure),
+    (failure) => {
+      failures.push(failure);
+    },
   );
 
   assert.equal(validationAttempts, 2);
   assert.deepEqual(failures, ["file.go:166: trailing whitespace."]);
 });
 
-test("validation reports the final failure after its repair attempt", () => {
-  assert.throws(
+test("validation reports the final failure after its repair attempt", async () => {
+  await assert.rejects(
     () =>
       runValidationWithRepair(
         () => {
@@ -883,6 +892,32 @@ test("validation reports the final failure after its repair attempt", () => {
       ),
     /Validation still fails after one implementation repair attempt: go test failed/,
   );
+});
+
+// Validation became asynchronous so it could report progress while it runs. An
+// un-awaited promise is legal TypeScript, so nothing would have complained if a
+// rejection stopped reaching the repair path — the gate would simply have
+// stopped failing.
+test("an asynchronous validation failure still reaches the repair path", async () => {
+  const failures: string[] = [];
+  let attempts = 0;
+
+  await runValidationWithRepair(
+    async () => {
+      attempts += 1;
+      await Promise.resolve();
+      if (attempts === 1) {
+        throw new Error("npm run test (in frontend) exited with status 1");
+      }
+    },
+    async (failure) => {
+      await Promise.resolve();
+      failures.push(failure);
+    },
+  );
+
+  assert.equal(attempts, 2, "the gate has to be re-run after the repair");
+  assert.deepEqual(failures, ["npm run test (in frontend) exited with status 1"]);
 });
 
 test("lean reports use concrete reviewer evidence instead of generic placeholders", () => {
@@ -1926,9 +1961,9 @@ test("address keeps handing a failing gate back until it passes", () => {
   ]);
 });
 
-test("address gives up with the real failure and points at the worktree", () => {
+test("address gives up with the real failure and points at the worktree", async () => {
   const roles: string[] = [];
-  assert.throws(
+  await assert.rejects(
     () =>
       validateWithRepair(
         process.cwd(),
@@ -1948,9 +1983,9 @@ test("address gives up with the real failure and points at the worktree", () => 
   assert.equal(roles.length, 2, "bounded: it does not retry forever");
 });
 
-test("address does not call the agent when the gate passes first time", () => {
+test("address does not call the agent when the gate passes first time", async () => {
   const roles: string[] = [];
-  validateWithRepair(process.cwd(), "owner/repo", "1163", "persona", (role) => roles.push(role), () => {});
+  await validateWithRepair(process.cwd(), "owner/repo", "1163", "persona", (role) => roles.push(role), () => {});
   assert.deepEqual(roles, []);
 });
 
@@ -2422,4 +2457,187 @@ test("an argument reaches a script intact, metacharacters and all", windowsOnly,
 
 test("npm can actually be run, which is what the delivery gate needs", windowsOnly, () => {
   assert.match(runCommand("npm", ["--version"]), /^\d+\.\d+\.\d+/);
+});
+
+// A test runner writes for a terminal, not a pipe. Measured on this machine,
+// vitest's default reporter produced 396 bytes across a 399-second run, nearly
+// all of it after the last test finished. So a healthy six-minute suite and a
+// wedged one both look like a blank terminal that never ends, and the progress
+// has to come from this side.
+test("a long command reports that it is still running", async () => {
+  const messages: string[] = [];
+  const slow =
+    "const end = Date.now() + 700; while (Date.now() < end) {} console.log('done');";
+
+  const run = await runProgramWithProgress(process.execPath, ["-e", slow], {
+    cwd: process.cwd(),
+    label: "slow command",
+    heartbeatMs: 150,
+    log: (message) => messages.push(message),
+  });
+
+  assert.equal(run.status, 0);
+  assert.ok(messages.length >= 2, `expected heartbeats, got ${messages.length}`);
+  assert.match(messages[0]!, /slow command — still running/);
+  assert.match(messages[0]!, /elapsed/);
+});
+
+test("a command that never finishes is stopped rather than waited on for ever", async () => {
+  const forever = "setInterval(() => {}, 1000);";
+
+  const run = await runProgramWithProgress(process.execPath, ["-e", forever], {
+    cwd: process.cwd(),
+    label: "hung command",
+    timeoutMs: 1500,
+    heartbeatMs: 100_000,
+    log: () => {},
+  });
+
+  assert.equal(run.timedOut, true, "the run has to report that it was stopped");
+  assert.ok(run.elapsedMs < 60_000, "it must not have waited for the process to end on its own");
+});
+
+test("a command's output is captured even though it is not echoed", async () => {
+  const run = await runProgramWithProgress(
+    process.execPath,
+    ["-e", "console.log('FAILED: 3 tests'); process.exit(2);"],
+    { cwd: process.cwd(), label: "failing command", heartbeatMs: 100_000, log: () => {} },
+  );
+
+  assert.equal(run.status, 2);
+  assert.match(run.output, /FAILED: 3 tests/, "the repair prompt is built from this");
+});
+
+test("the validation timeout is configurable and has a sane default", () => {
+  assert.equal(resolveValidationTimeoutMs({}), DEFAULT_VALIDATION_TIMEOUT_MS);
+  assert.equal(resolveValidationTimeoutMs({ AGENT_FLOW_VALIDATION_TIMEOUT_MS: "5000" }), 5000);
+  // Nonsense must not silently become a zero timeout, which would stop every
+  // suite the moment it started.
+  assert.equal(resolveValidationTimeoutMs({ AGENT_FLOW_VALIDATION_TIMEOUT_MS: "nope" }), DEFAULT_VALIDATION_TIMEOUT_MS);
+  assert.equal(resolveValidationTimeoutMs({ AGENT_FLOW_VALIDATION_TIMEOUT_MS: "0" }), DEFAULT_VALIDATION_TIMEOUT_MS);
+  assert.equal(resolveValidationTimeoutMs({ AGENT_FLOW_VALIDATION_TIMEOUT_MS: "-1" }), DEFAULT_VALIDATION_TIMEOUT_MS);
+});
+
+test("elapsed time reads as minutes and seconds", () => {
+  assert.equal(formatElapsed(9_000), "9s");
+  assert.equal(formatElapsed(65_000), "1m05s");
+  assert.equal(formatElapsed(399_000), "6m39s");
+});
+
+// The gate runs at verification, again after documentation and again at
+// delivery. On a repository whose suites take six minutes that is eighteen
+// minutes, much of it re-proving a tree that has not changed.
+test("the worktree fingerprint follows content, not time", () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), "fingerprint-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git("init", "--quiet");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    fs.writeFileSync(path.join(root, "a.txt"), "one\n");
+    git("add", "-A");
+    git("commit", "--quiet", "-m", "first");
+
+    const original = worktreeFingerprint(root, ["npm test"]);
+    assert.equal(worktreeFingerprint(root, ["npm test"]), original, "an untouched tree is the same tree");
+
+    // A tracked edit moves it.
+    fs.writeFileSync(path.join(root, "a.txt"), "two\n");
+    const edited = worktreeFingerprint(root, ["npm test"]);
+    assert.notEqual(edited, original);
+
+    // So does a new untracked file, which a generated artifact would be.
+    fs.writeFileSync(path.join(root, "b.txt"), "new\n");
+    assert.notEqual(worktreeFingerprint(root, ["npm test"]), edited);
+
+    // And so does a different set of commands: a run that would execute
+    // something else must never be skipped on the strength of this one.
+    assert.notEqual(
+      worktreeFingerprint(root, ["npm test", "dotnet test"]),
+      worktreeFingerprint(root, ["npm test"]),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an unchanged worktree is not validated twice, and a changed one is", async () => {
+  const root = fs.mkdtempSync(path.join(process.cwd(), "revalidate-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git("init", "--quiet");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    // A project whose "suite" is a command that records each time it runs.
+    const ran = path.join(root, "runs.txt");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "fixture",
+      version: "1.0.0",
+      scripts: { test: `node -e "require('fs').appendFileSync('runs.txt','x')"` },
+    }));
+    fs.writeFileSync(path.join(root, "index.js"), "module.exports = 1;\n");
+    fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    git("add", "-A");
+    git("commit", "--quiet", "-m", "first");
+
+    forgetValidationCache();
+    const runs = () => (fs.existsSync(ran) ? fs.readFileSync(ran, "utf8").length : 0);
+
+    await verifyWorktree(root);
+    assert.equal(runs(), 1, "the first run has to actually validate");
+
+    await verifyWorktree(root);
+    assert.equal(runs(), 1, "an unchanged tree must not be validated again");
+
+    fs.writeFileSync(path.join(root, "index.js"), "module.exports = 2;\n");
+    await verifyWorktree(root);
+    assert.equal(runs(), 2, "a changed tree has to be validated again");
+  } finally {
+    forgetValidationCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// runStep is a closure inside main and cannot be called from here, but what it
+// has to guarantee is checkable from the source: it must wait for a step's
+// action. When it did not, an asynchronous step was recorded as succeeded the
+// moment it started, before its work had happened, and anything it threw landed
+// after the try/catch had already returned — so a failing gate was reported as
+// a passing one. Every gate is asynchronous now, which makes this the one thing
+// that must not regress.
+test("the workflow waits for each step before recording it as done", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "src", "orchestrator.ts"),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /const runStep = async \(/,
+    "runStep has to be async to be able to wait for an async action",
+  );
+  assert.match(
+    source,
+    /action: \(\) => void \| Promise<void>/,
+    "runStep has to accept an async action rather than silently discard its promise",
+  );
+  assert.match(
+    source,
+    /\n\s+await action\(\);/,
+    "runStep has to await the action before marking the step succeeded",
+  );
+
+  const unawaited = source
+    .split("\n")
+    .map((line, index) => [index + 1, line] as const)
+    .filter(([, line]) => /(?<!await )runStep\("/.test(line))
+    .filter(([, line]) => !/const runStep/.test(line));
+
+  assert.deepEqual(
+    unawaited.map(([lineNumber]) => lineNumber),
+    [],
+    `every runStep call has to be awaited; these are not: ${unawaited
+      .map(([lineNumber, line]) => `${lineNumber}: ${line.trim()}`)
+      .join(" | ")}`,
+  );
 });
