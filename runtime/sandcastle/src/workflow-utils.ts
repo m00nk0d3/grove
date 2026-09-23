@@ -261,6 +261,59 @@ export interface VerificationTask {
   source: "builtin" | "profile";
 }
 
+// describeVerificationTasks writes out what the delivery gate runs, for an
+// agent that has to reproduce a failure.
+//
+// These were previously joined with " && " into one line, which read as a shell
+// chain but was not one: a task's label carries its directory as prose, as in
+// "dotnet test (in backend)". An agent told to run
+// "dotnet test (in backend) && npm run test (in frontend)" turns it back into a
+// chain of its own, and because every command in a chain shares one working
+// directory, the second `cd` is resolved against the first project's directory
+// and the run collapses.
+//
+// The gate runs each command as a separate process with its own working
+// directory, so that is how it is described: one command per line, the
+// directory named, and the setup a project needs listed before the test that
+// depends on it.
+export function listVerificationCommands(tasks: VerificationTask[]): string {
+  if (tasks.length === 0) {
+    return "- No validation command is known for this repository.";
+  }
+  const lines: string[] = [];
+  for (const task of tasks) {
+    const where = task.root ? `${task.root}/` : "the repository root";
+    if (task.setup) {
+      const skip = task.setup.skipWhenPresent
+        ? `, skipped when ${task.setup.skipWhenPresent} is already present`
+        : "";
+      lines.push(
+        `- in \`${where}\`: \`${task.setup.command} ${task.setup.args.join(" ")}\`` +
+          ` (setup, run before the test below${skip})`,
+      );
+    }
+    lines.push(`- in \`${where}\`: \`${task.command} ${task.args.join(" ")}\``);
+  }
+  return lines.join("\n");
+}
+
+// The guidance belongs with the list wherever an agent is asked to reproduce
+// the gate, and nowhere else: a report records what ran, and does not need
+// telling how to run it.
+export function describeVerificationTasks(tasks: VerificationTask[]): string {
+  if (tasks.length === 0) {
+    return listVerificationCommands(tasks);
+  }
+  return (
+    listVerificationCommands(tasks) +
+    "\n\nRun each of these separately, from the directory named against it. " +
+    "They are individual commands, not one chained command line: the gate runs " +
+    "each as its own process with that directory as its working directory. " +
+    "Chaining them behind a cd leaves every command after the first looking for " +
+    "its project inside the previous one."
+  );
+}
+
 // resolveVerificationTask decides what validates a project, preferring a command
 // the prompt engineer actually ran over one this runtime assumes.
 //

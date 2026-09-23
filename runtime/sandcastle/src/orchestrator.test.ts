@@ -9,6 +9,8 @@ import {
   getPiAgentArgs,
   ensureJavaScriptDependencies,
   getVerificationCommand,
+  describeVerificationTasks,
+  listVerificationCommands,
   planVerification,
   summarizeCommandFailure,
   LEAN_WORKFLOW_STEPS,
@@ -2264,4 +2266,84 @@ test("the pointer prompt tells the agent to read the file first and not ask for 
   assert.match(pointer, /before doing anything else/i);
   assert.match(pointer, /do not ask/i);
   assert.match(pointer, /complete assignment/i);
+});
+
+// The delivery gate runs each command as its own process in its own directory.
+// Describing the set as "dotnet test (in backend) && npm run test (in
+// frontend)" read as a shell chain but was not one, and an agent asked to
+// reproduce it rebuilt it as a real chain: one shell, one working directory, so
+// the second `cd` resolved against the first project and the run collapsed.
+const TWO_PROJECT_TASKS = [
+  {
+    stack: "CSHARP" as const,
+    command: "dotnet",
+    args: ["test"],
+    root: "backend",
+    label: "dotnet test (in backend)",
+    source: "profile" as const,
+  },
+  {
+    stack: "TYPESCRIPT" as const,
+    command: "npm",
+    args: ["run", "test"],
+    root: "frontend",
+    label: "npm run test (in frontend)",
+    setup: {
+      command: "npm",
+      args: ["ci"],
+      skipWhenPresent: "node_modules",
+    },
+    source: "profile" as const,
+  },
+];
+
+test("each validation command is listed against the directory it runs in", () => {
+  const listed = listVerificationCommands(TWO_PROJECT_TASKS);
+
+  const lines = listed.split("\n");
+  assert.equal(lines.length, 3, "two tests and the setup one of them needs");
+  assert.ok(lines.every((line) => line.startsWith("- in `")));
+  assert.match(listed, /- in `backend\/`: `dotnet test`/);
+  assert.match(listed, /- in `frontend\/`: `npm run test`/);
+});
+
+test("a validation list is never rendered as a chained command line", () => {
+  const described = describeVerificationTasks(TWO_PROJECT_TASKS);
+
+  assert.ok(
+    !described.includes("test && npm"),
+    "the commands must not be joined into something that reads as one shell line",
+  );
+  assert.match(described, /not one chained command line/);
+  assert.match(described, /working directory/);
+});
+
+test("a project's setup command is named before the test that needs it", () => {
+  const listed = listVerificationCommands(TWO_PROJECT_TASKS);
+
+  const setupAt = listed.indexOf("npm ci");
+  const testAt = listed.indexOf("npm run test");
+  assert.ok(setupAt !== -1, "an agent reproducing the gate needs the install step");
+  assert.ok(setupAt < testAt, "setup has to come before the test that depends on it");
+  assert.match(listed, /skipped when node_modules is already present/);
+});
+
+test("a single-project repository is described without directory noise", () => {
+  const listed = listVerificationCommands([
+    {
+      stack: "TYPESCRIPT" as const,
+      command: "npm",
+      args: ["test"],
+      root: "",
+      label: "npm test",
+      source: "builtin" as const,
+    },
+  ]);
+
+  assert.match(listed, /- in `the repository root`: `npm test`/);
+});
+
+test("a repository with nothing to run says so rather than going blank", () => {
+  assert.match(listVerificationCommands([]), /No validation command is known/);
+  assert.match(describeVerificationTasks([]), /No validation command is known/);
 });

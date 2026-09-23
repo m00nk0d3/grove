@@ -263,6 +263,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A repair agent is told the directory each validation command runs in** —
+  the delivery gate runs one command per project, each in that project's own
+  directory, but the set was described to the agent by joining the commands with
+  ` && `. A task's label carries its directory as prose, so a repository with a
+  .NET backend and a JavaScript frontend produced `dotnet test (in backend) &&
+  npm run test (in frontend)`, quoted in the prompt as a single command to run.
+  It is not one: an agent reproducing it rebuilt it as a real shell chain, where
+  every command shares one working directory, so the second `cd` resolved
+  against the first project and the run collapsed. The commands are now listed
+  one per line with the directory named against each, setup steps such as
+  `npm ci` included before the test that needs them, and the prompts say
+  explicitly that these are separate commands rather than one chained line.
 - **A large assignment no longer fails the agent before it starts** — a prompt
   reaches Herdr as a single command-line argument, and Windows refuses a command
   line longer than 32767 characters. A pull request review carries the request's

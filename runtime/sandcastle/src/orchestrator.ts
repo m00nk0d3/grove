@@ -62,6 +62,8 @@ import {
 import { type AuditVerdict, type ReviewVerdict } from "./review-loop.js";
 import {
   assertModeOverrideCompatible,
+  describeVerificationTasks,
+  listVerificationCommands,
   detectRepo,
   FULL_WORKFLOW_STEPS,
   planVerification,
@@ -341,13 +343,9 @@ export function createLeanReport(
     ["diff", "--name-status", baseCommit, "HEAD"],
     { cwd: targetDir },
   );
-  const verification = planVerification(
-    detectStackProjects(targetDir),
-    [],
-    profile,
-  )
-    .map((task) => task.label)
-    .join(" && ");
+  const verification = listVerificationCommands(
+    planVerification(detectStackProjects(targetDir), [], profile),
+  );
   const head = runCommand("git", ["rev-parse", "--short", "HEAD"], {
     cwd: targetDir,
   });
@@ -382,7 +380,8 @@ ${files.join("\n")}
 
 ## 🧪 Validation
 ${bullets(evidence.validation)}
-- Orchestrator delivery gate passed: \`${verification}\`
+- Orchestrator delivery gate passed:
+${verification}
 - Orchestrator delivery gate passed: \`git diff --check\`
 
 ## 🎯 Acceptance Criteria
@@ -763,13 +762,9 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const verifyWithRepair = (handoffPath: string): void => {
       // Name every command the gate runs, so a repair in a multi-stack
       // repository knows which project it has to make pass.
-      const verification = planVerification(
-        detectStackProjects(targetDir),
-        [],
-        profile,
-      )
-        .map((task) => task.label)
-        .join(" && ");
+      const verification = describeVerificationTasks(
+        planVerification(detectStackProjects(targetDir), [], profile),
+      );
       runValidationWithRepair(
         () => verifyWorktree(targetDir, undefined, profile),
         (failure) =>
