@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"path/filepath"
+	"strings"
+	"time"
+)
 
 type Config struct {
 	GitHub     GitHubConfig     `toml:"github"`
@@ -50,7 +54,7 @@ type WorktreesConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Appearance: AppearanceConfig{Theme: "digital-noir"},
-		Worktrees:  WorktreesConfig{BaseBranch: "main", WorktreeRoot: "../worktrees"},
+		Worktrees:  WorktreesConfig{BaseBranch: "main", WorktreeRoot: DefaultWorktreeRoot},
 		GitHub:     GitHubConfig{AutoSync: true, SyncIntervalMinutes: 5},
 		Herdr: HerdrConfig{
 			Enabled:             true,
@@ -65,4 +69,24 @@ func DefaultConfig() *Config {
 			DefaultAgent:        "opencode",
 		},
 	}
+}
+
+// DefaultWorktreeRoot is where worktrees are created when no root is
+// configured, relative to the repository root.
+const DefaultWorktreeRoot = "../worktrees"
+
+// WorktreePath returns where the worktree named slug is created for the
+// repository at repoPath: <worktree_root>/<repository name>/<slug>. A relative
+// root is resolved against the repository root, and an empty root means
+// DefaultWorktreeRoot. The repository name keeps the worktrees of several
+// repositories that share a root apart.
+func (c WorktreesConfig) WorktreePath(repoPath, slug string) string {
+	root := strings.TrimSpace(c.WorktreeRoot)
+	if root == "" {
+		root = DefaultWorktreeRoot
+	}
+	if !filepath.IsAbs(root) {
+		root = filepath.Join(repoPath, root)
+	}
+	return filepath.Join(filepath.Clean(root), filepath.Base(repoPath), slug)
 }

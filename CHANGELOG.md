@@ -317,6 +317,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Three settings now do what they say** — `github.auto_sync`,
+  `worktrees.base_branch`, and `worktrees.worktree_root` were read by nothing.
+  - **Auto sync** turns the background GitHub refresh on or off; off, GitHub
+    is refreshed only at startup and on `r`. Changing it, or the interval, in
+    the settings screen takes effect immediately.
+  - **Worktree root** decides where new worktrees go, as
+    `<root>/<repository>/<branch>`, for issue, pull request, and branch
+    checkouts alike. The default, `../worktrees`, is the layout Grove always
+    used.
+  - **Base branch** is the base of a new worktree when no parent branch is
+    picked, and falls back to the repository's default branch when the
+    repository has no such branch, so the default `main` still works where the
+    trunk is `master`. The create dialog names it instead of a fixed `main`.
+- **Only one background GitHub sync runs** — every completed sync, manual or
+  periodic, scheduled another timer, so each press of `r` started an
+  additional sync chain. A new timer now supersedes the pending one.
+- **The in-app help matches the keys** — it listed `←`/`→`/`h`/`l` for
+  switching panels, which the main screen does not handle, said nine themes,
+  and referred to Grove by an old name.
 - **The settings status line clears again** — an open modal received only key
   presses, so the timer that clears the settings screen's "Saved" message
   never reached it and the message stayed until the screen was closed. A

@@ -85,7 +85,7 @@ func NewSettingsModal(cfg *domain.Config, configPath string) *SettingsModal {
 			blurb: "issue and pull request sync",
 			fields: []settingsField{
 				boolField("Auto sync", "github.auto_sync",
-					"Refresh issues and pull requests from GitHub in the background.",
+					"Refresh issues and pull requests from GitHub in the background. When off, they refresh only at startup and when you press r.",
 					func(c *domain.Config) *bool { return &c.GitHub.AutoSync }),
 				numberField("Sync interval", "github.sync_interval_minutes", "min",
 					"Minutes between background refreshes of GitHub data.",
@@ -97,10 +97,10 @@ func NewSettingsModal(cfg *domain.Config, configPath string) *SettingsModal {
 			blurb: "where new worktrees are created",
 			fields: []settingsField{
 				textField("Base branch", "worktrees.base_branch",
-					"Branch a new worktree starts from when none is given.",
+					"Branch a new worktree starts from when no parent branch is picked. When the repository has no such branch, its default branch is used.",
 					func(c *domain.Config) *string { return &c.Worktrees.BaseBranch }),
 				textField("Worktree root", "worktrees.worktree_root",
-					"Directory new worktrees are created in, relative to the repository.",
+					"Directory new worktrees are created in, with one folder per repository. A relative path starts at the repository root.",
 					func(c *domain.Config) *string { return &c.Worktrees.WorktreeRoot }),
 			},
 		},

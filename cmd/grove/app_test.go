@@ -1229,7 +1229,7 @@ func TestPRWorktreePath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := prWorktreePath(tt.repoPath, tt.branch)
+			got := prWorktreePath(tt.repoPath, domain.WorktreesConfig{}, tt.branch)
 			assert.Equal(t, tt.wantPath, got)
 		})
 	}

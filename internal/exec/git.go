@@ -393,3 +393,14 @@ func (g *GitCommand) CommonDir() (string, error) {
 	}
 	return filepath.Clean(dir), nil
 }
+
+// BranchExists reports whether branch can be used as a start point: it exists
+// locally or on origin.
+func (g *GitCommand) BranchExists(branch string) bool {
+	for _, ref := range []string{branch, "origin/" + branch} {
+		if _, err := g.run("verify branch", "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil {
+			return true
+		}
+	}
+	return false
+}

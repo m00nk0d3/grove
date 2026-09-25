@@ -1591,3 +1591,28 @@ func TestGitCommand_CommonDir(t *testing.T) {
 		})
 	}
 }
+
+func TestGitCommand_BranchExists(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing map[string]bool
+		want     bool
+	}{
+		{name: "local branch", existing: map[string]bool{"develop^{commit}": true}, want: true},
+		{name: "remote branch only", existing: map[string]bool{"origin/develop^{commit}": true}, want: true},
+		{name: "missing everywhere", existing: map[string]bool{}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewGitCommandWithRunner("/repo", func(_ string, args ...string) (string, error) {
+				require.Equal(t, []string{"rev-parse", "--verify", "--quiet"}, args[:3])
+				if tt.existing[args[3]] {
+					return "abc123\n", nil
+				}
+				return "", errors.New("exit status 1")
+			})
+
+			assert.Equal(t, tt.want, cmd.BranchExists("develop"))
+		})
+	}
+}

@@ -329,3 +329,17 @@ func TestCreateModal_ParentRequired_UpKey_MovesToCreateFirst(t *testing.T) {
 
 	assert.Equal(t, 0, m.warnChoiceIdx)
 }
+
+func TestCreateModal_DefaultBaseOptionNamesTheConfiguredBranch(t *testing.T) {
+	issue := domain.Issue{Number: 9, Title: "Child"}
+	m := NewCreateModalForIssue(issue, "/repos/grove", "feat/issue-1-parent")
+	m.SetWorktreeConfig(domain.WorktreesConfig{BaseBranch: "develop"})
+
+	assert.Equal(t, "", m.BaseBranch(), "the default option leaves the base to worktree creation")
+	assert.Equal(t, "develop", m.baseLabel(m.BaseBranch()))
+	m.baseBranchIdx = 1
+	assert.Equal(t, "feat/issue-1-parent", m.BaseBranch())
+
+	m.SetWorktreeConfig(domain.WorktreesConfig{})
+	assert.Equal(t, "default branch", m.baseLabel(""), "with no base configured the option says what it resolves to")
+}
