@@ -1281,7 +1281,9 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           `Lean review still has blockers after ${REVIEW_BATCH_SIZE} implementation cycles.`,
         );
       });
-      await runStep("verification", async () => await verifyWithRepair(leanPlanPath));
+      await runStep("verification", async () => {
+        await verifyWithRepair(leanPlanPath);
+      });
       await runDomainReview(leanPlanPath);
       await runDocumentationStage(leanPlanPath);
     }
