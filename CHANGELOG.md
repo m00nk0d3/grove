@@ -287,6 +287,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The light theme no longer shows black patches** — every styled span ends
+  with a full SGR reset, which also cleared the enclosing panel's background,
+  so the text, padding and borders after the first coloured span on a line
+  were drawn on the terminal's default background. On a dark terminal the
+  light theme showed black blocks behind the dashboard cards, the pulse bars,
+  the integration status and the action hints; the dark themes had the same
+  defect, hidden by a background close to black. Each panel now carries its
+  background through the spans it contains, and the whole frame is painted
+  with the theme background so the gaps between panels match.
 - **A workflow started from a shell honours the configured agent** — Grove
   passes the agent to the workflows it starts, but running `imp`, `review`, or
   any other workflow command directly left `AGENT_FLOW_AGENT_BACKEND` unset, so

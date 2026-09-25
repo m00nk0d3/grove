@@ -223,6 +223,49 @@ func (t Theme) StatusStyle(status string) lipgloss.Style {
 	}
 }
 
+// sgrReset is the sequence lipgloss emits at the end of every styled span.
+const sgrReset = "\x1b[0m"
+
+// FillBackground makes background the backdrop of every cell in s that no
+// span colours itself. A styled span ends with a full SGR reset, which clears
+// the enclosing panel's background along with its own attributes, so the text
+// and padding that follow it on the same line fall back to the terminal's
+// default background. On a dark terminal that shows as black patches through a
+// light theme. The background is re-asserted at the start of every line and
+// after every reset. Under a colour profile that emits no escapes this returns
+// s unchanged.
+func FillBackground(s string, background lipgloss.TerminalColor) string {
+	if _, none := background.(lipgloss.NoColor); none || background == nil {
+		return s
+	}
+	const marker = "x"
+	styled := lipgloss.NewStyle().Background(background).Render(marker)
+	seq, _, found := strings.Cut(styled, marker)
+	if !found || seq == "" {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = seq + strings.ReplaceAll(line, sgrReset, sgrReset+seq) + sgrReset
+	}
+	return strings.Join(lines, "\n")
+}
+
+// RenderPanel renders content with st, first carrying st's background through
+// every styled span inside content so the whole panel keeps one backdrop. The
+// border is drawn on the same background.
+func (t Theme) RenderPanel(st lipgloss.Style, content string) string {
+	bg := st.GetBackground()
+	return st.BorderBackground(bg).Render(FillBackground(content, bg))
+}
+
+// Fill paints the theme's base background behind every cell of a full frame
+// that no panel or span colours itself, such as the gaps between panels and the
+// whitespace lipgloss adds when it joins or places blocks.
+func (t Theme) Fill(frame string) string {
+	return FillBackground(frame, lipgloss.Color(t.bg))
+}
+
 // Accent returns the theme's accent color hex string.
 func (t Theme) Accent() string { return t.accent }
 
@@ -284,9 +327,9 @@ func (t Theme) RenderFullscreenBox(title, content string, width, height int) str
 		titleStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color(t.accent)).
 			Bold(true)
-		return style.Render(titleStyle.Render(title) + "\n" + content)
+		return t.RenderPanel(style, titleStyle.Render(title)+"\n"+content)
 	}
-	return style.Render(content)
+	return t.RenderPanel(style, content)
 }
 
 // RenderTable renders a padded table with styled muted column headers.

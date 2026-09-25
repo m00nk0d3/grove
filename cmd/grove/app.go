@@ -1721,8 +1721,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View returns a string representation of the model's current state.
+// View returns a string representation of the model's current state, painted
+// on the active theme's background so no cell shows the terminal's default.
 func (m *Model) View() string {
+	return styles.NewTheme(styles.Themes[m.themeIdx]).Fill(m.renderView())
+}
+
+// renderView composes the base screen and whichever overlay is active.
+func (m *Model) renderView() string {
 	actions := m.availableContextActions()
 	actionIdx := m.contextActionIdx
 	if actionIdx >= len(actions) {

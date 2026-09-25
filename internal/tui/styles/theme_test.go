@@ -1,7 +1,11 @@
 package styles
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -135,4 +139,32 @@ func TestThemesList_HasThreeEntries(t *testing.T) {
 	assert.Equal(t, "kanagawa", Themes[6])
 	assert.Equal(t, "rose-pine", Themes[7])
 	assert.Equal(t, "onedark", Themes[8])
+}
+
+func TestFillBackground_ReassertsBackgroundAfterEveryReset(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+
+	bg := lipgloss.Color("#F5F5F5")
+	seq := strings.TrimSuffix(lipgloss.NewStyle().Background(bg).Render("x"), "x\x1b[0m")
+	require.NotEmpty(t, seq)
+	span := lipgloss.NewStyle().Foreground(lipgloss.Color("#0066CC")).Render("ACTIONS")
+
+	out := FillBackground(span+" [a] focus\nplain", bg)
+
+	lines := strings.Split(out, "\n")
+	require.Len(t, lines, 2)
+	assert.True(t, strings.HasPrefix(lines[0], seq), "a line starts on the background")
+	assert.Contains(t, lines[0], "\x1b[0m"+seq+" [a] focus", "text after a span keeps the background")
+	assert.True(t, strings.HasPrefix(lines[1], seq+"plain"))
+}
+
+func TestFillBackground_LeavesUncolouredOutputAlone(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+
+	assert.Equal(t, "a\nb", FillBackground("a\nb", lipgloss.Color("#F5F5F5")))
+	assert.Equal(t, "a\nb", FillBackground("a\nb", lipgloss.NoColor{}))
 }
