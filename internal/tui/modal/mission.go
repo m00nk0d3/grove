@@ -18,10 +18,11 @@ const (
 	missionSteps
 	missionMetrics
 	missionImplementation
+	missionReports
 	missionTabCount
 )
 
-var missionTabLabels = [missionTabCount]string{"Overview", "Steps", "Metrics", "Implementation"}
+var missionTabLabels = [missionTabCount]string{"Overview", "Steps", "Metrics", "Implementation", "Reports"}
 
 const (
 	missionTabsRow       = 9
@@ -42,6 +43,14 @@ type MissionModal struct {
 	theme         *styles.Theme
 	lastStepClick int
 	lastClickAt   time.Time
+
+	reports          []domain.WorkflowReport
+	reportsSupported bool
+	reportsErr       error
+	reportsLoaded    bool
+	reportsLoading   bool
+	selectedReport   int
+	rendered         renderedReport
 }
 
 func NewMissionModal(workflow domain.WorkflowRunRef, agents []domain.AgentRef) *MissionModal {
@@ -88,13 +97,9 @@ func (m *MissionModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		return m, func() tea.Msg { return ModalCancelledMsg{} }
 	case tea.KeyTab, tea.KeyRight:
-		m.activeTab = (m.activeTab + 1) % missionTabCount
-		m.scrollOffset = 0
-		return m, nil
-	case tea.KeyLeft:
-		m.activeTab = (m.activeTab + missionTabCount - 1) % missionTabCount
-		m.scrollOffset = 0
-		return m, nil
+		return m, m.setTab((m.activeTab + 1) % missionTabCount)
+	case tea.KeyShiftTab, tea.KeyLeft:
+		return m, m.setTab((m.activeTab + missionTabCount - 1) % missionTabCount)
 	case tea.KeyEnter:
 		return m, func() tea.Msg { return MissionJumpMsg{RunID: m.RunID()} }
 	case tea.KeyUp:
@@ -103,34 +108,115 @@ func (m *MissionModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyDown:
 		m.moveDown()
 		return m, nil
+	case tea.KeyPgDown, tea.KeyCtrlD:
+		m.scrollReport(max(m.reportRows()-2, 1))
+		return m, nil
+	case tea.KeyPgUp, tea.KeyCtrlU:
+		m.scrollReport(-max(m.reportRows()-2, 1))
+		return m, nil
+	case tea.KeyHome:
+		m.scrollOffset = 0
+		return m, nil
+	case tea.KeyEnd:
+		m.scrollReport(1 << 20)
+		return m, nil
 	case tea.KeyRunes:
 		switch key.String() {
 		case "q":
 			return m, func() tea.Msg { return ModalCancelledMsg{} }
 		case "h":
-			m.activeTab = (m.activeTab + missionTabCount - 1) % missionTabCount
-			m.scrollOffset = 0
+			return m, m.setTab((m.activeTab + missionTabCount - 1) % missionTabCount)
 		case "l":
-			m.activeTab = (m.activeTab + 1) % missionTabCount
-			m.scrollOffset = 0
+			return m, m.setTab((m.activeTab + 1) % missionTabCount)
 		case "j":
 			m.moveDown()
 		case "k":
 			m.moveUp()
+		case "g":
+			m.scrollOffset = 0
+		case "G":
+			m.scrollReport(1 << 20)
+		case "[":
+			m.selectReport(-1)
+		case "]":
+			m.selectReport(1)
 		case "r", "R":
-			return m, func() tea.Msg { return MissionRefreshMsg{} }
+			refresh := func() tea.Msg { return MissionRefreshMsg{} }
+			if m.activeTab == missionReports {
+				return m, tea.Batch(refresh, m.requestReports())
+			}
+			return m, refresh
 		case "t", "T":
 			if strings.EqualFold(m.workflow.Status, domain.WorkflowFailed) {
 				return m, func() tea.Msg { return MissionRetryRequestedMsg{RunID: m.RunID()} }
 			}
 		case "x", "X":
 			return m, func() tea.Msg { return MissionRemoveRequestedMsg{RunID: m.RunID()} }
-		case "1", "2", "3", "4":
-			m.activeTab = missionTab(key.String()[0] - '1')
-			m.scrollOffset = 0
+		default:
+			if s := key.String(); len(s) == 1 && s[0] >= '1' && s[0] < '1'+byte(missionTabCount) {
+				return m, m.setTab(missionTab(s[0] - '1'))
+			}
 		}
 	}
 	return m, nil
+}
+
+// setTab switches to tab. Entering the reports tab asks for the reports to be
+// read again, so a report written since the last visit shows up.
+func (m *MissionModal) setTab(tab missionTab) tea.Cmd {
+	m.activeTab = tab
+	m.scrollOffset = 0
+	if tab == missionReports {
+		return m.requestReports()
+	}
+	return nil
+}
+
+func (m *MissionModal) requestReports() tea.Cmd {
+	if !m.reportsLoaded {
+		m.reportsLoading = true
+	}
+	runID, workflow := m.RunID(), m.workflow
+	return func() tea.Msg { return MissionReportsRequestedMsg{RunID: runID, Workflow: workflow} }
+}
+
+// SetReports stores the reports Grove found for the inspected run. The report
+// on screen stays selected when it is still among them.
+func (m *MissionModal) SetReports(msg MissionReportsLoadedMsg) {
+	var selectedPath string
+	if m.selectedReport >= 0 && m.selectedReport < len(m.reports) {
+		selectedPath = m.reports[m.selectedReport].Path
+	}
+	m.reports = msg.Reports
+	m.reportsSupported = msg.Supported
+	m.reportsErr = msg.Err
+	m.reportsLoaded = true
+	m.reportsLoading = false
+	m.rendered = renderedReport{}
+	m.selectedReport = 0
+	for i, report := range m.reports {
+		if report.Path == selectedPath {
+			m.selectedReport = i
+		}
+	}
+	m.scrollOffset = min(m.scrollOffset, m.maxReportScroll())
+}
+
+func (m *MissionModal) selectReport(delta int) {
+	if m.activeTab != missionReports || len(m.reports) < 2 {
+		return
+	}
+	n := len(m.reports)
+	m.selectedReport = (m.selectedReport + delta + n) % n
+	m.scrollOffset = 0
+}
+
+// scrollReport moves the report view by delta lines, stopping at either end.
+func (m *MissionModal) scrollReport(delta int) {
+	if m.activeTab != missionReports {
+		return
+	}
+	m.scrollOffset = max(0, min(m.scrollOffset+delta, m.maxReportScroll()))
 }
 
 // HandleMouse maps clicks and wheel events inside the centered inspector.
@@ -162,9 +248,7 @@ func (m *MissionModal) HandleMouse(msg tea.MouseMsg, _ int, screenHeight int) (t
 		for i, label := range missionTabLabels {
 			width := len(fmt.Sprintf(" %d %s ", i+1, label))
 			if msg.X >= x && msg.X < x+width {
-				m.activeTab = missionTab(i)
-				m.scrollOffset = 0
-				return m, nil
+				return m, m.setTab(missionTab(i))
 			}
 			x += width + 6
 		}
@@ -204,6 +288,10 @@ func (m *MissionModal) HandleMouse(msg tea.MouseMsg, _ int, screenHeight int) (t
 }
 
 func (m *MissionModal) moveDown() {
+	if m.activeTab == missionReports {
+		m.scrollReport(1)
+		return
+	}
 	if m.activeTab == missionSteps && m.selectedStep < len(m.workflow.Steps)-1 {
 		m.selectedStep++
 		return
@@ -212,6 +300,10 @@ func (m *MissionModal) moveDown() {
 }
 
 func (m *MissionModal) moveUp() {
+	if m.activeTab == missionReports {
+		m.scrollReport(-1)
+		return
+	}
 	if m.activeTab == missionSteps && m.selectedStep > 0 {
 		m.selectedStep--
 		return
@@ -236,12 +328,23 @@ func (m *MissionModal) View() string {
 		b.WriteString(m.renderMetrics())
 	case missionImplementation:
 		b.WriteString(m.renderImplementation())
+	case missionReports:
+		b.WriteString(m.renderReports())
 	}
 	b.WriteString("\n\n")
 	b.WriteString(m.keyStyle().Render("Tab/h/l"))
 	b.WriteString(m.mutedStyle().Render(" sections  ·  "))
-	b.WriteString(m.keyStyle().Render("j/k"))
-	b.WriteString(m.mutedStyle().Render(" navigate  ·  "))
+	if m.activeTab == missionReports {
+		b.WriteString(m.keyStyle().Render("j/k PgUp/PgDn"))
+		b.WriteString(m.mutedStyle().Render(" scroll  ·  "))
+		if len(m.reports) > 1 {
+			b.WriteString(m.keyStyle().Render("[ ]"))
+			b.WriteString(m.mutedStyle().Render(" report  ·  "))
+		}
+	} else {
+		b.WriteString(m.keyStyle().Render("j/k"))
+		b.WriteString(m.mutedStyle().Render(" navigate  ·  "))
+	}
 	b.WriteString(m.keyStyle().Render("Enter"))
 	b.WriteString(m.mutedStyle().Render(" jump  ·  "))
 	b.WriteString(m.keyStyle().Render("r"))

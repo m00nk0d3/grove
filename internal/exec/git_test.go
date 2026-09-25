@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/m00nk0d3/grove/internal/domain"
@@ -1553,4 +1554,40 @@ func TestGitCommand_ListWorktrees_BrokenGitLink(t *testing.T) {
 		{Path: "/repo/main", CommitSHA: "ffffffffffffffffffffffffffffffffffffffff", Branch: "main", IsClean: true},
 		{Path: "/repo/broken", CommitSHA: "1111111111111111111111111111111111111111", Branch: "broken-branch", IsClean: false},
 	}, actual)
+}
+
+func TestGitCommand_CommonDir(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	tests := []struct {
+		name    string
+		output  string
+		err     error
+		want    string
+		wantErr string
+	}{
+		{name: "relative path from the main worktree", output: ".git\n", want: filepath.Join(repo, ".git")},
+		{name: "absolute path from a linked worktree", output: filepath.Join(repo, ".git") + "\n", want: filepath.Join(repo, ".git")},
+		{name: "empty output", output: "  \n", wantErr: "empty path"},
+		{name: "git fails", err: errors.New("not a git repository"), wantErr: "not a git repository"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotArgs []string
+			cmd := NewGitCommandWithRunner(repo, func(_ string, args ...string) (string, error) {
+				gotArgs = args
+				return tt.output, tt.err
+			})
+
+			got, err := cmd.CommonDir()
+
+			assert.Equal(t, []string{"rev-parse", "--git-common-dir"}, gotArgs)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

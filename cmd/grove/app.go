@@ -1113,6 +1113,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
+		case modal.MissionReportsRequestedMsg:
+			return m, loadMissionReportsCmd(msg, m.RepoPath)
+		case modal.MissionReportsLoadedMsg:
+			// A reply can arrive after the inspector was closed or switched to
+			// another run; it is only meant for the run that asked.
+			if inspector, ok := m.activeModal.(*modal.MissionModal); ok && inspector.RunID() == msg.RunID {
+				inspector.SetReports(msg)
+			}
+			return m, nil
 		case modal.MissionRetryRequestedMsg:
 			m.activeModal = nil
 			return m.retryWorkflowByRunID(msg.RunID)
@@ -1148,11 +1157,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		default:
-			// Only key events are consumed by the modal. Non-key messages
-			// (e.g. githubSyncedMsg, debouncedRenderMsg, syncTickMsg) must fall
-			// through to the main switch so background events are never silently
-			// swallowed while a modal is open.
-			if _, ok := msg.(tea.KeyMsg); ok {
+			// Only key events and the modal's own scheduled messages (such as
+			// the tick that clears its status line) are consumed by the modal.
+			// Other messages (e.g. githubSyncedMsg, debouncedRenderMsg,
+			// syncTickMsg) must fall through to the main switch so background
+			// events are never silently swallowed while a modal is open.
+			if _, ok := msg.(tea.KeyMsg); ok || modal.IsOwnMessage(msg) {
 				updated, cmd := m.activeModal.Update(msg)
 				if next, ok := updated.(modal.Modal); ok {
 					m.activeModal = next

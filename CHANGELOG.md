@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The mission inspector shows a workflow's reports** — a new Reports tab
+  (`5`) shows what the run wrote about itself: the implementation report and
+  review verdict of an implementation run, each reviewed head's review of a
+  review run, and the failure summary of a CI run. The reports are rendered
+  from Markdown in the active theme, with headings, lists, code blocks, and
+  tables that wrap to fit, and scroll with `j`/`k`, `PgUp`/`PgDn`, and `g`/`G`.
+  `[` and `]` switch between a run's reports. They are read from the
+  repository's shared git directory, so a run's reports stay readable after
+  its worktree is removed, and they are read again each time the tab is
+  opened or `r` is pressed.
+
 - **A redesigned settings screen** — `t` opens a fullscreen settings screen
   with a section rail (Appearance, GitHub, Worktrees, Agents) in place of the
   small tabbed box. Every setting shows its `config.toml` key and a description,
@@ -306,6 +317,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The settings status line clears again** — an open modal received only key
+  presses, so the timer that clears the settings screen's "Saved" message
+  never reached it and the message stayed until the screen was closed. A
+  modal's own scheduled messages are now delivered to it.
 - **The light theme no longer shows black patches** — every styled span ends
   with a full SGR reset, which also cleared the enclosing panel's background,
   so the text, padding and borders after the first coloured span on a line

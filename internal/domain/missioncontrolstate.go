@@ -168,3 +168,12 @@ type Correlations struct {
 	AgentToWorkflow    map[string]string // agent ID -> linked workflow ID
 	PaneToAgent        map[string]string // pane ID -> linked agent ID (empty if linked to workitem directly)
 }
+
+// WorkflowReport is a document a workflow wrote about its run, such as the
+// implementation report or a review verdict.
+type WorkflowReport struct {
+	Title   string
+	Path    string
+	ModTime time.Time
+	Body    string
+}
