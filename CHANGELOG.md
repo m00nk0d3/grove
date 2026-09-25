@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A live demo on the website** — the site plays a walk through Grove, from
+  mission control to starting a workflow, following it in the inspector,
+  reading its report, and switching theme. Every screen is rendered by Grove's
+  own renderer and played back as text, so it stays sharp and weighs 14 KB
+  compressed; visitors can step through it or press the keys it shows.
+  `make demo` regenerates it.
 - **Documentation brought up to date** — the README, runbook, Sandcastle JSON
   contract, runtime README, contributing guide, and website described the
   product as it was in May: keys that no longer exist (`Ctrl+N`, lock, prune,

@@ -9,7 +9,7 @@
           <div className="flex items-center gap-3">
             <span className="font-mono text-2xl font-bold tracking-widest text-[#00d9ff] glow-accent">GROVE</span>
             <span className="h-6 w-px bg-[#1e2a3a]" />
-            <span className="font-mono text-xs text-[#4a5568]">Git worktree command center</span>
+            <span className="font-mono text-xs text-[#4a5568]">Git worktree orchestrator</span>
           </div>
 
           {/* Links */}

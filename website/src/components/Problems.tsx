@@ -9,12 +9,12 @@ const PROBLEMS = [
   {
     icon: '🪟',
     title: 'The five-app shuffle',
-    body: 'Terminal for git, browser for GitHub, another terminal for the agent, Slack for the PR link. Grove collapses all of that into a single pane of glass.',
+    body: 'Terminal for git, browser for GitHub, another terminal for the agent, chat for the PR link. Grove brings worktrees, pull requests, issues, and running workflows onto one screen.',
   },
   {
     icon: '🤖',
-    title: 'AI agents without context',
-    body: 'Spinning up Claude or Copilot in the wrong directory wastes time and produces wrong answers. Grove launches agents inside the correct worktree automatically.',
+    title: 'Agents in the wrong place',
+    body: 'An agent started in the wrong checkout wastes a run. Grove starts each workflow with its issue or pull request and worktree, in its own Herdr pane, and shows you how it is going.',
   },
   {
     icon: '🔍',

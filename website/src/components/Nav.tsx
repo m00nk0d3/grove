@@ -1,10 +1,12 @@
 ﻿import { cn } from '@/lib/utils'
+import { useLatestVersion } from '@/lib/useGitHubReleases'
 
 interface NavProps {
   className?: string
 }
 
 export function Nav({ className }: NavProps) {
+  const version = useLatestVersion('m00nk0d3/grove')
   return (
     <nav
       className={cn(
@@ -18,9 +20,11 @@ export function Nav({ className }: NavProps) {
           <span className="font-mono text-xl font-bold tracking-widest text-[#00d9ff] glow-accent">
             GROVE
           </span>
-          <span className="rounded border border-[#00d9ff]/30 px-1.5 py-0.5 font-mono text-[10px] text-[#00d9ff]/70">
-            v0.6.0
-          </span>
+          {version && (
+            <span className="rounded border border-[#00d9ff]/30 px-1.5 py-0.5 font-mono text-[10px] text-[#00d9ff]/70">
+              {version}
+            </span>
+          )}
         </a>
 
         {/* Links */}
@@ -28,6 +32,7 @@ export function Nav({ className }: NavProps) {
           {[
             ['Demo', '#demo'],
             ['Features', '#features'],
+            ['Themes', '#themes'],
             ['Install', '#install'],
             ['Keybindings', '#keybindings'],
             ['Changelog', '#changelog'],

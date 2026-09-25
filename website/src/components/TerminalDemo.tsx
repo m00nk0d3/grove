@@ -1,62 +1,90 @@
-﻿import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
+// Each frame types a prompt and prints what Grove or a workflow shows for it.
+// The output mirrors the real screens and log lines; keep it in step with the
+// dashboard (cmd/grove/renderer.go) and the runtime's messages
+// (runtime/sandcastle/src/orchestrator.ts).
 const FRAMES: { prompt: string; output: string[] }[] = [
   {
     prompt: 'grove',
     output: [
-      '  GROVE v0.6.0  ·  m00nk0d3/grove',
+      '  ◈ MISSION CONTROL // LIVE OPERATIONS',
+      '  SYSTEM RUNNING   27 issues • 4 PRs • 2 PRs NEED ATTENTION',
       '',
-      '  Worktrees                    Sessions',
-      '  ─────────────────────────    ─────────────',
-      '  ▶ main          [main]       ● shell · PID 8421',
-      '    feat/fuzzy    [feat/...]   ● copilot running',
-      '    feat/pr-rev   [feat/...]   ○ idle',
-      '    fix/cache     [fix/...]    ○ idle',
+      '  WORKTREES 05   AGENTS 03   WORKFLOWS 04   OPEN PRs 04',
       '',
-      '  4 worktrees · 2 active sessions',
+      '  ⌁ WORKFLOWS  [ ACTIVE / ATTENTION 03 ]  [ COMPLETED 01 ]',
+      '  ▶ ● Implement issue #218        RUNNING   1 agent • Herdr w1:p2',
+      '    ● Review pull request #231    RUNNING   1 agent • Herdr w1:p3',
+      '    ● Repair CI #229              BLOCKED   1 agent • Herdr w1:p4',
     ],
   },
   {
-    prompt: '/ fuzzy',
+    prompt: 'i  ↵  a  ← issue #224, then Actions',
     output: [
-      '  ╭─ FUZZY FINDER ───────────────────────────╮',
-      '  │  🔍 fuzzy                                 │',
-      '  ├──────────────────────────────────────────┤',
-      '  │  ▶ [worktree]  feat/fuzzy-finder          │',
-      '  │    [issue]     #99 · Global fuzzy search  │',
-      '  │    [pr]        #99 · feat: fuzzy finder   │',
-      '  │    [file]      internal/fuzzy/fuzzy.go    │',
-      '  │    [branch]    feat/issue-99-fuzzy        │',
-      '  ╰──────────────────────────────────────────╯',
+      '  ◆ ACTIONS',
+      '    ↵  Jump to workflow or create worktree',
+      '  ▶ ⚡ Implement issue',
+      '    ◉  Open on GitHub',
+      '',
+      '  ✓ Started imp workflow',
     ],
   },
   {
-    prompt: 'c  ← spawn copilot',
+    prompt: 'imp 224   ← in its Herdr pane',
     output: [
-      '  Enter Copilot prompt: review this PR',
-      '',
-      '  Launching GitHub Copilot in',
-      '  /worktrees/feat/fuzzy-finder...',
-      '',
-      '  ✓ Copilot session started (PID 9182)',
-      '  ✓ Session recorded',
+      '  [Target Repository] m00nk0d3/grove | Issue #224',
+      '  [Workflow Mode] FULL — touches the sync loop and its tests',
+      '  [Sandcastle] ../worktrees/grove/fix-issue-224-sync-tick on fix/issue-224-sync-tick',
+      '  [Stack Detector] Assigned specialist: go',
+      '  ✓ planning   ✓ tests   ✓ implementation   ✓ verification',
+      '  ✓ domain-review   ✓ documentation   ✓ delivery',
+      '  [GitHub] Opening pull request...',
+      '  [COMPLETE] PR approved: https://github.com/m00nk0d3/grove/pull/232',
     ],
   },
   {
-    prompt: 'Ctrl+R  ← AI PR review',
+    prompt: 'v  5   ← mission inspector, reports',
     output: [
-      '  Provisioning review worktree...',
-      '  ✓ Checked out PR #99 → /worktrees/pr-99-review',
+      '  1 OVERVIEW ── 2 STEPS ── 3 METRICS ── 4 IMPLEMENTATION ── 5 REPORTS',
       '',
-      '  ╭─ AGENT LAUNCHER ─────────────────────────╮',
-      '  │  Pre-seeded: PR code review prompt        │',
-      '  │  ▶ [c]  GitHub Copilot    ● available     │',
-      '  │    [a]  Claude Code       ● available     │',
-      '  │    [f]  Aider             ○ disabled       │',
-      '  ╰──────────────────────────────────────────╯',
+      '  ◆ REPORTS 2   [ Implementation report ]   Review verdict',
+      '  issue-224-implementation-report.md • updated 11:42',
+      '',
+      '  Implementation Report',
+      '  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '  • One periodic sync chain, however many syncs complete',
+      '  • auto_sync = false stops the background refresh',
+    ],
+  },
+  {
+    prompt: '/ sync',
+    output: [
+      '  ╭─ FUZZY FINDER ─────────────────────────────╮',
+      '  │  sync                                       │',
+      '  ├─────────────────────────────────────────────┤',
+      '  │  ▶ [worktree]  fix/issue-224-sync-tick       │',
+      '  │    [issue]     #224 · Sync ticks pile up     │',
+      '  │    [pr]        #232 · fix(sync): one tick    │',
+      '  │    [file]      cmd/grove/app.go              │',
+      '  │    [commit]    3f2a91c fix(sync): one tick   │',
+      '  ╰─────────────────────────────────────────────╯',
     ],
   },
 ]
+
+// lineColor picks a line's colour the way the terminal shows it: log tags in
+// their own colours, successes green, the selection and headings in the accent.
+function lineColor(line: string): string {
+  const text = line.trimStart()
+  if (text.startsWith('✓') || text.startsWith('[COMPLETE]')) return '#00ff88'
+  if (text.startsWith('▶') || text.startsWith('◈') || text.startsWith('◆') || text.startsWith('━')) return '#00d9ff'
+  if (text.startsWith('[GitHub]')) return '#ff7edb'
+  if (text.startsWith('[Workflow Mode]')) return '#7aa2f7'
+  if (text.startsWith('[Target Repository]')) return '#00ff88'
+  if (text.startsWith('[')) return '#8be9fd'
+  return '#e2e8f0'
+}
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms))
@@ -129,7 +157,7 @@ export function TerminalDemo() {
         <span className="h-3 w-3 rounded-full bg-[#ff4757]" />
         <span className="h-3 w-3 rounded-full bg-[#ffd700]" />
         <span className="h-3 w-3 rounded-full bg-[#00ff88]" />
-        <span className="ml-3 font-mono text-xs text-[#4a5568]">grove — ~/repos/myproject</span>
+        <span className="ml-3 font-mono text-xs text-[#4a5568]">herdr — grove</span>
         <div className="ml-auto flex items-center gap-1">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#00ff88]" />
           <span className="font-mono text-[10px] text-[#00ff88]/70">live</span>
@@ -137,13 +165,13 @@ export function TerminalDemo() {
       </div>
 
       {/* Terminal body */}
-      <div className="min-h-[320px] p-6 font-mono text-sm">
+      <div className="min-h-[320px] overflow-x-auto p-6 font-mono text-sm">
         {/* Previous output lines */}
         {outputLines.map((line, i) => (
           <div
             key={i}
-            className="leading-6"
-            style={{ color: line.startsWith('  ✓') ? '#00ff88' : line.startsWith('  ▶') ? '#00d9ff' : '#e2e8f0' }}
+            className="whitespace-pre leading-6"
+            style={{ color: lineColor(line) }}
           >
             {line || '\u00A0'}
           </div>

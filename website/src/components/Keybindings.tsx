@@ -1,52 +1,55 @@
 ﻿import { motion } from 'framer-motion'
 
+// Mirrors the key handling in cmd/grove/app.go and the help modal
+// (internal/tui/modal/help.go); keep the three in step.
 const GROUPS = [
   {
     name: 'Navigation',
     bindings: [
-      { key: '↑ / k', desc: 'Move up' },
-      { key: '↓ / j', desc: 'Move down' },
-      { key: 'Tab', desc: 'Next panel' },
-      { key: 'Shift+Tab', desc: 'Previous panel' },
-      { key: 'PgUp / PgDn', desc: 'Paginate long lists' },
+      { key: '↑ ↓ / j k', desc: 'Move the selection' },
+      { key: 'Tab', desc: 'Cycle rail, list, and context panel' },
+      { key: 'Enter', desc: 'Open, jump, or create for the selection' },
+      { key: 'J / K', desc: 'Scroll the context panel' },
+      { key: 'PgDn / n, PgUp', desc: 'Page through issues and PRs' },
     ],
   },
   {
-    name: 'Worktrees',
+    name: 'Views',
     bindings: [
-      { key: 'n', desc: 'New worktree' },
-      { key: 'Enter / s', desc: 'Switch shell to worktree' },
-      { key: 'd', desc: 'Delete worktree' },
-      { key: 'l', desc: 'Lock / unlock' },
-      { key: 'p', desc: 'Prune stale worktrees' },
-      { key: 'r', desc: 'Refresh from remote' },
+      { key: 'd', desc: 'Dashboard' },
+      { key: 'w', desc: 'Worktrees' },
+      { key: 'i', desc: 'Issues' },
+      { key: 'p', desc: 'Pull requests' },
+      { key: 't', desc: 'Settings' },
     ],
   },
   {
-    name: 'Search',
+    name: 'Workflows',
     bindings: [
-      { key: '/ or Ctrl+F', desc: 'Open global fuzzy finder' },
-      { key: 'Type to filter', desc: 'Real-time multi-source search' },
-      { key: 'Enter', desc: 'Navigate to result' },
-      { key: 'Esc', desc: 'Close finder' },
+      { key: 'a', desc: 'Focus Actions: start imp, review, address, ci, resolve, clean' },
+      { key: '[ / ]', desc: 'Active / Attention ↔ Completed' },
+      { key: 'v', desc: 'Open the mission inspector' },
+      { key: 'x', desc: 'Stop and remove a run' },
+      { key: 'm', desc: 'Mark a succeeded run done' },
     ],
   },
   {
-    name: 'AI Agents',
+    name: 'Mission inspector',
     bindings: [
-      { key: 'c', desc: 'Spawn GitHub Copilot' },
-      { key: 'a', desc: 'Spawn Claude Code' },
-      { key: 'f', desc: 'Spawn Aider' },
-      { key: 'Ctrl+R', desc: 'AI-assisted PR review' },
+      { key: '1–5 / Tab', desc: 'Overview, Steps, Metrics, Implementation, Reports' },
+      { key: '[ / ]', desc: 'Previous / next report' },
+      { key: 'j k, PgUp PgDn', desc: 'Scroll a report' },
+      { key: 't', desc: 'Retry a failed run' },
+      { key: 'Enter', desc: "Jump to the run's Herdr pane" },
     ],
   },
   {
     name: 'Global',
     bindings: [
-      { key: 't', desc: 'Open settings' },
-      { key: 'u', desc: 'Check for updates' },
-      { key: 'f1 / ?', desc: 'Open help modal' },
-      { key: 'q / Ctrl+C', desc: 'Quit Grove' },
+      { key: '/ or Ctrl+F', desc: 'Open the fuzzy finder' },
+      { key: 'r', desc: 'Refresh GitHub, Herdr, and Sandcastle' },
+      { key: 'f1 / ?', desc: 'Open help' },
+      { key: 'q / Esc / Ctrl+C', desc: 'Quit Grove' },
     ],
   },
 ]
