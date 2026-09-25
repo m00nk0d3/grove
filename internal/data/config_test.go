@@ -93,12 +93,10 @@ default_agent = "custom_pi"
 				t.Helper()
 				assert.Equal(t, "matrix", cfg.Appearance.Theme)
 				assert.False(t, cfg.Herdr.Enabled)
-				assert.Equal(t, "herdr", cfg.Herdr.Binary)
 				assert.Equal(t, 30, cfg.Herdr.PollIntervalSeconds)
 				assert.True(t, cfg.Herdr.PreferWorktreeAPI)
 				assert.False(t, cfg.Sandcastle.Enabled)
 				assert.Equal(t, "grove-sandcastle", cfg.Sandcastle.Binary)
-				assert.Equal(t, 5, cfg.Sandcastle.PollIntervalSeconds)
 				assert.Equal(t, "custom_pi", cfg.Sandcastle.DefaultAgent)
 			},
 		},
@@ -118,16 +116,30 @@ default_agent = "custom_pi"
 				assert.Equal(t, "matrix", cfg.Appearance.Theme)
 				assert.Equal(t, domain.HerdrConfig{
 					Enabled:             true,
-					Binary:              "herdr",
 					PollIntervalSeconds: 5,
 					PreferWorktreeAPI:   true,
 				}, cfg.Herdr)
 				assert.Equal(t, domain.SandcastleConfig{
-					Enabled:             true,
-					Binary:              "grove-sandcastle",
-					PollIntervalSeconds: 5,
-					DefaultAgent:        "opencode",
+					Enabled:      true,
+					Binary:       "grove-sandcastle",
+					DefaultAgent: "opencode",
 				}, cfg.Sandcastle)
+			},
+		},
+		{
+			name: "keys removed from the config are ignored, so an older file still loads",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				path := filepath.Join(t.TempDir(), "config.toml")
+				old := "[herdr]\nbinary = \"herdr\"\npoll_interval_seconds = 9\n\n[sandcastle]\npoll_interval_seconds = 5\ndefault_agent = \"claude\"\n"
+				require.NoError(t, os.WriteFile(path, []byte(old), 0o644))
+				return path
+			},
+			wantErr: false,
+			wantCheck: func(t *testing.T, cfg *domain.Config) {
+				t.Helper()
+				assert.Equal(t, 9, cfg.Herdr.PollIntervalSeconds)
+				assert.Equal(t, "claude", cfg.Sandcastle.DefaultAgent)
 			},
 		},
 		{

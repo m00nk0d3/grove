@@ -499,7 +499,10 @@ Required work:
 ${failure}
 \`\`\`
 
-3. Run '${validationCommand}' and 'git diff --check'.
+3. Run the delivery gate's commands, and 'git diff --check':
+
+${validationCommand}
+
 4. Leave the worktree ready for Grove to rerun both delivery gates.
 
 Boundaries:
@@ -508,7 +511,7 @@ Boundaries:
 - Preserve correct existing implementation work.
 
 Completion criteria:
-- '${validationCommand}' and 'git diff --check' both pass.
+- Every delivery gate command listed above passes, and so does 'git diff --check'.
 `,
 
   PLANNER: (
@@ -817,7 +820,7 @@ ${failure}
 
 Required work:
 1. Inspect the current diff, then reproduce the failure yourself by running the
-   command above. Run it to completion and read the actual output — do not
+   commands above. Run each to completion and read the actual output — do not
    assume what failed, and do not stop at the first line.
 2. Work out whether the failure comes from your change or was already broken on
    this branch before you touched it.
@@ -825,8 +828,8 @@ Required work:
    - Pre-existing and unrelated: say so explicitly in your final response, with
      the evidence that shows it fails without your change too. Do not paper
      over it, and do not silently adopt someone else's broken test.
-3. Rerun the command until it passes, or until you can show the remaining
-   failure is not yours.
+3. Rerun them until they pass, or until you can show the remaining failure is
+   not yours.
 4. Keep the reviewers' feedback satisfied. A fix that passes the gate by
    undoing what a reviewer asked for is not a fix.
 

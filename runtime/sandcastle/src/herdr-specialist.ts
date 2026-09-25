@@ -192,6 +192,43 @@ function humanInputTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
 
 // An agent sometimes stops for something only a person can give: a permission
 // decision, a workspace it has not been trusted with, a judgement call. Herdr
+// A prompt reaches herdr as a single command-line argument, and Windows caps a
+// process command line at 32767 characters. A pull request review carries the
+// request's metadata, and a generated body on its own can run past 40 KB, so
+// the spawn failed with ENAMETOOLONG before the agent was ever started.
+// `herdr agent prompt` takes its text positionally and offers no file or stdin
+// form, so an assignment past this size is handed over as a path to read
+// instead. The assignment is already written to disk for every backend and
+// survives until the agent finishes.
+//
+// The threshold leaves room for the rest of the command line and for the
+// quoting the platform applies to an argument. It is applied everywhere rather
+// than only on Windows, so the same assignment is delivered the same way on
+// either machine.
+export const MAX_INLINE_PROMPT_CHARS = 16_000;
+
+export function buildAssignmentPointerPrompt(assignmentPath: string): string {
+  return (
+    "Your assignment is too large to send inline, so it is in a file.\n" +
+    `Read ${assignmentPath} in full before doing anything else, and carry it ` +
+    "out exactly as written.\n" +
+    "That file is the complete assignment, including every required output " +
+    "path and all acceptance criteria. Treat its contents as if they had been " +
+    "sent to you directly here, and do not ask for them to be resent."
+  );
+}
+
+// Returns what should actually be sent to the agent: the assignment itself when
+// it fits on a command line, and a pointer to it when it does not.
+export function deliverablePrompt(
+  promptText: string,
+  assignmentPath: string,
+): string {
+  return promptText.length <= MAX_INLINE_PROMPT_CHARS
+    ? promptText
+    : buildAssignmentPointerPrompt(assignmentPath);
+}
+
 // reports that as `agent_blocked`, which used to end the run outright. Hand the
 // pane to the person instead and continue once they have answered.
 //
@@ -413,7 +450,14 @@ Use the Write tool with the absolute path for each artifact.
       throw new Error("Pi started without initializing the compaction guard.");
     }
     const continuityCursor = readContinuityEvents(compactionStatusPath).length;
-    const promptOutput = promptAgent(agentName, effectivePrompt, {
+    const openingPrompt = deliverablePrompt(effectivePrompt, assignmentPath);
+    if (openingPrompt !== effectivePrompt) {
+      console.log(
+        `\x1b[36m[Assignment]\x1b[0m ${role} assignment is ${effectivePrompt.length} characters; ` +
+          `delivering it as a file for the agent to read.`,
+      );
+    }
+    const promptOutput = promptAgent(agentName, openingPrompt, {
       extraArgs: ["--wait", "--timeout", String(AGENT_TIMEOUT_MS)],
       settleTimeoutMs: AGENT_TIMEOUT_MS,
       onBlocked: () =>

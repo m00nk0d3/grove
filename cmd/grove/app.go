@@ -67,8 +67,10 @@ type githubSyncedMsg struct {
 	syncedAt time.Time
 }
 
-// syncTickMsg triggers the next periodic GitHub sync.
-type syncTickMsg struct{}
+// syncTickMsg triggers the next periodic GitHub sync. gen identifies the tick
+// that scheduled it: scheduling a tick supersedes any still pending, so only
+// one periodic sync chain is ever live however many syncs complete.
+type syncTickMsg struct{ gen int }
 
 // sessionTickMsg triggers the next periodic session health check.
 type sessionTickMsg struct{}
@@ -678,7 +680,7 @@ type contextActionOption struct {
 	workflowKind string
 }
 
-// Model represents the root Bubbletea model for the Nexus TUI application.
+// Model represents the root Bubbletea model for the Grove TUI application.
 // It manages the list of git worktrees, user interactions, and active modals.
 type Model struct {
 	Worktrees          []domain.Worktree    // List of available git worktrees
@@ -697,6 +699,8 @@ type Model struct {
 	lastSynced         time.Time            // When the last successful GitHub sync completed
 	syncErr            error                // Error from the most recent GitHub sync attempt
 	syncing            bool                 // True while a background GitHub sync is in progress
+	syncTickGen        int                  // Generation of the pending periodic sync tick; older ticks are ignored
+	syncTickInterval   time.Duration        // Interval of the pending periodic sync tick; 0 when none is pending
 	selectedIssueIdx   int                  // Currently selected issue index
 	selectedPRIdx      int                  // Currently selected PR index
 	selectedMissionIdx int                  // Selected workflow/mission on the dashboard
@@ -1077,7 +1081,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeModal = nil
 			for _, iss := range m.issues {
 				if iss.Number == msg.ParentNumber {
-					m.activeModal = modal.NewCreateModal([]domain.Issue{iss}, m.RepoPath)
+					create := modal.NewCreateModal([]domain.Issue{iss}, m.RepoPath)
+					create.SetWorktreeConfig(m.Config.Worktrees)
+					m.activeModal = create
 					break
 				}
 			}
@@ -1113,6 +1119,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
+		case modal.MissionReportsRequestedMsg:
+			return m, loadMissionReportsCmd(msg, m.RepoPath)
+		case modal.MissionReportsLoadedMsg:
+			// A reply can arrive after the inspector was closed or switched to
+			// another run; it is only meant for the run that asked.
+			if inspector, ok := m.activeModal.(*modal.MissionModal); ok && inspector.RunID() == msg.RunID {
+				inspector.SetReports(msg)
+			}
+			return m, nil
 		case modal.MissionRetryRequestedMsg:
 			m.activeModal = nil
 			return m.retryWorkflowByRunID(msg.RunID)
@@ -1141,18 +1156,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
+			// Turning auto sync on, or changing its interval, takes effect
+			// now rather than after the next manual sync; turning it off
+			// supersedes the pending tick.
+			var tick tea.Cmd
+			if m.Config.GitHub.AutoSync != (m.syncTickInterval > 0) ||
+				(m.Config.GitHub.AutoSync && m.Config.GitHub.SyncInterval() != m.syncTickInterval) {
+				tick = m.scheduleSyncTick()
+			}
 			// Stay in settings — pass the message on to the modal.
 			updated, cmd := m.activeModal.Update(msg)
 			if next, ok := updated.(modal.Modal); ok {
 				m.activeModal = next
 			}
-			return m, cmd
+			return m, tea.Batch(cmd, tick)
 		default:
-			// Only key events are consumed by the modal. Non-key messages
-			// (e.g. githubSyncedMsg, debouncedRenderMsg, syncTickMsg) must fall
-			// through to the main switch so background events are never silently
-			// swallowed while a modal is open.
-			if _, ok := msg.(tea.KeyMsg); ok {
+			// Only key events and the modal's own scheduled messages (such as
+			// the tick that clears its status line) are consumed by the modal.
+			// Other messages (e.g. githubSyncedMsg, debouncedRenderMsg,
+			// syncTickMsg) must fall through to the main switch so background
+			// events are never silently swallowed while a modal is open.
+			if _, ok := msg.(tea.KeyMsg); ok || modal.IsOwnMessage(msg) {
 				updated, cmd := m.activeModal.Update(msg)
 				if next, ok := updated.(modal.Modal); ok {
 					m.activeModal = next
@@ -1456,9 +1480,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.Worktrees = data.LinkWorktreesToPRsInMemory(m.Worktrees, m.prs)
 				}
 			}
-			nextTick := tea.Tick(m.Config.GitHub.SyncInterval(), func(t time.Time) tea.Msg {
-				return syncTickMsg{}
-			})
+			nextTick := m.scheduleSyncTick()
 			if pending.err != nil {
 				return m, tea.Batch(nextTick, clearErrorCmd(), m.rebuildMissionStateCmd())
 			}
@@ -1478,6 +1500,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = ""
 
 	case syncTickMsg:
+		if msg.gen != m.syncTickGen || !m.Config.GitHub.AutoSync {
+			return m, nil
+		}
 		m.syncing = true
 		return m, m.syncGitHubCmd(false)
 
@@ -1721,8 +1746,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View returns a string representation of the model's current state.
+// scheduleSyncTick schedules the next periodic GitHub sync, superseding any
+// tick already pending. It schedules nothing when auto sync is off: GitHub is
+// then refreshed only at startup and on request.
+func (m *Model) scheduleSyncTick() tea.Cmd {
+	m.syncTickGen++
+	if !m.Config.GitHub.AutoSync {
+		m.syncTickInterval = 0
+		return nil
+	}
+	gen, interval := m.syncTickGen, m.Config.GitHub.SyncInterval()
+	m.syncTickInterval = interval
+	return tea.Tick(interval, func(time.Time) tea.Msg { return syncTickMsg{gen: gen} })
+}
+
+// View returns a string representation of the model's current state, painted
+// on the active theme's background so no cell shows the terminal's default.
 func (m *Model) View() string {
+	return styles.NewTheme(styles.Themes[m.themeIdx]).Fill(m.renderView())
+}
+
+// renderView composes the base screen and whichever overlay is active.
+func (m *Model) renderView() string {
 	actions := m.availableContextActions()
 	actionIdx := m.contextActionIdx
 	if actionIdx >= len(actions) {
@@ -1977,14 +2022,20 @@ func (m *Model) rebuildMissionStateCmd() tea.Cmd {
 }
 
 // addWorktreeCmd returns a Cmd that creates a new git worktree with a new branch.
-// baseBranch is the branch to base off; empty string auto-detects the repo's default branch.
+// baseBranch is the branch to base off. Empty means the configured base branch
+// when the repository has it, and otherwise the repository's default branch, so
+// the default "main" still works in a repository whose trunk is "master".
 func (m *Model) addWorktreeCmd(branch, path, baseBranch string) tea.Cmd {
 	repoPath := m.RepoPath
+	configuredBase := strings.TrimSpace(m.Config.Worktrees.BaseBranch)
 	return func() tea.Msg {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return worktreeOpDoneMsg{err: fmt.Errorf("create worktree parent dir: %w", err)}
 		}
 		cmd := internalexec.NewGitCommand(repoPath)
+		if baseBranch == "" && configuredBase != "" && cmd.BranchExists(configuredBase) {
+			baseBranch = configuredBase
+		}
 		if baseBranch == "" {
 			baseBranch = cmd.DefaultBranch()
 		}
@@ -2013,10 +2064,10 @@ func branchSlug(branch string) string {
 }
 
 // prWorktreePath derives the filesystem path for a PR worktree using the same
-// convention as issue worktrees: ../worktrees/<repo>/<branch-with-slashes-as-dashes>.
-// The repo name is included to avoid path collisions when multiple projects share the same parent directory.
-func prWorktreePath(repoPath, branch string) string {
-	return filepath.Join(filepath.Dir(repoPath), "worktrees", filepath.Base(repoPath), branchSlug(branch))
+// convention as issue worktrees: <worktree_root>/<repo>/<branch-with-slashes-as-dashes>,
+// which with the default root is ../worktrees/<repo>/... beside the repository.
+func prWorktreePath(repoPath string, cfg domain.WorktreesConfig, branch string) string {
+	return cfg.WorktreePath(repoPath, branchSlug(branch))
 }
 
 // computeParentBranches returns the branches of any worktrees associated with
@@ -2785,7 +2836,10 @@ func (m *Model) buildSearchIndexCmd() tea.Cmd {
 	prs := make([]domain.PullRequest, len(m.prs))
 	copy(prs, m.prs)
 	repoPath := m.RepoPath
-	db := m.db
+	var workflows []domain.WorkflowRunRef
+	if m.missionState != nil {
+		workflows = append(workflows, m.missionState.WorkflowRuns...)
+	}
 
 	return func() tea.Msg {
 		var (
@@ -2828,6 +2882,17 @@ func (m *Model) buildSearchIndexCmd() tea.Cmd {
 				Sub:     fmt.Sprintf("#%d", pr.Number),
 				Icon:    "🔀",
 				Payload: pr,
+			})
+		}
+		// Workflow runs, finished ones included, so a past run and its
+		// reports can be found by its issue, pull request, or kind.
+		for _, wf := range workflows {
+			cached = append(cached, domain.SearchResult{
+				Kind:    domain.KindWorkflow,
+				Label:   workflowLabel(wf),
+				Sub:     strings.TrimSpace(wf.Kind + " " + strings.ToLower(defaultStatus(wf.Status))),
+				Icon:    "⚡",
+				Payload: wf,
 			})
 		}
 		appendItems(cached)
@@ -2880,35 +2945,6 @@ func (m *Model) buildSearchIndexCmd() tea.Cmd {
 					Sub:     "",
 					Icon:    "🌿",
 					Payload: b,
-				})
-			}
-			appendItems(items)
-		}()
-
-		// agent history
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if db == nil {
-				return
-			}
-			history, err := data.GetAgentHistory(db)
-			if err != nil {
-				slog.Debug("buildSearchIndexCmd: get agent history failed", "err", err)
-				return
-			}
-			var items []domain.SearchResult
-			for _, h := range history {
-				label := h.Prompt
-				if label == "" {
-					label = h.AgentName
-				}
-				items = append(items, domain.SearchResult{
-					Kind:    domain.KindAgent,
-					Label:   label,
-					Sub:     h.AgentName,
-					Icon:    "🤖",
-					Payload: h,
 				})
 			}
 			appendItems(items)
@@ -2985,11 +3021,13 @@ func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 		if session := m.sessionForIssue(issue); session != nil {
 			return m, m.focusSessionCmd(*session)
 		}
-		m.activeModal = modal.NewCreateModalForIssue(
+		create := modal.NewCreateModalForIssue(
 			issue,
 			m.RepoPath,
 			computeParentBranches(m.issues, m.Worktrees)...,
 		)
+		create.SetWorktreeConfig(m.Config.Worktrees)
+		m.activeModal = create
 		return m, nil
 	case viewPRs:
 		if len(m.prs) == 0 || m.selectedPRIdx < 0 || m.selectedPRIdx >= len(m.prs) {
@@ -3005,7 +3043,7 @@ func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 				return m, clearErrorCmd()
 			}
 		}
-		m.activeModal = modal.NewPRCheckoutModal(pr, prWorktreePath(m.RepoPath, pr.Branch))
+		m.activeModal = modal.NewPRCheckoutModal(pr, prWorktreePath(m.RepoPath, m.Config.Worktrees, pr.Branch))
 		return m, nil
 	default:
 		selected, ok := m.selectedWorktree()
@@ -3499,15 +3537,21 @@ func (m *Model) fuzzyConfirmSelection() tea.Cmd {
 		}
 	case domain.KindBranch:
 		if branch, ok := result.Payload.(string); ok {
-			path := prWorktreePath(m.RepoPath, branch)
+			path := prWorktreePath(m.RepoPath, m.Config.Worktrees, branch)
 			m.activeModal = modal.NewBranchCheckoutModal(branch, path)
 		}
 	case domain.KindCommit:
 		if hash, ok := result.Payload.(string); ok {
 			return openCommitInBrowserCmd(hash, m.RepoPath)
 		}
-	case domain.KindAgent:
-		// No-op — future: show detail modal.
+	case domain.KindWorkflow:
+		if wf, ok := result.Payload.(domain.WorkflowRunRef); ok {
+			runID := wf.RunID
+			if runID == "" {
+				runID = wf.WorkflowID
+			}
+			m.activeModal = modal.NewMissionModal(wf, agentsForWorkflow(m.missionState, runID))
+		}
 	}
 	return nil
 }

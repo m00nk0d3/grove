@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -39,6 +40,29 @@ func TestGitHubConfig_SyncInterval(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := GitHubConfig{SyncIntervalMinutes: tt.minutes}
 			assert.Equal(t, tt.wantDur, cfg.SyncInterval())
+		})
+	}
+}
+
+func TestWorktreesConfig_WorktreePath(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "src", "grove")
+	absRoot := filepath.Join(base, "wt")
+	beside := filepath.Join(base, "src")
+	tests := []struct {
+		name string
+		root string
+		want string
+	}{
+		{name: "empty root uses the default beside the repository", root: "", want: filepath.Join(beside, "worktrees", "grove", "feat-x")},
+		{name: "default root matches the historical layout", root: DefaultWorktreeRoot, want: filepath.Join(beside, "worktrees", "grove", "feat-x")},
+		{name: "relative root resolves against the repository", root: ".worktrees", want: filepath.Join(repo, ".worktrees", "grove", "feat-x")},
+		{name: "absolute root is used as is", root: absRoot, want: filepath.Join(absRoot, "grove", "feat-x")},
+		{name: "surrounding whitespace is ignored", root: "  ../trees  ", want: filepath.Join(beside, "trees", "grove", "feat-x")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, WorktreesConfig{WorktreeRoot: tt.root}.WorktreePath(repo, "feat-x"))
 		})
 	}
 }

@@ -438,10 +438,10 @@ func renderDashboard(missionState *domain.MissionControlState, worktrees []domai
 		// a workflow cut the banner off at an arbitrary point.
 		content := clipContent(strings.TrimRight(b.String(), "\n"), 0, panelHeight)
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
-		return st.Render(content)
+		return theme.RenderPanel(st, content)
 	}
 
-	return st.Render(strings.TrimRight(b.String(), "\n"))
+	return theme.RenderPanel(st, strings.TrimRight(b.String(), "\n"))
 }
 
 func dashboardMissions(state *domain.MissionControlState, dismissed map[string]bool) []dashboardMission {
@@ -916,7 +916,7 @@ func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSes
 		text += fmt.Sprintf(" | %d active session(s)", activeSessions)
 	}
 	text += fmt.Sprintf(" | Herdr: %s | Sandcastle: %s | GitHub: %s", herdrStatus, sandcastleStatus, githubStatus)
-	return theme.GetStyle("header").Width(innerWidth).Render(text)
+	return theme.RenderPanel(theme.GetStyle("header").Width(innerWidth), text)
 }
 
 func renderNavRail(theme styles.Theme, panelHeight int, view activeView, focused bool) string {
@@ -935,7 +935,7 @@ func renderNavRail(theme styles.Theme, panelHeight int, view activeView, focused
 	if panelHeight > 0 {
 		st = st.Height(panelHeight)
 	}
-	return st.Render(strings.TrimRight(b.String(), "\n"))
+	return theme.RenderPanel(st, strings.TrimRight(b.String(), "\n"))
 }
 
 func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme styles.Theme, listInner, panelHeight int, focused bool, sessions []domain.Session) string {
@@ -1061,7 +1061,7 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(body)
+	return theme.RenderPanel(st, body)
 }
 
 func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session, missionState *domain.MissionControlState, actions []contextActionOption, actionIdx int) string {
@@ -1187,7 +1187,7 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 		// any lipgloss re-wrap from making the panel taller than the terminal allows.
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(content)
+	return theme.RenderPanel(st, content)
 }
 
 func renderContextActions(theme styles.Theme, actions []contextActionOption, actionIdx int, focused bool, width int) string {
@@ -1533,7 +1533,7 @@ func renderIssueList(issues []domain.Issue, selectedIdx int, worktrees []domain.
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(body)
+	return theme.RenderPanel(st, body)
 }
 
 func issueWorkflowStatus(issueNumber int, state *domain.MissionControlState) string {
@@ -1685,7 +1685,7 @@ func renderPRList(prs []domain.PullRequest, selectedIdx int, theme styles.Theme,
 	if panelHeight > 0 {
 		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	}
-	return st.Render(body)
+	return theme.RenderPanel(st, body)
 }
 
 // clipContent slices content lines for bounded panel rendering.
@@ -1759,12 +1759,12 @@ func renderFooterBar(theme styles.Theme, date string, termWidth int, syncing boo
 	}
 	content := truncateStr(hints, maxHints) + pageInfo + right
 
-	return theme.GetStyle("status-bar").Width(termWidth).Render(content)
+	return theme.RenderPanel(theme.GetStyle("status-bar").Width(termWidth), content)
 }
 
 func renderActionBar(theme styles.Theme, termWidth int) string {
 	hints := truncateStr(actionBarHints, termWidth)
-	return theme.GetStyle("status-bar").Width(termWidth).Render(hints)
+	return theme.RenderPanel(theme.GetStyle("status-bar").Width(termWidth), hints)
 }
 
 // computeCtxInner returns the inner content width for the context panel.
@@ -2212,8 +2212,8 @@ func kindBadge(k domain.ResultKind) string {
 		return "file"
 	case domain.KindBranch:
 		return "branch"
-	case domain.KindAgent:
-		return "agent"
+	case domain.KindWorkflow:
+		return "workflow"
 	case domain.KindCommit:
 		return "commit"
 	default:

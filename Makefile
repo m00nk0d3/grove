@@ -4,7 +4,7 @@ PKG     := github.com/m00nk0d3/grove/internal/version
 LDFLAGS := -X $(PKG).Version=$(VERSION)
 
 # Cross-compile targets require a POSIX shell (Git Bash / WSL on Windows).
-.PHONY: build test lint clean install runtime-build runtime-test install-runtime release snapshot \
+.PHONY: build test lint clean install runtime-build runtime-test install-runtime release snapshot demo \
         build-linux build-darwin build-windows
 
 build:
@@ -54,3 +54,9 @@ release:
 
 snapshot:
 	goreleaser release --snapshot --clean
+
+# Regenerate the website's live demo from Grove's own renderer. The exporter is
+# a test behind the "demo" build tag, so it never runs with the normal suite.
+demo:
+	GROVE_DEMO_VERSION=$$(git describe --tags --abbrev=0 2>/dev/null || echo dev) \
+		go test -tags demo -count=1 -run TestExportDemo ./cmd/grove

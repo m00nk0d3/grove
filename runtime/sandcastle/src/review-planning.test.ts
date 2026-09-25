@@ -485,7 +485,7 @@ test("verification refuses when nothing can validate the change", async () => {
     fs.writeFileSync(path.join(root, "engine", "Cargo.toml"), "[package]");
     // Silently running nothing would let the delivery gate pass on an
     // unvalidated change, which is the one answer verification must never give.
-    assert.throws(
+    await assert.rejects(
       () => verifyWorktree(root, ["engine/src/main.rs"], null),
       /Nothing can validate this change/,
     );

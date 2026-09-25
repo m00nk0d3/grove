@@ -2,7 +2,6 @@ package modal
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -32,15 +31,18 @@ type CreateModal struct {
 	issueIdx       int
 	typeIdx        int
 	baseBranchIdx  int
-	baseBranches   []string // "main" + any parent branches; empty means skip base branch step
+	baseBranches   []string // "" (the default base) + any parent branches; empty means skip base branch step
 	slugInput      textinput.Model
 	repoPath       string
 	parentIssueNum int // set when stepParentRequired is shown
-	warnChoiceIdx  int // 0 = create parent first, 1 = continue with main
+	warnChoiceIdx  int // 0 = create parent first, 1 = continue from the default base
+	worktrees      domain.WorktreesConfig
 }
 
 // NewCreateModal creates a new CreateModal with the given issues and repo path.
-// Optional parentBranches are offered as additional base branch options (beyond "main").
+// Optional parentBranches are offered as additional base branch options beyond
+// the default base, which is the configured base branch or the repository's
+// default branch.
 func NewCreateModal(issues []domain.Issue, repoPath string, parentBranches ...string) *CreateModal {
 	ti := textinput.New()
 	ti.Placeholder = "slug"
@@ -49,7 +51,7 @@ func NewCreateModal(issues []domain.Issue, repoPath string, parentBranches ...st
 	var bases []string
 	if len(parentBranches) > 0 {
 		bases = make([]string, 0, 1+len(parentBranches))
-		bases = append(bases, "main")
+		bases = append(bases, "")
 		bases = append(bases, parentBranches...)
 	}
 
@@ -193,7 +195,7 @@ func (m *CreateModal) advance() (tea.Model, tea.Cmd) {
 			pNum := m.parentIssueNum
 			return m, func() tea.Msg { return ParentWorktreeRequiredMsg{ParentNumber: pNum} }
 		}
-		// User chose to continue anyway — base on main.
+		// User chose to continue anyway — base on the default base.
 		slug := domain.SlugFromTitle(m.SelectedIssue().Title)
 		m.slugInput.SetValue(slug)
 		m.slugInput.Focus()
@@ -230,12 +232,38 @@ func (m *CreateModal) SelectedType() string {
 	return BranchTypes[m.typeIdx]
 }
 
-// BaseBranch returns the selected base branch, or empty string when no parent branches were provided.
+// BaseBranch returns the selected base branch. It is empty when the default
+// base is selected or no parent branches were provided, which leaves the
+// choice to worktree creation: the configured base branch when the
+// repository has it, otherwise the repository's default branch.
 func (m *CreateModal) BaseBranch() string {
 	if len(m.baseBranches) == 0 {
 		return ""
 	}
 	return m.baseBranches[m.baseBranchIdx]
+}
+
+// SetWorktreeConfig applies the [worktrees] settings: where the worktree is
+// created and which base branch the default option names.
+func (m *CreateModal) SetWorktreeConfig(cfg domain.WorktreesConfig) {
+	m.worktrees = cfg
+}
+
+// defaultBaseLabel names the default base option.
+func (m *CreateModal) defaultBaseLabel() string {
+	if base := strings.TrimSpace(m.worktrees.BaseBranch); base != "" {
+		return base
+	}
+	return "default branch"
+}
+
+// baseLabel is how a base branch option is displayed; the empty option is the
+// default base.
+func (m *CreateModal) baseLabel(branch string) string {
+	if branch == "" {
+		return m.defaultBaseLabel()
+	}
+	return branch
 }
 
 // parentBranchIdx returns the index within baseBranches of the branch belonging to the
@@ -260,12 +288,12 @@ func (m *CreateModal) BranchName() string {
 	return fmt.Sprintf("%s/issue-%d-%s", m.SelectedType(), issue.Number, m.slugInput.Value())
 }
 
-// WorktreePath returns the filesystem path for the new worktree: ../worktrees/<repo>/<type>-issue-<N>-<slug>.
-// The repo name is included to avoid path collisions when multiple projects share the same parent directory.
+// WorktreePath returns the filesystem path for the new worktree:
+// <worktree_root>/<repo>/<type>-issue-<N>-<slug>, which with the default root
+// is ../worktrees/<repo>/... beside the repository.
 func (m *CreateModal) WorktreePath() string {
 	slug := strings.ReplaceAll(m.BranchName(), "/", "-")
-	repoName := filepath.Base(m.repoPath)
-	return filepath.Join(filepath.Dir(m.repoPath), "worktrees", repoName, slug)
+	return m.worktrees.WorktreePath(m.repoPath, slug)
 }
 
 // Title returns the modal title for themed overlay rendering.
@@ -335,13 +363,13 @@ func (m *CreateModal) viewParentRequired() string {
 
 	b.WriteString(fmt.Sprintf("Issue: #%d %s\n\n", issue.Number, issue.Title))
 	b.WriteString(fmt.Sprintf("⚠  Parent issue #%d has no worktree yet.\n", m.parentIssueNum))
-	b.WriteString("   Without a parent worktree the PR will target main\n")
+	b.WriteString(fmt.Sprintf("   Without a parent worktree the PR will target %s\n", m.defaultBaseLabel()))
 	b.WriteString("   instead of the parent branch.\n\n")
 	b.WriteString("What would you like to do?\n\n")
 
 	choices := []string{
 		fmt.Sprintf("Create parent #%d worktree first (recommended)", m.parentIssueNum),
-		"Continue anyway (base: main)",
+		fmt.Sprintf("Continue anyway (base: %s)", m.defaultBaseLabel()),
 	}
 	for i, c := range choices {
 		cursor := "  "
@@ -368,7 +396,7 @@ func (m *CreateModal) viewBaseBranchPicker() string {
 		if i == m.baseBranchIdx {
 			cursor = "> "
 		}
-		b.WriteString(fmt.Sprintf("%s%s\n", cursor, br))
+		b.WriteString(fmt.Sprintf("%s%s\n", cursor, m.baseLabel(br)))
 	}
 
 	b.WriteString("\n↑/↓ navigate  •  Enter select  •  Esc cancel")
@@ -393,8 +421,8 @@ func (m *CreateModal) viewConfirm() string {
 	b.WriteString("Create worktree:\n\n")
 	b.WriteString(fmt.Sprintf("  Branch:  %s\n", m.BranchName()))
 	b.WriteString(fmt.Sprintf("  Path:    %s\n", m.WorktreePath()))
-	if base := m.BaseBranch(); base != "" {
-		b.WriteString(fmt.Sprintf("  Base:    %s\n", base))
+	if len(m.baseBranches) > 0 {
+		b.WriteString(fmt.Sprintf("  Base:    %s\n", m.baseLabel(m.BaseBranch())))
 	}
 	b.WriteString("\nEnter confirm  •  Esc cancel")
 	return b.String()

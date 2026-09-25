@@ -1,73 +1,51 @@
-# React + TypeScript + Vite
+# Grove website
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The project site, published to GitHub Pages at `https://m00nk0d3.github.io/grove/`.
+It is a single page built with React, Vite, Tailwind CSS, and Framer Motion.
 
-Currently, two official plugins are available:
+## Working on it
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Requires Node.js 20.19+ (22 recommended).
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm ci
+npm run dev       # local server with hot reload
+npm run build     # type-check and build into dist/
+npm run preview   # serve the built site
+npm run lint
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Vite serves the site under `/grove/` (`base` in `vite.config.ts`), so assets in
+`public/` are referenced as `/grove/<file>`.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Structure
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+| Path | Section |
+|---|---|
+| `src/components/Hero.tsx`, `TerminalDemo.tsx` | Headline and the animated terminal |
+| `src/components/Demo.tsx`, `LiveDemo.tsx` | The live demo: Grove screens played back from `public/demo/frames.json` |
+| `src/components/Problems.tsx`, `Features.tsx` | Why Grove exists and what it does |
+| `src/components/Themes.tsx` | The built-in themes |
+| `src/components/Keybindings.tsx` | Keyboard reference |
+| `src/components/Install.tsx` | Installation |
+| `src/components/Changelog.tsx` | Recent releases, fetched from the GitHub Releases API |
+| `src/lib/useGitHubReleases.ts` | Fetches releases once per page load and parses GoReleaser's release notes; the nav and hero show the latest version from it |
+
+Several sections restate facts from the application — keybindings, themes,
+features, install steps — so a change to Grove's behaviour updates them here
+too. The keybindings mirror `cmd/grove/app.go` and the in-app help, and the
+themes mirror `internal/tui/styles/theme.go`.
+
+The live demo is rendered by Grove itself: `make demo` in the repository root
+drives Grove's model through a scripted walkthrough with demonstration data
+and writes every screen to `public/demo/frames.json` as text and styles (see
+`cmd/grove/demo_export_test.go`, which runs only under the `demo` build tag).
+Regenerate it when the screens it shows change. `public/grove-dashboard.png`,
+the social preview image, is a screenshot of such a frame and is replaced by
+hand.
+
+## Deployment
+
+`.github/workflows/website.yml` builds the site and publishes `dist/` to the
+`gh-pages` branch on every push to `main` that changes `website/`, and on
+manual dispatch.

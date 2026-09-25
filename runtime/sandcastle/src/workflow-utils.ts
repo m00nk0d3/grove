@@ -1,4 +1,11 @@
-import { spawnSync } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  spawnSync,
+  type SpawnSyncOptionsWithStringEncoding,
+  type SpawnSyncReturns,
+} from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -188,16 +195,68 @@ function unsupportedBackendMessage(value: string): string {
   return `Unsupported AGENT_FLOW_AGENT_BACKEND '${value}'; expected one of ${expected}.`;
 }
 
+// groveConfigPath locates the Grove config the same way Grove does
+// (~/.grove/config.toml). The home directory comes from env rather than
+// os.homedir() so an empty test environment never reads the real config.
+export function groveConfigPath(env: NodeJS.ProcessEnv): string | null {
+  const home = env.USERPROFILE || env.HOME;
+  return home ? path.join(home, ".grove", "config.toml") : null;
+}
+
+// readConfiguredDefaultAgent returns [sandcastle].default_agent from the Grove
+// config, or null when the file or key is absent. Grove passes the agent
+// explicitly when it starts a workflow; this covers a workflow started directly
+// from a shell, which would otherwise ignore the configured agent.
+export function readConfiguredDefaultAgent(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const configPath = groveConfigPath(env);
+  if (!configPath) return null;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf8");
+  } catch {
+    return null;
+  }
+  let section = "";
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    const header = /^\[([^\]]+)\]$/.exec(trimmed);
+    if (header) {
+      section = header[1].trim();
+      continue;
+    }
+    if (section !== "sandcastle") continue;
+    const entry = /^default_agent\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(trimmed);
+    if (entry) return (entry[1] ?? entry[2]).trim() || null;
+  }
+  return null;
+}
+
 // resolveAgentBackend reports the configured backend without building a full
-// launch config, for callers that only need to label telemetry.
+// launch config, for callers that only need to label telemetry. The
+// AGENT_FLOW_AGENT_BACKEND variable wins, then the Grove config, then OpenCode.
 export function resolveAgentBackend(
   env: NodeJS.ProcessEnv = process.env,
 ): AgentBackend {
-  const backend = env.AGENT_FLOW_AGENT_BACKEND ?? "opencode";
-  if (!isAgentBackend(backend)) {
-    throw new Error(unsupportedBackendMessage(backend));
+  const fromEnv = env.AGENT_FLOW_AGENT_BACKEND;
+  if (fromEnv !== undefined) {
+    if (!isAgentBackend(fromEnv)) {
+      throw new Error(unsupportedBackendMessage(fromEnv));
+    }
+    return fromEnv;
   }
-  return backend;
+  const fromConfig = readConfiguredDefaultAgent(env);
+  if (fromConfig !== null) {
+    if (!isAgentBackend(fromConfig)) {
+      const expected = AGENT_BACKENDS.map((backend) => `'${backend}'`).join(", ");
+      throw new Error(
+        `Unsupported [sandcastle].default_agent '${fromConfig}' in ${groveConfigPath(env)}; expected one of ${expected}.`,
+      );
+    }
+    return fromConfig;
+  }
+  return "opencode";
 }
 
 export function getAgentLaunchConfig(
@@ -259,6 +318,59 @@ export interface VerificationTask {
   /** Dependency install for projects whose ecosystem needs one. */
   setup?: { command: string; args: string[]; skipWhenPresent?: string };
   source: "builtin" | "profile";
+}
+
+// describeVerificationTasks writes out what the delivery gate runs, for an
+// agent that has to reproduce a failure.
+//
+// These were previously joined with " && " into one line, which read as a shell
+// chain but was not one: a task's label carries its directory as prose, as in
+// "dotnet test (in backend)". An agent told to run
+// "dotnet test (in backend) && npm run test (in frontend)" turns it back into a
+// chain of its own, and because every command in a chain shares one working
+// directory, the second `cd` is resolved against the first project's directory
+// and the run collapses.
+//
+// The gate runs each command as a separate process with its own working
+// directory, so that is how it is described: one command per line, the
+// directory named, and the setup a project needs listed before the test that
+// depends on it.
+export function listVerificationCommands(tasks: VerificationTask[]): string {
+  if (tasks.length === 0) {
+    return "- No validation command is known for this repository.";
+  }
+  const lines: string[] = [];
+  for (const task of tasks) {
+    const where = task.root ? `${task.root}/` : "the repository root";
+    if (task.setup) {
+      const skip = task.setup.skipWhenPresent
+        ? `, skipped when ${task.setup.skipWhenPresent} is already present`
+        : "";
+      lines.push(
+        `- in \`${where}\`: \`${task.setup.command} ${task.setup.args.join(" ")}\`` +
+          ` (setup, run before the test below${skip})`,
+      );
+    }
+    lines.push(`- in \`${where}\`: \`${task.command} ${task.args.join(" ")}\``);
+  }
+  return lines.join("\n");
+}
+
+// The guidance belongs with the list wherever an agent is asked to reproduce
+// the gate, and nowhere else: a report records what ran, and does not need
+// telling how to run it.
+export function describeVerificationTasks(tasks: VerificationTask[]): string {
+  if (tasks.length === 0) {
+    return listVerificationCommands(tasks);
+  }
+  return (
+    listVerificationCommands(tasks) +
+    "\n\nRun each of these separately, from the directory named against it. " +
+    "They are individual commands, not one chained command line: the gate runs " +
+    "each as its own process with that directory as its working directory. " +
+    "Chaining them behind a cd leaves every command after the first looking for " +
+    "its project inside the previous one."
+  );
 }
 
 // resolveVerificationTask decides what validates a project, preferring a command
@@ -641,12 +753,124 @@ export function warnIfWindowsPathLimitLikely(
   );
 }
 
+// Windows cannot start a .cmd or .bat the way it starts an .exe: a script needs
+// a command interpreter. On Windows npm, npx, yarn and pnpm are all .cmd
+// shims, so this decides every JavaScript project's test command.
+//
+// Neither obvious spelling works on its own. Passing `npm.cmd` is refused with
+// EINVAL, because Node blocks spawning a script without a shell. Passing bare
+// `npm` depends on the Node running: it resolves under Node 25 and fails with
+// ENOENT under Node 22, which is the version this runtime ships in its bundle
+// — so the suite passed on the development machine while the shipped runtime
+// could not run a JavaScript suite at all.
+//
+// A command that resolves to a script is therefore run through the interpreter
+// with each argument quoted, rather than with `shell: true`, which would hand a
+// whole command line to cmd.exe and let an argument's own characters be read as
+// syntax. Anything that resolves to an executable is spawned directly, exactly
+// as before.
+const WINDOWS_SCRIPT_EXTENSIONS = [".cmd", ".bat"];
+
+function isFile(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// Resolves a command the way Windows does, walking PATH and trying each PATHEXT
+// in order, and reports whether what it found needs an interpreter. Returning
+// null means "spawn it directly", which covers every non-Windows platform, an
+// absolute path to a real executable, and a command that cannot be found at all
+// — the last so a genuinely missing program still fails as a missing program.
+export function resolveWindowsScript(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  const extensions = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((extension) => extension.trim().toLowerCase())
+    .filter(Boolean);
+
+  const named = path.extname(command).toLowerCase();
+  if (named) {
+    // Already spelled out, so there is nothing to resolve: it either is a
+    // script or it is not.
+    return WINDOWS_SCRIPT_EXTENSIONS.includes(named) ? command : null;
+  }
+
+  const directories =
+    command.includes("/") || command.includes("\\")
+      ? [""]
+      : (env.PATH ?? "").split(path.delimiter).filter(Boolean);
+
+  for (const directory of directories) {
+    // Within one directory Windows takes the first extension in PATHEXT order,
+    // so an .exe beside a .cmd wins and needs no interpreter.
+    for (const extension of extensions) {
+      const candidate = path.join(directory, command + extension);
+      if (!isFile(candidate)) {
+        continue;
+      }
+      return WINDOWS_SCRIPT_EXTENSIONS.includes(extension) ? candidate : null;
+    }
+  }
+  return null;
+}
+
+// cmd.exe reads its metacharacters outside double quotes only, so quoting each
+// argument keeps an argument an argument. A profile validates its command as a
+// single executable name but places no such restriction on the arguments.
+export function quoteForWindowsShell(token: string): string {
+  return `"${token.replace(/"/g, '""')}"`;
+}
+
+export interface SpawnPlan {
+  command: string;
+  args: string[];
+  verbatim: boolean;
+}
+
+// How a command is actually launched, shared by the synchronous and the
+// progress-reporting runners so both route a script the same way.
+export function planSpawn(command: string, args: string[]): SpawnPlan {
+  const script = resolveWindowsScript(command);
+  if (!script) {
+    return { command, args, verbatim: false };
+  }
+  // `/d` skips any AutoRun command the machine has configured, and `/s` with
+  // the whole line wrapped in quotes makes cmd.exe strip only the outer pair
+  // and take the rest as written.
+  const line = [script, ...args].map(quoteForWindowsShell).join(" ");
+  return {
+    command: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", `"${line}"`],
+    verbatim: true,
+  };
+}
+
+export function spawnProgram(
+  command: string,
+  args: string[],
+  options: SpawnSyncOptionsWithStringEncoding,
+): SpawnSyncReturns<string> {
+  const plan = planSpawn(command, args);
+  return spawnSync(plan.command, plan.args, {
+    ...options,
+    ...(plan.verbatim ? { windowsVerbatimArguments: true } : {}),
+  });
+}
+
 export const runCommand: CommandRunner = (
   command,
   args,
   options = {},
 ): string => {
-  const result = spawnSync(command, args, {
+  const result = spawnProgram(command, args, {
     cwd: options.cwd,
     env: options.env,
     encoding: "utf8",
@@ -1029,34 +1253,231 @@ function cap(summary: string): string {
     : `${summary.slice(0, MAX_FAILURE_CHARS)}\n... (output truncated)`;
 }
 
+export const DEFAULT_VALIDATION_TIMEOUT_MS = 30 * 60 * 1000;
+const VALIDATION_HEARTBEAT_MS = 30 * 1000;
+const VALIDATION_MAX_OUTPUT = 64 * 1024 * 1024;
+
+export function resolveValidationTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const configured = Number(env.AGENT_FLOW_VALIDATION_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_VALIDATION_TIMEOUT_MS;
+}
+
+export function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, "0")}s` : `${seconds}s`;
+}
+
+// Windows ends cmd.exe without touching what it started, and a test runner's
+// workers are grandchildren, so a timeout that only kills the immediate child
+// leaves the suite running and the pipe open.
+function killProcessTree(child: ChildProcess): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
+      encoding: "utf8",
+    });
+    return;
+  }
+  child.kill("SIGKILL");
+}
+
+export interface ProgramRun {
+  status: number | null;
+  output: string;
+  timedOut: boolean;
+  elapsedMs: number;
+}
+
+// Runs a command while saying, periodically, that it is still running.
+//
+// A test runner writes to a terminal, not to a pipe: vitest's default reporter
+// produced 396 bytes across a 399-second run here, essentially all of it after
+// the last test. So nothing can be streamed that the child does not send, and a
+// healthy six-minute suite and a wedged one look exactly alike — a blank
+// terminal that never ends. The heartbeat comes from this side for that reason,
+// and reports the child's most recent line when there is one, so a chatty
+// command such as `dotnet test` shows progress without flooding the log.
+export function runProgramWithProgress(
+  command: string,
+  args: string[],
+  options: {
+    cwd: string;
+    label: string;
+    timeoutMs?: number;
+    heartbeatMs?: number;
+    log?: (message: string) => void;
+  },
+): Promise<ProgramRun> {
+  const log = options.log ?? ((message: string) => console.log(message));
+  const timeoutMs = options.timeoutMs ?? resolveValidationTimeoutMs();
+  const heartbeatMs = options.heartbeatMs ?? VALIDATION_HEARTBEAT_MS;
+  const plan = planSpawn(command, args);
+  const startedAt = Date.now();
+
+  return new Promise<ProgramRun>((resolve, reject) => {
+    const child = spawn(plan.command, plan.args, {
+      cwd: options.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(plan.verbatim ? { windowsVerbatimArguments: true } : {}),
+    });
+
+    let output = "";
+    let latestLine = "";
+    let truncated = false;
+    let timedOut = false;
+
+    const absorb = (chunk: Buffer): void => {
+      const text = chunk.toString("utf8");
+      if (output.length < VALIDATION_MAX_OUTPUT) {
+        output += text;
+      } else if (!truncated) {
+        truncated = true;
+        output += "\n... (output truncated)";
+      }
+      const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (lines.length > 0) {
+        latestLine = lines[lines.length - 1]!;
+      }
+    };
+    child.stdout?.on("data", absorb);
+    child.stderr?.on("data", absorb);
+
+    const heartbeat = setInterval(() => {
+      const elapsed = formatElapsed(Date.now() - startedAt);
+      const recent = latestLine ? `  ${latestLine.slice(0, 100)}` : "";
+      log(
+        `\x1b[36m[Validation]\x1b[0m ${options.label} — still running, ${elapsed} elapsed.${recent}`,
+      );
+      latestLine = "";
+    }, heartbeatMs);
+    heartbeat.unref?.();
+
+    const expiry = setTimeout(() => {
+      timedOut = true;
+      killProcessTree(child);
+    }, timeoutMs);
+    expiry.unref?.();
+
+    const finish = (): void => {
+      clearInterval(heartbeat);
+      clearTimeout(expiry);
+    };
+
+    child.on("error", (error) => {
+      finish();
+      reject(new Error(`Unable to run ${options.label}: ${error.message}`));
+    });
+    child.on("close", (status) => {
+      finish();
+      resolve({
+        status,
+        output,
+        timedOut,
+        elapsedMs: Date.now() - startedAt,
+      });
+    });
+  });
+}
+
 // Verification commands are run here rather than through runCommand so the
 // transcript survives long enough to be summarized; runCommand folds it into an
 // error message whole.
-function runVerificationTask(task: VerificationTask, cwd: string): void {
-  const result = spawnSync(task.command, task.args, {
+async function runVerificationTask(
+  task: VerificationTask,
+  cwd: string,
+): Promise<void> {
+  const result = await runProgramWithProgress(task.command, task.args, {
     cwd,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+    label: task.label,
   });
-  if (result.error) {
-    throw new Error(`Unable to run ${task.label}: ${result.error.message}`);
+  if (result.timedOut) {
+    throw new Error(
+      `${task.label} was still running after ${formatElapsed(result.elapsedMs)} and was stopped.\n` +
+        "Raise AGENT_FLOW_VALIDATION_TIMEOUT_MS if this suite genuinely takes longer, " +
+        "or run the command yourself to see where it stops.\n" +
+        summarizeCommandFailure(task.label, null, result.output),
+    );
   }
   if (result.status !== 0) {
     throw new Error(
-      summarizeCommandFailure(
-        task.label,
-        result.status,
-        `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
-      ),
+      summarizeCommandFailure(task.label, result.status, result.output),
     );
   }
+  console.log(
+    `\x1b[32m[Validation]\x1b[0m ${task.label} passed in ${formatElapsed(result.elapsedMs)}.`,
+  );
 }
 
-export function verifyWorktree(
+// What the delivery gate last proved, and about which tree.
+//
+// The gate runs at verification, again after documentation, and again at
+// delivery, so a clean run validates three times. Between those points the tree
+// is often byte-identical — removing the agents' own scaffolding touches
+// nothing tracked — and on a repository whose suites take six minutes that is
+// twelve minutes spent re-proving an unchanged tree.
+//
+// Only a pass is remembered, so a failure is never cached into a success, and
+// the planned commands are part of the key, so a run that would execute
+// different commands is never skipped on the strength of an earlier one.
+const lastPassedFingerprint = new Map<string, string>();
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function worktreeFingerprint(
+  targetDir: string,
+  taskLabels: string[],
+): string {
+  const head = runCommand("git", ["rev-parse", "HEAD"], { cwd: targetDir });
+  const tracked = runCommand("git", ["diff", "--binary", "HEAD"], {
+    cwd: targetDir,
+  });
+  const untracked = runCommand(
+    "git",
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    { cwd: targetDir },
+  )
+    .split("\0")
+    .filter(Boolean)
+    .sort();
+  const parts = [head, hash(tracked), taskLabels.join("\u0000")];
+  for (const file of untracked) {
+    const absolute = path.join(targetDir, file);
+    let contents = "";
+    try {
+      contents = fs.lstatSync(absolute).isSymbolicLink()
+        ? fs.readlinkSync(absolute)
+        : fs.readFileSync(absolute).toString("base64");
+    } catch {
+      // A file that cannot be read now is a difference in itself; record the
+      // name and move on rather than failing the fingerprint.
+    }
+    parts.push(file, hash(contents));
+  }
+  return hash(parts.join("\u0000"));
+}
+
+export function forgetValidationCache(): void {
+  lastPassedFingerprint.clear();
+}
+
+export async function verifyWorktree(
   targetDir: string,
   touched?: string[],
   profile: RepoProfile | null = null,
-): void {
+): Promise<void> {
   const projects = detectStackProjects(targetDir);
   const tasks = planVerification(
     projects,
@@ -1075,6 +1496,19 @@ export function verifyWorktree(
         "Add one to the project profile, or run with --refresh-profile so the prompt engineer establishes it.",
     );
   }
+  const cacheKey = path.resolve(targetDir);
+  const labels = tasks.map((task) => task.label);
+  const fingerprint = worktreeFingerprint(targetDir, labels);
+  if (
+    !process.env.AGENT_FLOW_REVALIDATE_ALWAYS &&
+    lastPassedFingerprint.get(cacheKey) === fingerprint
+  ) {
+    console.log(
+      "\x1b[32m[Validation]\x1b[0m Skipped: nothing has changed in the worktree since these commands last passed.",
+    );
+    return;
+  }
+
   for (const task of tasks) {
     const cwd = task.root ? path.join(targetDir, task.root) : targetDir;
     if (task.setup) {
@@ -1092,7 +1526,7 @@ export function verifyWorktree(
       );
     }
     console.log(`\x1b[36m[Validation]\x1b[0m ${task.label}`);
-    runVerificationTask(task, cwd);
+    await runVerificationTask(task, cwd);
   }
   // Strip trailing whitespace from all tracked files before diff --check
   const changedFiles = runCommand(
@@ -1117,4 +1551,11 @@ export function verifyWorktree(
     }
   }
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
+
+  // Recorded after the whitespace strip above, so the remembered tree is the
+  // one this run leaves behind rather than the one it was handed.
+  lastPassedFingerprint.set(
+    cacheKey,
+    worktreeFingerprint(targetDir, labels),
+  );
 }

@@ -38,7 +38,6 @@ var keybindingGroups = []bindingGroup{
 		title: "NAVIGATION",
 		bindings: [][2]string{
 			{"↑/↓  j/k", "Navigate within panel"},
-			{"←/→  h/l", "Switch between panels / tabs"},
 			{"Tab", "Cycle panel focus / tab"},
 			{"Enter", "Jump to workflow or open selected item"},
 			{"[ / ]", "Switch dashboard workflow tabs"},
@@ -352,23 +351,23 @@ const tipsContent = `COMMON WORKFLOWS
 4. Search everything with the fuzzy finder
    Press / or Ctrl+F to open the fuzzy finder overlay.
    Start typing to instantly filter worktrees, issues, PRs,
-   files, branches, and agent history.
+   files, branches, commits, and workflow runs.
 
 5. Review or repair a PR
    In the PRs view, select a PR and focus the Actions panel.
    Choose review, CI repair, or conflict resolution.
 
 6. Keep GitHub data fresh
-   Grove auto-syncs on startup and at the configured interval
-   (~5 min default). Press r to force an immediate refresh.
+   Grove syncs on startup and, with auto sync on, at the
+   configured interval (5 min default). Press r to refresh now.
 
 7. Open an issue or PR in the browser
    Select the item, focus Actions, then choose Open on GitHub.
 
 8. Switch themes on the fly
-   Press t → open Settings → Appearance to cycle through
-   9 built-in themes: Digital Noir, Matrix, Light, Everforest,
-   Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, One Dark.`
+   Press t to open Settings. Appearance lists 23 built-in
+   themes, 16 dark and 7 light, with a live preview of the
+   one under the cursor. Press Enter to apply it.`
 
 const troubleshootingContent = `COMMON ISSUES
 
@@ -385,7 +384,7 @@ git not in PATH
 Worktree list is stale
   Symptom: Deleted worktrees still appear.
   Fix: Run  git worktree prune  in your repo, then press r
-  in Nexus to refresh.
+  in Grove to refresh.
 
 Config not loading
   Symptom: Warning banner on startup.
@@ -404,7 +403,8 @@ Built with the Charm.sh ecosystem:
   • Lipgloss   — terminal styling
   • Bubbles    — UI components
 
-Nexus helps you manage multiple git worktrees and
-launch AI coding agents with the correct filesystem
-context — all from a single terminal interface.`, version.Version)
+Grove manages your git worktrees and runs agent
+workflows through the Sandcastle runtime in Herdr
+panes, beside your GitHub issues and pull requests,
+all from a single terminal interface.`, version.Version)
 }

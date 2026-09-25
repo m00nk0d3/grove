@@ -1,18 +1,18 @@
 ﻿import { motion } from 'framer-motion'
 
 const FEATURES = [
-  { icon: '🖥️', title: '3-Pane TUI', desc: 'Worktree list, GitHub context panel, and detail view — all in one terminal window.' },
-  { icon: '🌿', title: 'Full worktree management', desc: 'Create, delete, switch shell, lock/unlock, and prune worktrees without leaving the terminal.' },
-  { icon: '🔄', title: 'GitHub sync', desc: 'PRs and issues fetched via the gh CLI and kept fresh in the background automatically.' },
-  { icon: '🔍', title: 'Global fuzzy finder', desc: 'Press / or Ctrl+F to search worktrees, issues, PRs, files, branches, and agent history in real-time.' },
-  { icon: '🤖', title: 'AI agent launchers', desc: 'Spawn Claude Code, GitHub Copilot, or Aider in the correct worktree directory with a single keypress.' },
-  { icon: '🔬', title: 'AI-assisted PR review', desc: 'Press Ctrl+R on any PR — Grove provisions a review worktree and pre-seeds your agent with a structured review prompt.' },
-  { icon: '🌳', title: 'Issue hierarchy', desc: 'Navigate parent/child issue trees and spin up a worktree for any sub-issue in one move.' },
-  { icon: '📡', title: 'Active sessions dashboard', desc: 'See which agents are running, which shells are alive, and which worktrees are just sitting there pretending.' },
-  { icon: '⬆️', title: 'Auto-update', desc: 'Grove checks for new versions on startup and self-updates in-app. No more brew upgrade guilt-trips.' },
-  { icon: '🎨', title: '9 built-in themes', desc: 'Digital Noir, Matrix, Light, Everforest, Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, One Dark.' },
-  { icon: '❓', title: 'In-app help', desc: 'Press f1 or ? at any time for a searchable keybindings and troubleshooting reference.' },
-  { icon: '💾', title: 'Local persistence', desc: 'Config in ~/.grove/config.toml, metadata cached in SQLite — Grove starts fast, every time.' },
+  { icon: '📡', title: 'Mission control', desc: 'Live cards for worktrees, agents, workflows, and open PRs, an operational pulse, and every run split into Active / Attention and Completed.' },
+  { icon: '⚡', title: 'Agent workflows', desc: 'Implement an issue, review a PR, address review feedback on your own PR, repair CI, resolve conflicts, clean merged work — each in its own Herdr pane.' },
+  { icon: '🔬', title: 'Mission inspector', desc: 'Press v on a run for its steps, metrics, agents, and the reports it wrote — the implementation report and review verdict, rendered in the terminal.' },
+  { icon: '🧠', title: 'Your agent, your choice', desc: 'Workflows drive OpenCode, Pi, or Claude Code. Pick the backend in settings; specialists, review passes, and validation follow it.' },
+  { icon: '🌿', title: 'Worktree management', desc: 'Create a worktree from an issue or PR, open it or a separate shell, delete it with its local branch, and clean up merged work.' },
+  { icon: '🔄', title: 'GitHub sync', desc: 'PRs, issues, reviews, checks, and merge state through the gh CLI, with the PRs that need you flagged first.' },
+  { icon: '🌳', title: 'Issue hierarchy', desc: 'Parent and sub-issues as a tree; a sub-issue branches from its parent so its PR targets the right branch.' },
+  { icon: '🔍', title: 'Global fuzzy finder', desc: 'Press / or Ctrl+F to search worktrees, issues, PRs, files, branches, commits, and past workflow runs as you type.' },
+  { icon: '⚙️', title: 'Settings screen', desc: 'Press t for every option in one fullscreen screen, with its config key and what it does. Changes apply immediately.' },
+  { icon: '🎨', title: '23 built-in themes', desc: '16 dark and 7 light themes, from Digital Noir, Dracula and Nord to GitHub Light and Solarized Light, picked from a live-previewed list.' },
+  { icon: '🖱️', title: 'Keyboard and mouse', desc: 'Everything has a key, and the rail, rows, tabs, and actions are clickable too. Press f1 or ? for help.' },
+  { icon: '📦', title: 'One-line install', desc: 'The installers bring Grove, a private Node.js, the Sandcastle runtime, and Herdr. Grove checks for updates on startup.' },
 ]
 
 export function Features() {
@@ -29,7 +29,7 @@ export function Features() {
           <p className="mb-3 font-mono text-sm text-[#00d9ff]">// feature set</p>
           <h2 className="text-4xl font-bold tracking-tight">Everything you need</h2>
           <p className="mt-4 text-[#4a5568]">
-            Twelve features that eliminate the glue work between you, your git, and your AI.
+            The glue between your worktrees, GitHub, and the agents doing the work.
           </p>
         </motion.div>
 

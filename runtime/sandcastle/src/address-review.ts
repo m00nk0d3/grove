@@ -20,6 +20,7 @@ import {
   requireCleanWorktree,
   resolveAgentBackend,
   runCommand,
+  describeVerificationTasks,
   verifyWorktree,
 } from "./workflow-utils.js";
 
@@ -238,22 +239,22 @@ export function formatFeedback(feedback: PullRequestFeedback): string {
 // delivers something that builds or says plainly that it could not.
 const MAX_VALIDATION_ATTEMPTS = 3;
 
-export function validateWithRepair(
+export async function validateWithRepair(
   targetDir: string,
   repo: string,
   prNumber: string,
   persona: string,
   runSpecialist: (role: string, promptText: string) => void,
-  verify: (dir: string) => void = verifyWorktree,
+  verify: (dir: string) => void | Promise<void> = verifyWorktree,
   profile: RepoProfile | null = null,
-): void {
-  const commands = planVerification(detectStackProjects(targetDir), [], profile)
-    .map((task) => task.label)
-    .join(" && ");
+): Promise<void> {
+  const commands = describeVerificationTasks(
+    planVerification(detectStackProjects(targetDir), [], profile),
+  );
 
   for (let attempt = 1; attempt <= MAX_VALIDATION_ATTEMPTS; attempt += 1) {
     try {
-      verify(targetDir);
+      await verify(targetDir);
       if (attempt > 1) {
         console.log(
           `\x1b[32m[Validation]\x1b[0m Passed after ${attempt - 1} repair attempt(s).`,
@@ -578,7 +579,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
-  validateWithRepair(
+  await validateWithRepair(
     targetDir,
     repo,
     prNumber,

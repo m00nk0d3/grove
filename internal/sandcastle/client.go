@@ -47,7 +47,8 @@ type sandcastleClient struct {
 }
 
 // NewClient creates a Sandcastle Client with the given config and command runner.
-// A zero Timeout defaults to 10s. A zero DefaultAgent defaults to "opencode".
+// A zero Timeout defaults to 10s, a zero DefaultAgent to "opencode", and a
+// zero Binary to "grove-sandcastle", the command the installers provide.
 func NewClient(config ClientConfig, runner CommandRunner) Client {
 	if config.Timeout == 0 {
 		config.Timeout = 10 * time.Second
@@ -56,7 +57,7 @@ func NewClient(config ClientConfig, runner CommandRunner) Client {
 		config.DefaultAgent = "opencode"
 	}
 	if config.Binary == "" {
-		config.Binary = "sandcastle"
+		config.Binary = "grove-sandcastle"
 	}
 	if config.LookPath == nil {
 		config.LookPath = osexec.LookPath

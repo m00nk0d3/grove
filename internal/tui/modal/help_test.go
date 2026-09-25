@@ -17,7 +17,7 @@ func TestNewHelpModal_StartsOnKeybindingsTab(t *testing.T) {
 	assert.Equal(t, 0, m.scrollOffset)
 }
 
-func TestHelpModal_Title_ReturnsNexusHelp(t *testing.T) {
+func TestHelpModal_Title_ReturnsGroveHelp(t *testing.T) {
 	m := NewHelpModal()
 
 	assert.Equal(t, "GROVE HELP", m.Title())

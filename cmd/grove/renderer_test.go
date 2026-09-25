@@ -2484,7 +2484,7 @@ func TestRenderFuzzyOverlay_KindBadges(t *testing.T) {
 		{domain.KindPR, "pr"},
 		{domain.KindFile, "file"},
 		{domain.KindBranch, "branch"},
-		{domain.KindAgent, "agent"},
+		{domain.KindWorkflow, "workflow"},
 		{domain.KindCommit, "commit"},
 	}
 	for _, tt := range tests {

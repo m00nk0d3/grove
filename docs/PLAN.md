@@ -1,11 +1,11 @@
 ﻿# Grove Historical Development Plan v1.0
 
 > **Archived:** This plan documents Grove's retired direct-agent architecture and
-> is not a description of the current product. For the active Mission Control
-> architecture and ownership boundaries, use [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md)
-> and the [Mission Control implementation plan](./MISSION_CONTROL_IMPLEMENTATION_PLAN.md).
-> Grove no longer contains direct agent launchers; Sandcastle owns agent
-> selection and process launching.
+> is not a description of the current product. Its checklists were not kept up
+> to date: much of what they list shipped, and the direct agent launchers were
+> later removed. For the current product, see the [README](../README.md) and the
+> [runbook](./RUNBOOK.md); for the mission-control architecture that replaced
+> this plan, see [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md).
 
 ## Problem Statement
 Developers managing multiple context-heavy development streams need a unified terminal interface to:

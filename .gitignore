@@ -1,9 +1,8 @@
 # Binaries
 *.exe
-/nexus
-/nexus.exe
 /grove
 /grove.exe
+/bin/
 /grove-linux-amd64
 /grove-linux-arm64
 /grove-darwin-amd64

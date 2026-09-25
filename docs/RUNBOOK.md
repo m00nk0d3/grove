@@ -1,295 +1,213 @@
 ﻿# Grove Runbook
 
-This runbook covers day-to-day operation of Grove and the expected procedures around setup, configuration, troubleshooting, and maintenance.
+How to install, configure, operate, and recover Grove and its Sandcastle
+workflow runtime. For building from source and contributing, see
+[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md); for the full feature and
+keybinding reference, see the [README](../README.md).
 
 ---
 
-## Developer Setup
+## Components
 
-This section is for contributors building and running Grove from source.
-
-### Prerequisites
-
-| Tool | Version | Notes |
+| Component | What it is | Installed by |
 |---|---|---|
-| [Go](https://go.dev/dl/) | 1.25+ | `go version` to verify |
-| [GitHub CLI (`gh`)](https://cli.github.com/) | Latest | `gh auth login` before running |
-| Git | Any recent | Must be in `PATH` |
-| Node.js | 22+ | Required for the bundled Sandcastle workflow runtime |
+| `grove` | The terminal UI (Go) | The platform installers, `go install`, or `make build` |
+| Sandcastle runtime | `grove-sandcastle` and the workflow commands `imp` (alias `agent-flow`), `review`, `address`, `ci`, `resolve`, `clean` (TypeScript on a private Node.js 22) | The platform installers, or `make install-runtime` |
+| Herdr | The terminal pane manager workflows run in | The platform installers, when `herdr` is not already on `PATH` |
+| `gh` | The GitHub CLI Grove and the workflows use for GitHub | You; authenticate with `gh auth login` |
+| An agent backend | OpenCode, Pi, or Claude Code, which the workflows drive | You; see the README's Agent Backends |
 
-The release installers do not require a system Node.js or Herdr installation.
-They provision a private Node.js runtime, install Grove's Sandcastle package,
-and install Herdr only when no existing `herdr` command is available. `go
-install` remains binary-only and does not provision these dependencies.
-
-### Clone the repository
-
-```bash
-git clone https://github.com/m00nk0d3/grove
-cd grove
-```
-
-### Build
-
-```bash
-make build
-make runtime-build
-```
-
-### Run (without installing)
-
-```bash
-go run ./cmd/grove
-```
-
-Run from inside a Git repository, otherwise Grove will warn that no worktrees are available.
-
-### Build a versioned binary
-
-```bash
-go build \
-    -ldflags "-X github.com/m00nk0d3/grove/internal/version.Version=v0.1.0" \
-    -o grove \
-    ./cmd/grove
-```
-
-Move the resulting `grove` binary to a directory on your `PATH`.
-
-### Run tests
-
-```bash
-make test
-```
-
-### Install the Grove Sandcastle runtime
-
-```bash
-make install-runtime
-```
-
-This installs `grove-sandcastle` and Grove-owned compatibility commands for
-`imp`, `review`, `resolve`, `ci`, and `clean`. The runtime writes telemetry
-under each repository's common Git directory in `grove-workflows/`, allowing
-all worktrees to share one workflow view.
-
-### Launch workflows from Grove
-
-Use the visible right-hand Actions panel to start workflows:
-
-- Issues view: run `imp` for the selected issue.
-- Pull requests view: choose `review`, `ci`, or `resolve`.
-- Dashboard or worktrees view: run `clean`.
-
-Grove asks `grove-sandcastle` to reuse or open the repository's Herdr
-workspace, then creates a focused tab for the selected workflow. It does not
-split the Grove pane. OpenCode is the default coding agent.
-
-### Release process
-
-Releases are automated via [GoReleaser](https://goreleaser.com/) and triggered by pushing a version tag.
-
-1. Merge all changes to `main` and ensure tests pass.
-2. Create and push a version tag:
-   ```bash
-   git tag v0.x.0 && git push origin v0.x.0
-   ```
-3. GoReleaser picks up the tag, builds cross-platform binaries (linux/darwin/windows, amd64/arm64), and publishes the GitHub Release automatically.
-4. Pre-releases (alpha/beta/RC) are tagged as `v0.x.0-beta.1` etc. — GoReleaser marks them as pre-releases automatically.
-5. Update `README.md`, `CHANGELOG.md`, and this runbook if any user-facing behaviour changed.
+`go install` provides only `grove`; without the runtime, workflows cannot start.
 
 ---
 
-## Purpose
+## Installing and upgrading
 
-Grove is a terminal UI for managing Git worktrees, syncing GitHub data, and launching AI coding agents with the right repository context.
+- **Linux / macOS:** `curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash`.
+  Grove goes to `/usr/local/bin` (`GROVE_INSTALL_DIR`), and Node.js, the
+  runtime, and Herdr to `~/.local/share/grove` (`GROVE_DATA_DIR`).
+  `GROVE_VERSION` installs a specific release.
+- **Windows:** `irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex`.
+  Everything goes to `%LOCALAPPDATA%\grove\`, which is added to the user `PATH`.
 
-## Current status
+Grove's in-app update replaces only the `grove` binary. To update the runtime,
+re-run the installer (or `make install-runtime` for a source install). A
+runtime and a Grove from different releases may disagree about the JSON
+contract, so upgrade both together.
 
-Grove is fully implemented and shipping. The latest release is available on the [GitHub Releases page](https://github.com/m00nk0d3/grove/releases). See `CHANGELOG.md` for the full version history.
+Check the installed version with `grove --version`.
 
-## Owners
-
-- Primary owner: project maintainer
-- Secondary owner: anyone responsible for GitHub auth, local config, or release packaging
-
-## Prerequisites
-
-- Git
-- GitHub CLI (`gh`) authenticated to the target account
-- Go toolchain
-- A git repository with worktrees enabled
-- Node.js 22+ for the Grove-owned Sandcastle runtime
-
-## Setup
-
-1. Clone the repository.
-2. Ensure `gh auth status` succeeds.
-3. Create the Grove config directory: `~/.grove/`
-4. Add `~/.grove/config.toml`
-5. Start Grove from the root of a git repository
+---
 
 ## Configuration
 
-Primary config file:
+`~/.grove/config.toml`. Every field is optional and a missing file means the
+defaults. The settings screen (`t`) edits the same file, writing it when a
+setting changes; each setting takes effect immediately.
 
-`~/.grove/config.toml`
+| Key | Default | Effect |
+| --- | --- | --- |
+| `appearance.theme` | `digital-noir` | UI theme; one of the 23 listed in the settings screen |
+| `github.auto_sync` | `true` | Refresh GitHub data in the background. When `false`, only at startup and on `r` |
+| `github.sync_interval_minutes` | `5` | Minutes between background refreshes |
+| `worktrees.base_branch` | `main` | Base of a new worktree when no parent branch is picked. When the repository has no such branch, its default branch is used |
+| `worktrees.worktree_root` | `../worktrees` | Where worktrees are created, as `<root>/<repository>/<branch>`; a relative path starts at the repository root |
+| `sandcastle.enabled` | `true` | Track and start workflows |
+| `sandcastle.binary` | `grove-sandcastle` | The runtime's command |
+| `sandcastle.default_agent` | `opencode` | Agent backend for workflow specialists: `opencode`, `pi`, or `claude` |
+| `herdr.enabled` | `true` | Use Herdr panes and show Herdr status |
+| `herdr.prefer_worktree_api` | `true` | Create worktrees through Herdr when Grove runs inside it |
+| `herdr.poll_interval_seconds` | `5` | Seconds between checks of Herdr and Sandcastle status |
 
-Key settings:
+The Herdr integration is active only when Grove runs inside a Herdr pane, which
+Grove detects from the `HERDR_*` environment variables Herdr sets.
 
-| Setting | Purpose |
-| --- | --- |
-| `github.auto_sync` | Enables background sync |
-| `github.sync_interval_minutes` | Refresh cadence |
-| `appearance.theme` | UI theme (`digital-noir`, `matrix`, `light`, `everforest`, `tokyonight`, `catppuccin`, `kanagawa`, `rose-pine`, `onedark`) |
-| `sandcastle.binary` | Grove workflow telemetry binary; defaults to `grove-sandcastle` |
-| `worktrees.base_branch` | Default branch used when creating worktrees |
-| `worktrees.worktree_root` | Directory where new worktrees are created (relative to repo root) |
+Workflows also read `AGENT_FLOW_*` environment variables — model and backend
+overrides, the human-input wait, review passes, and validation limits. The
+README's Agent Backends section lists them with their defaults.
 
-## Startup procedure
+---
 
-1. Confirm the repo is a valid git repository.
-2. Confirm the current worktree list is readable.
-3. Load local config and cached data.
-4. Start the UI.
-5. Start background GitHub sync if enabled.
+## Where state lives
 
-## Normal operations
+| Path | Contents | Safe to delete? |
+|---|---|---|
+| `~/.grove/config.toml` | Configuration | Yes; the defaults apply |
+| `~/.grove/grove.db` | SQLite cache of GitHub data and sessions | Yes, with Grove closed; it is rebuilt |
+| `~/.grove/logs/grove.log` | Grove's log | Yes |
+| `~/.grove/dismissed.json` | Workflows marked done on the dashboard | Yes; they reappear under *Active* |
+| `<common-git-dir>/grove-workflows/*.json` | One record per workflow run; the newest 100 are listed | Per run, through Grove (`x`) |
+| `<common-git-dir>/agent-flow/` | Workflow checkpoints (`issue-<N>.json`), reports, and the project profile | Checkpoints only when no run of that issue is in progress |
 
-### Fuzzy finder
+`<common-git-dir>` is the repository's shared git directory (`git rev-parse
+--git-common-dir`), the `.git` directory of the main worktree. Every worktree of
+the repository shares it, so all of them see the same workflows and reports,
+and a run's reports survive its worktree's removal.
 
-- Press `/` or `Ctrl+F` to open the overlay from any view.
-- Type to filter across worktrees, issues, PRs, files, branches, and agent history.
-- `Enter` dispatches the contextual action; `Esc` dismisses without acting.
+---
 
-### Worktree management
+## Normal operation
 
-- Create a worktree from the dashboard.
-- Switch to a worktree when you need repository context there.
-- Lock worktrees before long-lived work.
-- Deleting a worktree also force-deletes its local branch after confirmation.
-  The default branch is protected and the remote branch is preserved.
-- Prune stale worktrees after remote branch deletion or directory removal.
+### Worktrees
+
+- **Create:** in Issues, select an issue and press `Enter`; in PRs, press
+  `Enter` to check the pull request out; in the fuzzy finder, select a branch.
+- **Open:** in Worktrees, `Enter` jumps to the worktree's workflow pane or
+  opens its shell. *Open separate shell* in Actions opens another one.
+- **Delete:** Actions → *Delete worktree*, then confirm. The local branch is
+  force-deleted; the remote branch is kept, and the default branch is never
+  deleted.
+- **Clean up merged work:** Actions → *Clean merged work* runs `clean`.
 
 ### GitHub sync
 
-- Refresh manually with `r` when current data looks stale.
-- Use auto-sync for steady-state updates.
-- Prefer cached data during temporary API failures.
+Grove syncs at startup and, with auto sync on, every
+`sync_interval_minutes`. `r` refreshes worktrees, GitHub, and Herdr and
+Sandcastle status at once. During an outage Grove keeps showing the cached
+data and the footer shows the error.
 
-### Sandcastle workflows
+### Workflows
 
-- Select an issue, focus Actions with `a`, and start `imp`.
-- Select a pull request, focus Actions, and start `review`, `ci`, or `resolve`.
-- On the dashboard, select an active workflow with `j`/`k` and press `Enter`
-  to jump to its correlated Herdr pane or tracked terminal session.
-- Use `[`/`]` to switch between **Active / Attention** and **Completed**.
-  Pressing `Enter` on a completed workflow opens its Mission Inspector.
-- Mouse input is supported: click navigation, workflow tabs, list rows, and
-  Actions; use the wheel to move the selection. Double-click a row to open it.
-- Press `v`, or choose **Inspect workflow** from Actions, to open the live
-  Mission Inspector. Use `Tab` to switch between overview, steps, metrics,
-  and implementation activity; `Enter` jumps to the workflow terminal.
-- Press `x`, or choose **Stop and remove workflow** / **Remove workflow** from
-  Actions, then confirm. Active runs are terminated before their Sandcastle
-  state is removed; worktrees and Git branches are always preserved.
-- From a worktree or the dashboard, focus Actions and start `clean`.
-- Configure agent selection in Sandcastle; Grove does not launch agents directly.
+1. Select an issue or pull request, press `a` to focus Actions, choose the
+   workflow, and press `Enter`.
+2. Grove asks `grove-sandcastle` to start it. The runtime opens (or reuses) the
+   repository's Herdr workspace, creates a tab for the run, and starts the
+   workflow command there with the chosen agent backend.
+3. The run appears on the dashboard. `Enter` jumps to its pane, `v` opens the
+   mission inspector, and `[` / `]` switch between *Active / Attention* and
+   *Completed*.
+4. When an agent needs a person — a permission prompt, a credential, a
+   decision — its pane is focused and the workflow waits (15 minutes by
+   default, `AGENT_FLOW_HUMAN_INPUT_TIMEOUT_MS`). Answer in the pane.
+5. When the run finishes, read its reports in the mission inspector (`v`, then
+   `5`), and press `m` to mark a succeeded run done.
 
-## Troubleshooting
+Workflows can also be started directly from a Herdr pane, for example
+`imp 42`, `review 17`, or `address 17`.
 
-### Grove will not start
+---
 
-Check:
+## Recovery
 
-- you are inside a git repository
-- `gh auth status` succeeds
-- config file exists and is readable
+### A workflow shows *running* but nothing is happening
 
-### GitHub data is stale
+The runtime marks a run whose process has exited as *failed* the next time its
+status is read. Press `r`. If the process is alive but stuck, jump to its pane
+(`Enter`) to see what it is waiting for, or stop it with `x`, which ends the
+process and closes its agents' Herdr panes.
 
-Check:
+### A failed run should be retried
 
-- background sync is enabled
-- network access is available
-- the auth token still works
+Mission inspector `t`, or Actions → *Retry workflow*. An implementation run
+resumes after its last completed stage from its checkpoint in
+`<common-git-dir>/agent-flow/issue-<N>.json`. Delete that checkpoint only to
+start the issue over from the beginning.
 
-### Agent launcher fails
+### `address` or `ci` refuses to touch a worktree with uncommitted changes
 
-Check:
+The pull request's worktree has changes, from your own work or an earlier
+failed run. Commit or stash your own work; if the changes are from an earlier
+run of the same command, rerun it with `address <pr> --continue` or
+`ci <pr> --continue`.
 
-- the binary exists in `PATH`
-- the launcher is enabled in config
-- the worktree path is valid
+### The header shows *Sandcastle: unavailable*
+
+`grove-sandcastle` was not found. Re-run the platform installer, or run
+`make install-runtime`. If the runtime is installed somewhere unusual, set
+`sandcastle.binary` to its path.
+
+### The header shows *Herdr: unavailable*, or workflows do not start
+
+Workflows run in Herdr. Start Grove from a Herdr pane, and check that `herdr` is
+on `PATH`. The error from a failed start is shown in Grove's status line.
+
+### GitHub data is empty or stale
+
+Check `gh auth status`. For project board status, the token also needs
+`read:project`: `gh auth refresh -h github.com -s read:project`. Check that
+auto sync is on, then press `r`.
 
 ### Worktree operations fail
 
-Check:
+Check that the branch name is valid, that the worktree is not locked
+(`git worktree list` shows locked worktrees), and that the directory under
+`worktree_root` is writable. `git worktree prune` removes records of
+worktrees whose directories were deleted by hand.
 
-- the repository is clean enough for the intended operation
-- the branch name is valid
-- the target worktree is not locked
+### The config does not load
 
-## Incident response
+A warning banner appears on startup. Fix the TOML syntax in
+`~/.grove/config.toml`, or move the file aside to start from the defaults.
 
-### GitHub API outage
+### Resetting the local cache
 
-1. Fall back to cached metadata.
-2. Stop relying on live refreshes.
-3. Retry after connectivity recovers.
+Close Grove, delete `~/.grove/grove.db`, and start Grove again.
 
-### Corrupted local config
-
-1. Back up `~/.grove/`.
-2. Remove or repair the broken TOML file.
-3. Restart with a minimal config.
-
-### Missing agent binary
-
-1. Disable the launcher in config.
-2. Install the missing tool.
-3. Re-enable the launcher after verification.
-
-## Backup and restore
-
-Back up:
-
-- `~/.grove/config.toml`
-- SQLite cache or local database files
-- logs under `~/.grove/logs/`
-
-Restore by copying the files back into the same paths and restarting Grove.
+---
 
 ## Logging
 
-Operational logs should live under:
+Grove logs to `~/.grove/logs/grove.log`: sync failures, git and `gh` command
+errors, integration errors, and config problems. Workflow output is in the
+run's Herdr pane.
 
-`~/.grove/logs/grove.log`
+---
 
-Use logs for:
+## Releases
 
-- sync failures
-- launch failures
-- git command errors
-- config validation errors
+Releases are built by [GoReleaser](https://goreleaser.com/) when a version tag
+is pushed:
 
-## Maintenance tasks
+1. Merge to `main` with CI green.
+2. Tag and push: `git tag v1.2.3 && git push origin v1.2.3`. A tag such as
+   `v1.2.3-rc.1` publishes a pre-release.
+3. The release workflow runs the tests, builds the runtime, and publishes the
+   archives for linux and darwin (amd64 and arm64) and windows (amd64), which
+   the installers download.
 
-- Review config defaults when adding new features
-- Update dependency notes after architecture changes
-- Keep keybindings in sync with the UI
-- Document new error states and recovery steps
+### Release checklist
 
-## Release checklist
-
-- README updated
-- runbook updated
-- keybindings documented
-- config defaults documented
-- edge cases documented
-- license present
-
-## Open questions
-
-- Should local persistence use a single SQLite file or separate caches?
-- Should Grove prefer `gh` auth only, or allow PAT fallback by default?
-- Should the app resume to the original shell context after agent launch or keep a visible handoff screen?
+- `CHANGELOG.md` describes the release
+- README, this runbook, and the JSON contract match the released behaviour
+- Keybindings in the README and the in-app help match the code
+- New configuration keys are documented with their defaults

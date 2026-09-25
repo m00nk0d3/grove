@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -372,4 +373,34 @@ func parseWorktreeListPorcelain(porcelain string) ([]domain.Worktree, error) {
 	appendCurrent()
 
 	return worktrees, nil
+}
+
+// CommonDir returns the absolute path of the repository's shared git
+// directory: the .git directory of the main worktree, which every linked
+// worktree of the repository shares. Git reports it relative to the working
+// directory when it can, so the result is resolved against repoPath.
+func (g *GitCommand) CommonDir() (string, error) {
+	out, err := g.run("resolve git common dir", "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	dir := strings.TrimSpace(out)
+	if dir == "" {
+		return "", errors.New("resolve git common dir: git reported an empty path")
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(g.repoPath, dir)
+	}
+	return filepath.Clean(dir), nil
+}
+
+// BranchExists reports whether branch can be used as a start point: it exists
+// locally or on origin.
+func (g *GitCommand) BranchExists(branch string) bool {
+	for _, ref := range []string{branch, "origin/" + branch} {
+		if _, err := g.run("verify branch", "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil {
+			return true
+		}
+	}
+	return false
 }

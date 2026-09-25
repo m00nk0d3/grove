@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A live demo on the website** — the site plays a walk through Grove, from
+  mission control to starting a workflow, following it in the inspector,
+  reading its report, and switching theme. Every screen is rendered by Grove's
+  own renderer and played back as text, so it stays sharp and weighs 14 KB
+  compressed; visitors can step through it or press the keys it shows.
+  `make demo` regenerates it.
+- **Documentation brought up to date** — the README, runbook, Sandcastle JSON
+  contract, runtime README, contributing guide, and website described the
+  product as it was in May: keys that no longer exist (`Ctrl+N`, lock, prune,
+  the agent launchers), config keys that did nothing, an agent that was
+  "always `pi`", and no mission control, `address`, reports, or Herdr
+  configuration. They now describe the current behaviour, the historical
+  design records say which parts were built, and the contributing guide
+  describes this project rather than an earlier one.
+
+- **The mission inspector shows a workflow's reports** — a new Reports tab
+  (`5`) shows what the run wrote about itself: the implementation report and
+  review verdict of an implementation run, each reviewed head's review of a
+  review run, and the failure summary of a CI run. The reports are rendered
+  from Markdown in the active theme, with headings, lists, code blocks, and
+  tables that wrap to fit, and scroll with `j`/`k`, `PgUp`/`PgDn`, and `g`/`G`.
+  `[` and `]` switch between a run's reports. They are read from the
+  repository's shared git directory, so a run's reports stay readable after
+  its worktree is removed, and they are read again each time the tab is
+  opened or `r` is pressed.
+
+- **A redesigned settings screen** — `t` opens a fullscreen settings screen
+  with a section rail (Appearance, GitHub, Worktrees, Agents) in place of the
+  small tabbed box. Every setting shows its `config.toml` key and a description,
+  a number that is not a whole number of at least 1 or an empty text value is
+  rejected with the reason instead of being silently ignored, and changes still
+  save as soon as they are made.
+  - **Themes are picked from a list.** The appearance section lists every
+    theme, grouped into dark and light, with its signal colours beside it and a
+    preview of the theme under the cursor drawn in that theme's own colours.
+    Browsing does not change anything; Enter applies the theme.
+  - **An Agents section** sets the default agent (`opencode`, `pi`, or
+    `claude`), switches the Sandcastle runtime and the Herdr integration on or
+    off, and sets the Herdr worktree preference and poll interval.
+- **14 new themes** — Cyberpunk, Synthwave '84, Dracula, Nord, Gruvbox,
+  Solarized Dark, Monokai, and Ayu Mirage, and the light themes GitHub Light,
+  Catppuccin Latte, Solarized Light, Rosé Pine Dawn, Tokyo Night Day, and
+  Gruvbox Light, for 23 in all. Every theme's body text meets a 4.5:1 contrast
+  ratio against its background and panel surface.
+
 - **Claude Code agent backend** — `default_agent = "claude"` launches workflow
   specialists through Claude Code instead of OpenCode or Pi, using Herdr's
   existing `claude` agent kind. Artifact instructions use the native `Write`
@@ -261,8 +306,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   signal for issues that are on no board. Requires the `read:project` token
   scope; without it the previous local-only behaviour applies unchanged.
 
+### Added
+
+- **Validation says that it is still running** — a test runner writes for a
+  terminal, not a pipe: vitest's default reporter produced 396 bytes across a
+  399-second run, nearly all of it after the last test. The gate captured that
+  output and showed none of it, so a healthy six-minute suite and a wedged one
+  were the same blank terminal. The gate now reports every 30 seconds how long a
+  command has been running, along with its most recent line when it has one, and
+  reports how long each command took when it passes.
+- **Validation cannot run for ever** — there was no timeout anywhere in the
+  gate, so a wedged suite stopped the workflow with no way out but killing it. A
+  command that outlives `AGENT_FLOW_VALIDATION_TIMEOUT_MS` (30 minutes by
+  default) is stopped, with its process tree, and reported as a timeout rather
+  than a test failure.
+- **An unchanged worktree is not validated twice** — the gate runs at
+  verification, again after documentation and again at delivery, and between
+  those points the tree is often byte-identical, since removing the agents'
+  scaffolding touches nothing tracked. On a repository whose suites take six
+  minutes that was twelve minutes spent re-proving an unchanged tree. A passing
+  run is now remembered against a fingerprint of the worktree and the commands
+  planned for it, and skipped only when both are identical. Only passes are
+  remembered, so a failure is never cached into a success. Set
+  `AGENT_FLOW_REVALIDATE_ALWAYS=1` to run every time regardless.
+
 ### Fixed
 
+- **`ci --continue` works** — when a pull request's worktree held uncommitted
+  changes, `ci` refused and said to rerun with `--continue`, then rejected the
+  flag. It now accepts it, like `address`: the run continues in the worktree,
+  and the agent is told to build on the earlier changes rather than start over.
+- **The fuzzy finder searches workflow runs** — its agent-history source read
+  a table left from the removed agent launchers that nothing wrote to, so it
+  was always empty and selecting a result did nothing. It is replaced by the
+  workflow runs Grove already tracks, finished ones included; selecting one
+  opens it in the mission inspector, with its reports.
+- **Settings that did nothing are removed** — `herdr.binary` and
+  `sandcastle.poll_interval_seconds` were never read. `herdr.poll_interval_seconds`
+  sets the interval for both integrations. Existing config files that still
+  contain the removed keys load as before.
+- **The Sandcastle client defaults to `grove-sandcastle`**, the command the
+  installers provide, instead of `sandcastle`.
+- **The repository has a LICENSE file** — the README, website, and in-app help
+  said MIT, but the license text was missing. The committed `bin/grove` build
+  and the unused `demo/nexus.gif` are removed, and `bin/` is ignored.
+- **Three settings now do what they say** — `github.auto_sync`,
+  `worktrees.base_branch`, and `worktrees.worktree_root` were read by nothing.
+  - **Auto sync** turns the background GitHub refresh on or off; off, GitHub
+    is refreshed only at startup and on `r`. Changing it, or the interval, in
+    the settings screen takes effect immediately.
+  - **Worktree root** decides where new worktrees go, as
+    `<root>/<repository>/<branch>`, for issue, pull request, and branch
+    checkouts alike. The default, `../worktrees`, is the layout Grove always
+    used.
+  - **Base branch** is the base of a new worktree when no parent branch is
+    picked, and falls back to the repository's default branch when the
+    repository has no such branch, so the default `main` still works where the
+    trunk is `master`. The create dialog names it instead of a fixed `main`.
+- **Only one background GitHub sync runs** — every completed sync, manual or
+  periodic, scheduled another timer, so each press of `r` started an
+  additional sync chain. A new timer now supersedes the pending one.
+- **The in-app help matches the keys** — it listed `←`/`→`/`h`/`l` for
+  switching panels, which the main screen does not handle, said nine themes,
+  and referred to Grove by an old name.
+- **The settings status line clears again** — an open modal received only key
+  presses, so the timer that clears the settings screen's "Saved" message
+  never reached it and the message stayed until the screen was closed. A
+  modal's own scheduled messages are now delivered to it.
+- **The light theme no longer shows black patches** — every styled span ends
+  with a full SGR reset, which also cleared the enclosing panel's background,
+  so the text, padding and borders after the first coloured span on a line
+  were drawn on the terminal's default background. On a dark terminal the
+  light theme showed black blocks behind the dashboard cards, the pulse bars,
+  the integration status and the action hints; the dark themes had the same
+  defect, hidden by a background close to black. Each panel now carries its
+  background through the spans it contains, and the whole frame is painted
+  with the theme background so the gaps between panels match.
+- **A workflow started from a shell honours the configured agent** — Grove
+  passes the agent to the workflows it starts, but running `imp`, `review`, or
+  any other workflow command directly left `AGENT_FLOW_AGENT_BACKEND` unset, so
+  the runtime launched OpenCode regardless of `default_agent`. Without the
+  variable, the runtime now reads `[sandcastle].default_agent` from
+  `~/.grove/config.toml` before falling back to OpenCode.
+- **A workflow step is no longer recorded as done before it has finished** —
+  `runStep` took a synchronous action and did not wait for it, so a step whose
+  action was asynchronous was marked succeeded the moment it started, and
+  anything it threw arrived after the step's error handling had already
+  returned. The lean review stage has passed an asynchronous action all along,
+  and every delivery gate is asynchronous now. Steps are awaited, and a test
+  reads the source to keep them awaited.
+- **A JavaScript project's tests can be run on Windows** — `npm`, `npx`, `yarn`
+  and `pnpm` are `.cmd` shims there, and Windows cannot start a script the way
+  it starts an executable, so the delivery gate failed with
+  `Unable to run npm run test (in frontend): spawnSync npm ENOENT` while the
+  .NET project beside it passed. Neither obvious spelling fixes it: `npm.cmd` is
+  refused with EINVAL, because Node will not spawn a script without a shell, and
+  bare `npm` depends on the Node doing the spawning — it resolves under Node 25
+  and fails under the Node 22 the runtime ships, so the suite passed in
+  development while the installed runtime could not validate a JavaScript
+  project at all. A command is now resolved the way Windows resolves it, walking
+  PATH in PATHEXT order, and one that turns out to be a script is run through
+  the command interpreter with each argument quoted individually. Executables
+  are spawned directly as before, and a command that does not exist still fails
+  as a missing command.
+- **A repair agent is told the directory each validation command runs in** —
+  the delivery gate runs one command per project, each in that project's own
+  directory, but the set was described to the agent by joining the commands with
+  ` && `. A task's label carries its directory as prose, so a repository with a
+  .NET backend and a JavaScript frontend produced `dotnet test (in backend) &&
+  npm run test (in frontend)`, quoted in the prompt as a single command to run.
+  It is not one: an agent reproducing it rebuilt it as a real shell chain, where
+  every command shares one working directory, so the second `cd` resolved
+  against the first project and the run collapsed. The commands are now listed
+  one per line with the directory named against each, setup steps such as
+  `npm ci` included before the test that needs them, and the prompts say
+  explicitly that these are separate commands rather than one chained line.
+- **A large assignment no longer fails the agent before it starts** — a prompt
+  reaches Herdr as a single command-line argument, and Windows refuses a command
+  line longer than 32767 characters. A pull request review carries the request's
+  metadata, and a generated body alone can exceed 40 KB, so `review` died with
+  `Unable to run herdr: spawnSync herdr ENAMETOOLONG` before the specialist was
+  started. `herdr agent prompt` takes its text positionally and has no file or
+  stdin form, so an assignment above 16000 characters is now handed over as the
+  path of the file it is already written to, which the agent reads as its first
+  action. Smaller assignments are sent inline exactly as before, and the
+  threshold applies on every platform so a workflow behaves the same on each.
 - **The lists scroll, fill their panel, and show where you are in them** —
   every list panel sized its scroll window differently from what it drew. The
   dashboard measured its window in workflows against a budget counted in rows,

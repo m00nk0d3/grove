@@ -46,6 +46,37 @@ type MissionJumpMsg struct {
 // MissionRefreshMsg requests an immediate refresh of integration telemetry.
 type MissionRefreshMsg struct{}
 
+// MissionReportsRequestedMsg asks Grove to load the reports the inspected
+// workflow has written. Grove answers with MissionReportsLoadedMsg.
+type MissionReportsRequestedMsg struct {
+	RunID    string
+	Workflow domain.WorkflowRunRef
+}
+
+// MissionReportsLoadedMsg carries the reports found for a workflow run.
+// Supported is false for a workflow kind that never writes reports, so the
+// inspector can tell that apart from reports that are not written yet.
+type MissionReportsLoadedMsg struct {
+	RunID     string
+	Reports   []domain.WorkflowReport
+	Supported bool
+	Err       error
+}
+
+// ownMsg is implemented by messages a modal schedules for itself, such as a
+// timer that clears its status line. The app routes them back to the open
+// modal instead of treating them as app events.
+type ownMsg interface{ modalOwned() }
+
+// IsOwnMessage reports whether msg was scheduled by a modal for itself and
+// belongs to the open modal.
+func IsOwnMessage(msg tea.Msg) bool {
+	_, ok := msg.(ownMsg)
+	return ok
+}
+
+func (clearStatusMsg) modalOwned() {}
+
 // MissionRetryRequestedMsg asks Grove to retry a failed inspected run.
 type MissionRetryRequestedMsg struct {
 	RunID string

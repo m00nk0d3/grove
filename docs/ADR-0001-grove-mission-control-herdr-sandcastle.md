@@ -2,7 +2,21 @@
 
 ## Status
 
-Proposed
+Accepted, and implemented with amendments. The decision below — Grove as the
+control center, Sandcastle running workflows and their agents, Herdr owning
+terminal panes — stands. Three details changed in the build:
+
+- **The default agent is OpenCode.** This record names Pi Agent as the default
+  in places; the implementation uses OpenCode and makes the agent configurable
+  (`sandcastle.default_agent`: `opencode`, `pi`, or `claude`).
+- **Sandcastle is Grove's own runtime**, in `runtime/sandcastle` and installed
+  as `grove-sandcastle`, rather than a separate tool Grove integrates with.
+- **Stopping, removing, and retrying runs are supported**, which this record
+  placed out of scope.
+
+The current behaviour is described in the [README](../README.md), the
+[runbook](./RUNBOOK.md), and the
+[Sandcastle JSON contract](./SANDCASTLE_JSON_CONTRACT.md).
 
 ## Date
 

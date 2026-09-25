@@ -1,426 +1,246 @@
 # Grove ↔ Sandcastle CLI JSON Contract
 
-**Phase 3 deliverable (issue #172).** Normative integration contract for the
-Sandcastle CLI JSON that Grove implements against.
+The interface between Grove (the Go TUI) and the Sandcastle runtime
+(`runtime/sandcastle`, the `grove-sandcastle` command). Grove starts, lists,
+and removes workflow runs only through these commands and the JSON they print.
+Both sides live in this repository; a change to either side of the boundary
+updates this document in the same change.
 
-- Source: [Mission Control Implementation Plan, Phase 3](./MISSION_CONTROL_IMPLEMENTATION_PLAN.md)
-- Ownership boundaries: [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md)
-- Consuming side: Grove mission control (Phase 4 adapter, `internal/sandcastle`)
+- Writing side: `runtime/sandcastle/src/sandcastle.ts` (commands) and
+  `runtime/sandcastle/src/runtime-state.ts` (the run record)
+- Reading side: `internal/sandcastle/client.go`
+- Background: [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md)
 
-Status: documented. Grove must implement the read side against these exact
-shapes, through fakes, before depending on a live Sandcastle binary.
+## Rules
 
-## Scope
-
-In scope for this contract:
-
-```bash
-grove-sandcastle status --json
-grove-sandcastle workflow list --json
-grove-sandcastle workflow get <run-id> --json
-grove-sandcastle workflow remove <run-id> --json [--stop]
-grove-sandcastle workflow start --json \
-  --kind imp \
-  --repo <repo-path> \
-  --worktree <worktree-path> \
-  --agent opencode \
-  --source grove
-```
-
-Additional supported workflow targets:
-
-```bash
-grove-sandcastle workflow start --kind imp --issue <number> --agent opencode --json
-grove-sandcastle workflow start --kind review --pr <number> --agent opencode --json
-grove-sandcastle workflow start --kind resolve --pr <number> --agent opencode --json
-grove-sandcastle workflow start --kind ci --pr <number> --agent opencode --json
-grove-sandcastle workflow start --kind clean --agent opencode --json
-```
-
-Not in scope: pause, retry, or cancel controls, raw log scraping, and real-time
-push updates. Grove integrates through CLI JSON only.
-
-## Normative Rules
-
-These rules are normative for both sides.
-
-1. **Grove never runs coding agents directly.** Grove starts a Sandcastle workflow;
-   Sandcastle launches OpenCode (and any supporting agents). Grove's direct
-   direct agent launcher paths have been removed and must not be used for this flow.
-2. **Grove sends `--agent opencode`** on `workflow start` unless a future workflow
-   template explicitly selects another agent.
-3. **Grove sends `--source grove`** on every `workflow start` Grove issues,
-   so Sandcastle can attribute the run to Grove.
-4. **`default_agent` fallback:** if a Grove-started run omits
-   `default_agent`, Grove treats it as `opencode`.
-5. **Missing Sandcastle binary: non-fatal.** Grove marks the Sandcastle
-   integration unavailable, keeps the dashboard in a degraded state with the
-   last known work items preserved, and shows a clear integration warning.
-   Grove startup must not fail.
-6. **Malformed JSON: non-fatal, visible error.** Grove must not crash, must
-   not render raw command output as status, and must surface a clear
-   integration error in the dashboard. The last good state is preserved.
-7. **Command failure (non-zero exit or binary error): non-fatal.** Grove
-   preserves stderr or structured error details for user-facing diagnostics
-   and shows the integration error in the dashboard.
-8. **Forward compatibility.** The minimum shapes below are extendable.
-   Sandcastle may add fields and Grove must ignore unknown fields. Unknown
-   enum values are legal and Grove must render them literally, never crash.
-   Grove may not add new required fields to these minimum shapes without a
-   version bump.
+1. **Grove never runs coding agents directly.** It asks the runtime to start a
+   workflow; the runtime starts the workflow command in a Herdr pane, and the
+   workflow launches the agents.
+2. **Grove chooses the agent.** It sends `--agent` with the configured
+   `sandcastle.default_agent` (`opencode` by default) or the agent a request
+   names. The runtime accepts `opencode`, `pi`, and `claude`, and rejects any
+   other value.
+3. **Grove sends `--source grove`** on every start, so a run can be attributed
+   to Grove. A run started from a shell has the source `command`.
+4. **A missing `default_agent` means `opencode`.**
+5. **A missing binary is not fatal.** Grove marks the Sandcastle integration
+   *unavailable*, keeps running, and shows the state in the header.
+6. **Malformed JSON is not fatal.** Grove marks the integration *degraded*,
+   shows the error, and does not render raw command output as status.
+7. **A failing command is not fatal.** Grove shows stderr, or the error when
+   stderr is empty, to the user.
+8. **Forward compatibility.** Either side may add fields; the reader ignores
+   fields it does not know. Unknown enum values are legal, and Grove shows
+   them as they are. A field in the shapes below may not be removed, renamed,
+   or change type without a `version` bump.
 
 ## Commands
 
-### `grove-sandcastle status --json`
+Every command prints one JSON document on stdout and exits 0, or exits
+non-zero with the error on stderr. The runtime always prints JSON; the
+`--json` flag Grove passes is accepted and has no further effect.
 
-Lightweight aggregate check-in for Grove's poll loop. Returns the same
-workflow run shape as `workflow list` so Grove has one parser for both.
+### `grove-sandcastle status`
+
+Grove's poll. Grove runs it with the repository as the working directory; the
+runtime reads the runs of the repository containing that directory.
 
 ```json
 {
-  "version": "0.4.0",
-  "updated_at": "2026-09-17T21:19:00Z",
+  "version": "0.1.0",
+  "updated_at": "2026-09-25T10:00:00.000Z",
   "active_workflows": 1,
-  "workflows": [
-    {
-      "id": "run_123",
-      "title": "Implement issue #42",
-      "status": "running",
-      "repo": "/home/user/dev/project",
-      "worktree_path": "/home/user/dev/project-worktrees/issue-42",
-      "branch": "issue-42",
-      "default_agent": "opencode",
-      "current_step": "Editing files",
-      "progress": {
-        "completed": 3,
-        "total": 7,
-        "percent": 42
-      },
-      "github": {
-        "issue": 42,
-        "pull_request": null
-      },
-      "agents": [
-        {
-          "id": "agent_pi_1",
-          "kind": "pi",
-          "name": "pi-main",
-          "status": "working",
-          "summary": "Refactoring renderer state model",
-          "pane_id": "w1:p3"
-        }
-      ],
-      "steps": [
-        {
-          "id": "step_1",
-          "title": "Inspect repo",
-          "status": "succeeded"
-        },
-        {
-          "id": "step_2",
-          "title": "Implement mission-control model",
-          "status": "running"
-        }
-      ],
-      "started_at": "2026-09-17T21:00:00Z",
-      "updated_at": "2026-09-17T21:19:00Z"
-    }
-  ]
+  "workflows": [ { "…": "workflow run, see below" } ]
 }
 ```
 
-Top-level fields:
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | string | The runtime's version (`grove-sandcastle --version` prints the same) |
+| `updated_at` | string | When the status was produced |
+| `active_workflows` | integer | Runs whose status is `queued` or `running` |
+| `workflows` | array | The newest 100 runs, newest first by `updated_at` |
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `version` | string | yes | Sandcastle contract/binary version |
-| `updated_at` | string | yes | RFC 3339 UTC, authoritative for staleness |
-| `active_workflows` | integer | yes | Count of `workflows` entries with an active status |
-| `workflows` | array | yes | Workflow runs, same shape as `workflow list` entries; empty array when none |
-
-### `grove-sandcastle workflow list --json`
-
-List of workflow runs currently tracked by Sandcastle. Sandcastle does not
-need to filter by status; Grove decides what to render (e.g. active runs on
-the global dashboard).
-
-```json
-{
-  "workflows": [
-    {
-      "id": "run_123",
-      "title": "Implement issue #42",
-      "status": "running",
-      "repo": "/home/user/dev/project",
-      "worktree_path": "/home/user/dev/project-worktrees/issue-42",
-      "branch": "issue-42",
-      "default_agent": "opencode",
-      "current_step": "Editing files",
-      "progress": {
-        "completed": 3,
-        "total": 7,
-        "percent": 42
-      },
-      "github": {
-        "issue": 42,
-        "pull_request": null
-      },
-      "agents": [
-        {
-          "id": "agent_pi_1",
-          "kind": "pi",
-          "name": "pi-main",
-          "status": "working",
-          "summary": "Refactoring renderer state model",
-          "pane_id": "w1:p3"
-        }
-      ],
-      "steps": [
-        {
-          "id": "step_1",
-          "title": "Inspect repo",
-          "status": "succeeded"
-        },
-        {
-          "id": "step_2",
-          "title": "Implement mission-control model",
-          "status": "running"
-        }
-      ],
-      "started_at": "2026-09-17T21:00:00Z",
-      "updated_at": "2026-09-17T21:19:00Z"
-    }
-  ]
-}
-```
-
-#### Workflow run (canonical shape)
-
-This is the single canonical workflow run shape. It is the entry shape for
-`workflow list`, the full object for `workflow get`, an entry of `status`,
-and (a subset of) the `workflow` object in the start response.
-
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `id` | string | yes | Unique run id (e.g. `run_123`); stable for the run's lifetime |
-| `title` | string | yes | Human-readable summary (e.g. `Implement issue #42`) |
-| `status` | string | yes | See Status Vocabulary; Grove must tolerate unknown values |
-| `repo` | string | yes | Absolute repo path |
-| `worktree_path` | string | yes | Absolute worktree path where the run executes |
-| `branch` | string | yes | Branch the run is working on |
-| `default_agent` | string | no | Coding agent kind; Grove defaults to `opencode` when omitted |
-| `current_step` | string | no | Human-readable current step title; empty or omitted when idle |
-| `progress` | object | yes | `{completed, total, percent}` integers; `percent` in 0..100 |
-| `github` | object | yes | `{issue, pull_request}`; see below |
-| `agents` | array | yes | Agent entries; empty array when none |
-| `steps` | array | yes | Step entries; empty array when none |
-| `started_at` | string | yes | RFC 3339 UTC |
-| `updated_at` | string | yes | RFC 3339 UTC, last state change |
-| `error` | string | no | User-facing failure detail for a failed workflow |
-
-`github`:
-
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `issue` | integer or null | yes | Issue number, or null when the run is not issue-backed |
-| `pull_request` | integer or null | yes | PR number, or null when the run has no PR |
-
-`agents[]`:
-
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `id` | string | yes | Agent run id (e.g. `agent_pi_1`) |
-| `kind` | string | yes | Agent kind; `pi` for Pi Agent |
-| `name` | string | yes | Display name (e.g. `pi-main`) |
-| `status` | string | yes | Agent status, see Status Vocabulary |
-| `summary` | string | yes | Concise current-activity summary |
-| `pane_id` | string or null | yes | Herdr pane identifier (e.g. `w1:p3`) or null when not pane-backed |
-
-`steps[]`:
-
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `id` | string | yes | Step id (e.g. `step_1`) |
-| `title` | string | yes | Human-readable step title |
-| `status` | string | yes | Step status, see Status Vocabulary |
-| `summary` | string | no | Concise implementation activity or result |
-| `started_at` | string | no | RFC 3339 UTC timestamp when execution started |
-| `completed_at` | string | no | RFC 3339 UTC timestamp when execution ended |
-| `duration_ms` | integer | no | Measured step duration in milliseconds |
-
-### `grove-sandcastle workflow get <run-id> --json`
-
-Single workflow run object, exactly the same shape as one entry from
-`workflow list`, without the `workflows` wrapper array. Use for drill-down
-detail after a user selects a workflow run.
-
-```json
-{
-  "id": "run_123",
-  "title": "Implement issue #42",
-  "status": "running",
-  "repo": "/home/user/dev/project",
-  "worktree_path": "/home/user/dev/project-worktrees/issue-42",
-  "branch": "issue-42",
-  "default_agent": "opencode",
-  "current_step": "Editing files",
-  "progress": {
-    "completed": 3,
-    "total": 7,
-    "percent": 42
-  },
-  "github": {
-    "issue": 42,
-    "pull_request": null
-  },
-  "agents": [
-    {
-      "id": "agent_pi_1",
-      "kind": "pi",
-      "name": "pi-main",
-      "status": "working",
-      "summary": "Refactoring renderer state model",
-      "pane_id": "w1:p3"
-    }
-  ],
-  "steps": [
-    {
-      "id": "step_1",
-      "title": "Inspect repo",
-      "status": "succeeded"
-    },
-    {
-      "id": "step_2",
-      "title": "Implement mission-control model",
-      "status": "running"
-    }
-  ],
-  "started_at": "2026-09-17T21:00:00Z",
-  "updated_at": "2026-09-17T21:19:00Z"
-}
-```
-
-### `grove-sandcastle workflow remove <run-id> --json [--stop]`
-
-Removes a workflow from Sandcastle's persisted history. Active workflows
-(`queued`, `running`, or `blocked`) reject removal unless `--stop` is supplied.
-With `--stop`, Sandcastle terminates the tracked workflow process before
-removing its state file. This command never removes a worktree or Git branch.
-
-```json
-{
-  "removed": "run_123",
-  "stopped": true
-}
-```
-
-### `grove-sandcastle workflow start --json`
-
-Grove → Sandcastle request to start a workflow. Grove must always send:
+### `grove-sandcastle workflow start`
 
 ```bash
 grove-sandcastle workflow start --json \
-  --kind imp \
-  --repo <repo-path> \
-  --worktree <worktree-path> \
-  --agent opencode \
-  --source grove
+  --kind <imp|review|address|ci|resolve|clean> \
+  --repo <repository path> \
+  --worktree <worktree path> \
+  --agent <opencode|pi|claude> \
+  --source grove \
+  [--issue <number>] [--pr <number>]
 ```
-
-Request flags:
 
 | Flag | Required | Notes |
 | --- | --- | --- |
-| `--repo` | yes | Absolute repo path |
-| `--worktree` | yes | Absolute path to the target worktree |
-| `--agent` | yes | Always `pi` from Grove, unless a future template selects another agent (rule 2) |
-| `--source` | yes | `grove` for Grove-initiated starts (rule 3) |
-| `--issue` | no | Deferred; issue number for future issue-backed starts |
-| `--pr` | no | Deferred; PR number for future PR-backed starts |
+| `--kind` | no | Defaults to `imp` |
+| `--issue` | for `imp` | A positive integer |
+| `--pr` | for `review`, `address`, `ci`, `resolve` | A positive integer |
+| `--repo` | no | The repository the run belongs to and where its tab opens; defaults to the working directory |
+| `--agent` | no | Defaults to `opencode`; see rule 2 |
+| `--source` | no | Defaults to `grove` |
+| `--worktree` | no | Sent by Grove and currently unused; the run starts in `--repo`, and `imp` records the worktree it creates once it has one |
 
-Minimum start response:
+The runtime then:
 
-```json
-{
-  "workflow": {
-    "id": "run_123",
-    "status": "queued",
-    "default_agent": "opencode",
-    "worktree_path": "/path/to/worktree"
-  }
-}
+1. writes the run record with status `queued`;
+2. runs `herdr worktree open` for the repository and reads the `workspace_id`;
+3. creates a focused tab labelled with the run's title, with the environment
+   variables `GROVE_WORKFLOW_RUN_ID=<id>`, `GROVE_WORKFLOW_SOURCE=<source>`,
+   and `AGENT_FLOW_AGENT_BACKEND=<agent>`;
+4. runs the workflow command in that tab's pane, for example `imp 42`.
+
+It prints `{"workflow": <workflow run>}`. Starting requires Herdr; a failure at
+any of those steps exits non-zero with Herdr's error.
+
+The workflow command itself updates the record as it goes, identifying its run
+by `GROVE_WORKFLOW_RUN_ID`. A workflow command started from a shell without
+that variable creates its own record, with a new id and the source `command`.
+
+### `grove-sandcastle workflow remove <run-id>`
+
+```bash
+grove-sandcastle workflow remove <run-id> --json --repo <repository path> [--stop]
 ```
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `workflow.id` | string | yes | The run id returned by the start; poll `status`/`list` with it |
-| `workflow.status` | string | yes | `queued` when accepted |
-| `workflow.default_agent` | string | no | As per run shape; Grove defaults to `opencode` when omitted |
-| `workflow.worktree_path` | string | no | Target worktree path |
+Deletes the run's record. A run that is `queued`, `running`, or `blocked` is
+active, and is removed only with `--stop`. With `--stop`, and when the run has a
+process, the runtime:
 
-The response may include additional fields from the full run shape (rule 8).
-Grove must not require more than the fields marked required.
+- refuses unless that process carries `GROVE_WORKFLOW_RUN_ID=<run-id>` in its
+  environment, so it never stops an unrelated process that reused the PID;
+- closes the Herdr pane of each of the run's agents;
+- sends the process `SIGTERM`.
 
-## Status Vocabulary
+It prints `{"removed": "<run-id>", "stopped": <true when a process was signalled>}`.
 
-Minimum values. Both sides may extend the set; Grove must render unknown
-values literally and never crash.
+### `grove-sandcastle workflow list` and `workflow get <run-id>`
 
-| Entity | Minimum values |
+`workflow list` prints `{"workflows": [...]}`, the same list as `status`.
+`workflow get` prints a single workflow run, or fails for an unknown id. Grove
+does not currently call either.
+
+## Workflow run
+
+The record the runtime writes for each run, and the entry shape of `status`,
+`workflow list`, and `workflow get`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | `run_<uuid>`; stable for the run's lifetime and the record's file name |
+| `kind` | string | `imp`, `review`, `address`, `ci`, `resolve`, or `clean` |
+| `title` | string | For example `Implement issue #42`, `Review pull request #17`, `Clean merged worktrees` |
+| `status` | string | See [Status vocabulary](#status-vocabulary) |
+| `repo` | string | The repository's top-level directory |
+| `worktree_path` | string | Where the run works: the repository at first, and for `imp` the worktree it creates |
+| `branch` | string | The branch checked out there |
+| `default_agent` | string | The agent backend; see rules 2 and 4 |
+| `current_step` | string | The current step's title, `Complete`, or `Failed` |
+| `progress` | object | `{completed, total, percent}`, integers, `percent` from 0 to 100 |
+| `github` | object | `{issue, pull_request}`, each an integer or `null` |
+| `agents` | array | See below; empty when none |
+| `steps` | array | See below |
+| `started_at` | string | RFC 3339 |
+| `updated_at` | string | RFC 3339; the last change, and the order runs are listed in |
+| `pid` | integer or null | The workflow process while it runs; `null` once it has exited |
+| `source` | string | `grove` or `command`; see rule 3 |
+| `error` | string | Present on a failed run: why it failed |
+
+`github.issue` is set for `imp`, `github.pull_request` for the kinds that take
+`--pr`, and both are `null` for `clean`.
+
+`agents[]`:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | The agent's id within the run |
+| `kind` | string | The agent backend running it |
+| `name` | string | Display name, for example `af-pull-request-reviewer-1160-49` |
+| `status` | string | See [Status vocabulary](#status-vocabulary) |
+| `summary` | string | What the agent is doing |
+| `pane_id` | string or null | Its Herdr pane, or `null` when it has none |
+
+`steps[]`:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | The step's id |
+| `title` | string | Human-readable title |
+| `status` | string | See [Status vocabulary](#status-vocabulary) |
+| `summary` | string | Optional: what the step did |
+| `started_at`, `completed_at` | string | Optional, RFC 3339 |
+| `duration_ms` | integer | Optional: how long the step took |
+
+A run starts with one step named after its kind. `imp` replaces it with its
+workflow's stages as it runs.
+
+## Status vocabulary
+
+The values the runtime writes. Grove shows any other value as it is.
+
+| Entity | Values |
 | --- | --- |
-| Workflow run status | `queued`, `running`, `blocked`, `failed`, `succeeded` |
-| Agent status | `working`, `idle`, `blocked`, `failed`, `done` |
-| Step status | `running`, `succeeded`, `failed` |
+| Workflow run | `queued`, `running`, `blocked`, `succeeded`, `failed` |
+| Agent | `working`, `idle`, `blocked`, `failed`, `done` |
+| Step | `queued`, `running`, `succeeded`, `failed` |
+
+A run is **active** while it is `queued`, `running`, or `blocked`: it can be
+removed only with `--stop`. `status` counts only `queued` and `running` runs in
+`active_workflows`.
+
+## Storage and lifecycle
+
+- Each run is one file, `<common-git-dir>/grove-workflows/<id>.json`, written
+  atomically (to a temporary file, then renamed) with mode `0600`.
+  `<common-git-dir>` is `git rev-parse --git-common-dir`, which every worktree
+  of the repository shares; outside a repository the runtime falls back to
+  `~/.grove/workflows`.
+- When the runtime reads the runs, a `running` run whose `pid` is no longer
+  alive is rewritten as `failed`, with `current_step` `Process exited
+  unexpectedly` and an `error`.
+- Records are never deleted automatically. `status` lists the newest 100.
+
+## Reports
+
+Reports are not part of the command interface: Grove reads them directly from
+`<common-git-dir>/agent-flow/`, where the workflows write them beside their
+checkpoints.
+
+| Kind | Files |
+| --- | --- |
+| `imp` | `issue-<N>-implementation-report.md`, `issue-<N>-review-verdict.md` |
+| `review` | `pr-<N>-<head sha, 8 characters>-review.md`, one per reviewed head |
+| `ci` | `ci-pr-<N>/failures.md` |
+
+The same directory holds `issue-<N>.json` (an `imp` run's checkpoint, which a
+retry resumes from), `issue-<N>-pr-title.txt`, `issue-<N>-lean-evidence.json`,
+`pr-<N>-<sha>-verdict.json`, and `project-profile.json`. Grove does not read
+them. Renaming a report is a change to this contract.
 
 ## Conventions
 
-- **Time.** All timestamps are RFC 3339 in UTC with a `Z` suffix
-  (e.g. `2026-09-17T21:19:00Z`). `updated_at` is the authoritative field
-  for staleness and freshness checks.
-- **Paths.** Absolute paths (POSIX on Linux).
-- **Null semantics.** `github.pull_request` and `github.issue` are `null`
-  when absent, not omitted. `agents[].pane_id` is `null` when the agent is
-  not pane-backed.
-- **Empty collections.** `agents` and `steps` are empty arrays when there
-  are none. Grove must also tolerate `null` for these fields.
-- **Exit codes.** `0` on success with JSON on stdout; non-zero on command
-  failure. A missing binary is detected by Grove before it invokes the
-  command (rule 5) and is a distinct condition from command failure.
-- **Output format.** JSON is the only required output format for Grove.
-  Grove does not scrape text modes.
+- **Times** are RFC 3339 in UTC (`2026-09-25T10:00:00.000Z`).
+- **Paths** are absolute and native to the platform, so they use backslashes
+  on Windows.
+- **Nulls.** `github.issue`, `github.pull_request`, `pid`, and
+  `agents[].pane_id` are `null` when absent, not omitted. Grove also tolerates
+  `null` for `agents` and `steps`.
 
 ## Versioning
 
-- The `version` field (status response) identifies the contract version
-  the responding binary implements.
-- Additive changes (new fields, new status values) are non-breaking and must
-  not break Grove.
-- Breaking changes (renaming or removing minimum-shape fields, changing field
-  types, or changing JSON encoding rules) require a `version` bump, a
-  changelog entry, and a documented migration window. Grove must tolerate the
-  prior major version during the transition.
+The runtime's `version` is the version of this interface, independent of
+Grove's release number, and is currently `0.1.0`. Adding fields or values
+does not change it. Removing or renaming a field, changing a type, or changing
+an encoding rule increments it, together with a changelog entry, and Grove
+keeps reading the previous version until both sides have moved.
 
-## Testability (Phase 4)
+## Tests
 
-Adapter tests must be derived from the payloads in this document, using
-fake command runners rather than a live Sandcastle binary. The minimum
-coverage set (from [ADR-0001, Testing Decisions](./ADR-0001-grove-mission-control-herdr-sandcastle.md)):
-
-- successful `workflow list` parsing,
-- successful `workflow get` parsing,
-- successful `status` parsing,
-- successful start response parsing,
-- missing binary,
-- malformed JSON,
-- command failure (non-zero exit),
-- empty state (empty `workflows` array, empty `agents`/`steps`).
-
-If a documented shape changes, the corresponding test payloads and this
-document change together.
-
-## References
-
-- [Mission Control Implementation Plan](./MISSION_CONTROL_IMPLEMENTATION_PLAN.md)
-  — Phase 3 (this contract's home in the roadmap) and Phase 4 (adapter).
-- [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md) — ownership
-  boundaries and integration consequences Grove must honor.
+`internal/sandcastle/client_test.go` checks Grove's side with a fake command
+runner, using payloads in these shapes: status and start responses, the
+arguments of start and remove, a missing binary, malformed JSON, a failing
+command, and empty lists. The runtime's tests (`npm test` in
+`runtime/sandcastle`) cover its side. Change the payloads in both when a shape
+here changes.

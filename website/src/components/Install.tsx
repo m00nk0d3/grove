@@ -8,7 +8,7 @@ const TABS = [
     label: 'Linux / macOS',
     steps: [
       {
-        comment: '# One-line install',
+        comment: '# Grove, a private Node.js, the Sandcastle runtime, and Herdr if missing',
         code: 'curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash',
       },
       {
@@ -22,11 +22,11 @@ const TABS = [
     label: 'Windows (PowerShell)',
     steps: [
       {
-        comment: '# One-line install (downloads latest release)',
+        comment: '# Grove, a private Node.js, the Sandcastle runtime, and Herdr if missing',
         code: 'irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex',
       },
       {
-        comment: '# Verify installation',
+        comment: '# Restart the terminal, then verify',
         code: 'grove --version',
       },
     ],
@@ -36,7 +36,7 @@ const TABS = [
     label: 'go install',
     steps: [
       {
-        comment: '# Requires Go 1.22+',
+        comment: '# Go 1.25+ — the grove binary only; workflows need the runtime',
         code: 'go install github.com/m00nk0d3/grove/cmd/grove@latest',
       },
     ],
@@ -46,10 +46,11 @@ const TABS = [
     label: 'Build from source',
     steps: [
       {
-        comment: '# Clone and build',
+        comment: '# Go 1.25+ and Node.js 22+',
         code: `git clone https://github.com/m00nk0d3/grove
 cd grove
-go build -o grove ./cmd/grove
+make build            # the grove binary
+make install-runtime  # the Sandcastle runtime and workflow commands
 ./grove`,
       },
     ],
@@ -93,7 +94,7 @@ export function Install() {
           <p className="mb-3 font-mono text-sm text-[#00d9ff]">// quick start</p>
           <h2 className="text-4xl font-bold tracking-tight">Get started in 30 seconds</h2>
           <p className="mt-4 text-[#4a5568]">
-            Requires Go 1.22+, git, and the <code className="font-mono text-xs text-[#00d9ff]">gh</code> CLI.
+            Needs git and the <code className="font-mono text-xs text-[#00d9ff]">gh</code> CLI — the installers bring the rest.
           </p>
         </motion.div>
 
@@ -141,8 +142,8 @@ export function Install() {
           <div className="border-t border-[#1e2a3a] bg-[#0a0e27]/30 px-6 py-4">
             <p className="font-mono text-xs text-[#4a5568]">
               Config lives at{' '}
-              <code className="text-[#00d9ff]">~/.grove/config.toml</code>. Set{' '}
-              <code className="text-[#00d9ff]">worktree_root</code> to your repos folder and you're done.
+              <code className="text-[#00d9ff]">~/.grove/config.toml</code>, and{' '}
+              <code className="text-[#00d9ff]">t</code> opens a settings screen for all of it. Run Grove inside a Herdr pane to start workflows.
             </p>
           </div>
         </motion.div>
