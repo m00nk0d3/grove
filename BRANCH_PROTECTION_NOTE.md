@@ -1,70 +1,35 @@
-﻿# Branch Protection Status
+# Branch Protection
 
-## ✅ BRANCH PROTECTION ACTIVE
+The rules `main` is meant to be protected by. Branch protection is configured
+in the GitHub web UI (Repository Settings → Branches → rule for `main`), so
+this note records the intended rules; the settings page is the source of
+truth for what is actually enforced.
 
-The GitHub repository `m00nk0d3/grove` is now **public** with **branch protection fully configured**.
-
-### Active Configuration
-```
-✅ Repository visibility: Public
-✅ Branch protection: Enabled on main
-✅ PR requirement: 1 approval (can be self-review)
-✅ Status checks: copilot-setup-steps must pass
-✅ Stale reviews: Auto-dismissed on new commits
-✅ Auto-merge: Enabled
-✅ Delete on merge: Enabled
-✅ Up-to-date requirement: Enabled
-```
-
-## Recommended Options (If Reverting to Private)
-
-If you change back to private, you would need GitHub Pro. Options at that time:
-- Upgrade to GitHub Pro ($4/month) - Full branch protection on private repos
-- Keep public - Free branch protection continues
-
-## Branch Protection Rules (When Available)
-
-When GitHub Pro is enabled, configure these settings:
+## Rules for `main`
 
 ```
-Repository Settings → Branches → Add rule for "main"
-
-Required settings:
 ✓ Require a pull request before merging
-  ├─ Required number of approvals: 1 (solo dev can self-review)
-  ├─ Dismiss stale pull request approvals when new commits pushed
-  └─ Require review from code owners (optional)
+  ├─ Required approvals: 1 (a solo maintainer can self-review)
+  └─ Dismiss stale approvals when new commits are pushed
 
 ✓ Require status checks to pass before merging
-  └─ Status checks required: copilot-setup-steps
+  ├─ Run Tests                  (.github/workflows/ci-tests.yml: make test, make lint)
+  └─ Validate PR Description    (.github/workflows/ci-pr-check.yml)
 
+✓ Require branches to be up to date before merging
 ✓ Include administrators
-  └─ Allow force pushes: No
+  ├─ Allow force pushes: No
   └─ Allow deletions: No
 
-✓ Automatically delete branch on merge
-✓ Require branches to be up to date before merging
+✓ Automatically delete head branches after merge
 ```
 
-## Current Workflow
+The status check names are the job names in those workflows. A required check
+that no workflow produces never reports, and blocks every pull request, so
+update this rule whenever a job is renamed or removed.
 
-Until branch protection is enabled, the development workflow is documented in `.github/CONTRIBUTING.md`:
+## See also
 
-1. ✅ Feature branch: `git checkout -b feature/issue-XX`
-2. ✅ TDD cycle: RED → GREEN → REFACTOR
-3. ✅ Status check: Push to feature branch
-4. ✅ PR review: Self-review in GitHub PR
-5. ✅ Merge: When ready
-
-**The Copilot setup workflow must pass before merging to main** (manual enforcement via PR review).
-
-## Next Steps
-
-1. **Immediate**: Use PR workflow from CONTRIBUTING.md (documentation-based enforcement)
-2. **Soon**: Decide between Pro upgrade or public repo
-3. **Later**: Configure branch protection rules in GitHub web UI
-
-## See Also
-- `.github/CONTRIBUTING.md` - Development workflow guide
-- `docs/PLAN.md` - Project architecture and 29 phase-based issues
-- `.copilot/README.md` - Copilot cloud agent integration
+- [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) — branches, commits,
+  tests, and pull requests
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — the release procedure

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Documentation brought up to date** — the README, runbook, Sandcastle JSON
+  contract, runtime README, contributing guide, and website described the
+  product as it was in May: keys that no longer exist (`Ctrl+N`, lock, prune,
+  the agent launchers), config keys that did nothing, an agent that was
+  "always `pi`", and no mission control, `address`, reports, or Herdr
+  configuration. They now describe the current behaviour, the historical
+  design records say which parts were built, and the contributing guide
+  describes this project rather than an earlier one.
+
 - **The mission inspector shows a workflow's reports** — a new Reports tab
   (`5`) shows what the run wrote about itself: the implementation report and
   review verdict of an implementation run, each reviewed head's review of a

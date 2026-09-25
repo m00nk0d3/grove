@@ -1,5 +1,30 @@
 # Grove Mission Control Implementation Plan
 
+> **Historical record.** This is the plan the mission-control work was built
+> from, kept as it was written in September 2026. It is not a description of
+> the current product: for that, see the [README](../README.md), the
+> [runbook](./RUNBOOK.md), and the
+> [Sandcastle JSON contract](./SANDCASTLE_JSON_CONTRACT.md).
+>
+> Where the build departed from the plan:
+>
+> - **The default agent is OpenCode, not Pi**, and it is configurable
+>   (`sandcastle.default_agent`: `opencode`, `pi`, or `claude`).
+> - **Sandcastle is Grove's own runtime** (`runtime/sandcastle`, the
+>   `grove-sandcastle` command), not an external tool, and it gained the
+>   `address` workflow.
+> - **Stopping, removing, and retrying runs were built**, although this plan
+>   lists them as non-goals.
+>
+> | Phase | Status |
+> | --- | --- |
+> | 0–8: boundary, domain model, state builder, JSON contract, Sandcastle and Herdr adapters, runtime references, polling, dashboard | Done |
+> | 9: drill-down dashboards | Partly: a workflow inspector (`v`) with Overview, Steps, Metrics, Implementation, and Reports tabs; no worktree, agent, or issue drill-downs |
+> | 10–11: starting workflows, Herdr pane jumps and worktrees | Done |
+> | 12: persisting integration references | Not built |
+> | 13: fuzzy finder search of workflows, agents, panes, and work items | Not built |
+> | 14–16: visual components, configuration, degraded-state UX | Done |
+
 This plan turns [ADR-0001: Grove Mission Control with Herdr and Sandcastle](./ADR-0001-grove-mission-control-herdr-sandcastle.md) into an implementation roadmap. The ADR is the source of truth for ownership boundaries.
 
 ## Goal
