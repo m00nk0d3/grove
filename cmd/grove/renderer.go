@@ -2212,8 +2212,8 @@ func kindBadge(k domain.ResultKind) string {
 		return "file"
 	case domain.KindBranch:
 		return "branch"
-	case domain.KindAgent:
-		return "agent"
+	case domain.KindWorkflow:
+		return "workflow"
 	case domain.KindCommit:
 		return "commit"
 	default:

@@ -43,10 +43,26 @@ const checks = [
 ];
 
 test("parseCiArgs accepts exactly one PR number", () => {
-  assert.equal(parseCiArgs(["42"]), "42");
+  assert.deepEqual(parseCiArgs(["42"]), { prNumber: "42", resume: false });
   assert.throws(() => parseCiArgs([]), /Usage: ci/);
   assert.throws(() => parseCiArgs(["owner/repo", "42"]), /Usage: ci/);
   assert.throws(() => parseCiArgs(["../42"]), /Usage: ci/);
+});
+
+// The dirty-worktree refusal tells the user to rerun with --continue, so ci
+// has to accept it, before or after the number.
+test("parseCiArgs accepts --continue to resume an earlier run", () => {
+  assert.deepEqual(parseCiArgs(["42", "--continue"]), { prNumber: "42", resume: true });
+  assert.deepEqual(parseCiArgs(["--continue", "42"]), { prNumber: "42", resume: true });
+  assert.throws(() => parseCiArgs(["--continue"]), /Usage: ci <pr_number> \[--continue\]/);
+});
+
+test("a resumed CI prompt tells the agent to build on the earlier changes", () => {
+  const fresh = buildCiFixPrompt("persona", pullRequest, [checks[0]], "/tmp/failures.md");
+  const resumed = buildCiFixPrompt("persona", pullRequest, [checks[0]], "/tmp/failures.md", true);
+  assert.doesNotMatch(fresh, /Work already in progress/);
+  assert.match(resumed, /Work already in progress/);
+  assert.match(resumed, /git diff/);
 });
 
 test("validateFixablePullRequest rejects merged and fork PRs", () => {

@@ -1790,13 +1790,13 @@ test("a same-repo pull request is not mistaken for a fork", () => {
     baseRefName: "main",
     isCrossRepository: false,
     state: "OPEN",
-    headRepository: { name: "OPSupervisor", nameWithOwner: "" },
-    headRepositoryOwner: { login: "TP-Software-Development" },
+    headRepository: { name: "widgets", nameWithOwner: "" },
+    headRepositoryOwner: { login: "acme" },
   };
 
-  assert.equal(headRepositoryOf(sameRepo), "TP-Software-Development/OPSupervisor");
+  assert.equal(headRepositoryOf(sameRepo), "acme/widgets");
   assert.doesNotThrow(() =>
-    validateFixablePullRequest(sameRepo, "TP-Software-Development/OPSupervisor", "address"),
+    validateFixablePullRequest(sameRepo, "acme/widgets", "address"),
   );
 
   // A real fork must still be refused, by either signal.
@@ -1804,7 +1804,7 @@ test("a same-repo pull request is not mistaken for a fork", () => {
     () =>
       validateFixablePullRequest(
         { ...sameRepo, isCrossRepository: true },
-        "TP-Software-Development/OPSupervisor",
+        "acme/widgets",
       ),
     /comes from a fork/,
   );
@@ -1812,7 +1812,7 @@ test("a same-repo pull request is not mistaken for a fork", () => {
     () =>
       validateFixablePullRequest(
         { ...sameRepo, headRepositoryOwner: { login: "someone-else" } },
-        "TP-Software-Development/OPSupervisor",
+        "acme/widgets",
       ),
     /comes from a fork/,
   );
@@ -1821,7 +1821,7 @@ test("a same-repo pull request is not mistaken for a fork", () => {
   assert.doesNotThrow(() =>
     validateFixablePullRequest(
       { ...sameRepo, headRepository: null, headRepositoryOwner: null },
-      "TP-Software-Development/OPSupervisor",
+      "acme/widgets",
     ),
   );
 
@@ -1829,7 +1829,7 @@ test("a same-repo pull request is not mistaken for a fork", () => {
     () =>
       validateFixablePullRequest(
         { ...sameRepo, state: "CLOSED" },
-        "TP-Software-Development/OPSupervisor",
+        "acme/widgets",
       ),
     /is closed/,
   );

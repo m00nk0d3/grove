@@ -332,6 +332,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`ci --continue` works** — when a pull request's worktree held uncommitted
+  changes, `ci` refused and said to rerun with `--continue`, then rejected the
+  flag. It now accepts it, like `address`: the run continues in the worktree,
+  and the agent is told to build on the earlier changes rather than start over.
+- **The fuzzy finder searches workflow runs** — its agent-history source read
+  a table left from the removed agent launchers that nothing wrote to, so it
+  was always empty and selecting a result did nothing. It is replaced by the
+  workflow runs Grove already tracks, finished ones included; selecting one
+  opens it in the mission inspector, with its reports.
+- **Settings that did nothing are removed** — `herdr.binary` and
+  `sandcastle.poll_interval_seconds` were never read. `herdr.poll_interval_seconds`
+  sets the interval for both integrations. Existing config files that still
+  contain the removed keys load as before.
+- **The Sandcastle client defaults to `grove-sandcastle`**, the command the
+  installers provide, instead of `sandcastle`.
+- **The repository has a LICENSE file** — the README, website, and in-app help
+  said MIT, but the license text was missing. The committed `bin/grove` build
+  and the unused `demo/nexus.gif` are removed, and `bin/` is ignored.
 - **Three settings now do what they say** — `github.auto_sync`,
   `worktrees.base_branch`, and `worktrees.worktree_root` were read by nothing.
   - **Auto sync** turns the background GitHub refresh on or off; off, GitHub

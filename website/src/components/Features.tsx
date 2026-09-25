@@ -8,7 +8,7 @@ const FEATURES = [
   { icon: '🌿', title: 'Worktree management', desc: 'Create a worktree from an issue or PR, open it or a separate shell, delete it with its local branch, and clean up merged work.' },
   { icon: '🔄', title: 'GitHub sync', desc: 'PRs, issues, reviews, checks, and merge state through the gh CLI, with the PRs that need you flagged first.' },
   { icon: '🌳', title: 'Issue hierarchy', desc: 'Parent and sub-issues as a tree; a sub-issue branches from its parent so its PR targets the right branch.' },
-  { icon: '🔍', title: 'Global fuzzy finder', desc: 'Press / or Ctrl+F to search worktrees, issues, PRs, files, branches, and commits as you type.' },
+  { icon: '🔍', title: 'Global fuzzy finder', desc: 'Press / or Ctrl+F to search worktrees, issues, PRs, files, branches, commits, and past workflow runs as you type.' },
   { icon: '⚙️', title: 'Settings screen', desc: 'Press t for every option in one fullscreen screen, with its config key and what it does. Changes apply immediately.' },
   { icon: '🎨', title: '23 built-in themes', desc: '16 dark and 7 light themes, from Digital Noir, Dracula and Nord to GitHub Light and Solarized Light, picked from a live-previewed list.' },
   { icon: '🖱️', title: 'Keyboard and mouse', desc: 'Everything has a key, and the rail, rows, tabs, and actions are clickable too. Press f1 or ? for help.' },

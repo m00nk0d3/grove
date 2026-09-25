@@ -351,7 +351,7 @@ const tipsContent = `COMMON WORKFLOWS
 4. Search everything with the fuzzy finder
    Press / or Ctrl+F to open the fuzzy finder overlay.
    Start typing to instantly filter worktrees, issues, PRs,
-   files, branches, and agent history.
+   files, branches, commits, and workflow runs.
 
 5. Review or repair a PR
    In the PRs view, select a PR and focus the Actions panel.

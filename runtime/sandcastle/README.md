@@ -8,7 +8,7 @@ Grove's workflow runtime. It provides the workflow commands and
 | `imp <issue>` (alias `agent-flow`) | Implement an issue: plan, write tests, implement, verify, run the domain reviews, document, open the pull request, and review it. `--lean` / `--full` override the workflow chosen for the issue, and `--refresh-profile` re-establishes the project profile |
 | `review <pr>` | Review a pull request and post the review |
 | `address <pr>` | Make the changes that review feedback on your own pull request asks for; `--continue` resumes a stopped run |
-| `ci <pr>` | Repair a pull request's failing checks |
+| `ci <pr>` | Repair a pull request's failing checks; `--continue` resumes a stopped run |
 | `resolve <pr>` | Resolve a pull request's merge conflicts |
 | `clean` | Remove merged worktrees and branches |
 | `grove-sandcastle` | `status`, `workflow start`, `workflow remove`, `workflow list`, `workflow get` |

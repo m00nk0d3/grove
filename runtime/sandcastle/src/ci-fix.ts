@@ -53,10 +53,28 @@ export interface PullRequestCheck {
 
 const NUMBER_PATTERN = /^[1-9][0-9]*$/;
 
-export function parseCiArgs(args: string[]): string {
-  if (args.length === 1 && NUMBER_PATTERN.test(args[0])) return args[0];
-  throw new Error("Usage: ci <pr_number>");
+export interface CiArgs {
+  prNumber: string;
+  // resume continues an earlier run whose changes are still uncommitted in the
+  // pull request's worktree, instead of refusing to touch a dirty worktree.
+  resume: boolean;
 }
+
+export function parseCiArgs(args: string[]): CiArgs {
+  const resume = args.includes("--continue");
+  const rest = args.filter((arg) => arg !== "--continue");
+  if (rest.length === 1 && NUMBER_PATTERN.test(rest[0])) return { prNumber: rest[0], resume };
+  throw new Error("Usage: ci <pr_number> [--continue]");
+}
+
+// On a resume the worktree already holds the earlier run's edits; the agent has
+// to know, or it starts over on top of them.
+const RESUME_NOTE = `
+Work already in progress:
+- An earlier run of this command left uncommitted changes in this worktree.
+- Inspect 'git diff' first and treat that work as the starting point: keep what is correct, finish what is incomplete, and fix whatever still fails.
+- Do not start again from scratch, and do not revert it wholesale without saying why.
+`;
 
 export function validateFixablePullRequest(
   metadata: PullRequestMetadata,
@@ -123,6 +141,7 @@ export function buildCiFixPrompt(
   metadata: PullRequestMetadata,
   failedChecks: PullRequestCheck[],
   diagnosticsPath: string,
+  resume = false,
 ): string {
   return `
 ${persona}
@@ -155,7 +174,7 @@ Boundaries:
 
 Completion criteria:
 - Every actionable failed check has a root-cause fix and relevant local validation passes.
-`;
+${resume ? RESUME_NOTE : ""}`;
 }
 
 function readPullRequest(repo: string, prNumber: string): PullRequestMetadata {
@@ -467,7 +486,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   if (process.env.HERDR_ENV !== "1") {
     throw new Error("ci must be run from a Herdr-managed pane.");
   }
-  const prNumber = parseCiArgs(args);
+  const { prNumber, resume } = parseCiArgs(args);
   const repoRoot = runCommand("git", ["rev-parse", "--show-toplevel"]);
   const repo = detectRepo(repoRoot);
   if (!repo) throw new Error("Unable to identify this checkout's GitHub repository.");
@@ -481,7 +500,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
 
   runCommand("git", ["fetch", "--prune", "origin"], { cwd: repoRoot });
-  const targetDir = prepareWorktree(repoRoot, metadata);
+  const targetDir = prepareWorktree(repoRoot, metadata, "ci", resume);
   const originalHead = runCommand("git", ["rev-parse", "HEAD"], { cwd: targetDir });
   const diagnosticsPath = collectDiagnostics(
     repo,
@@ -493,7 +512,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   console.log(`\n# 🔧 CI Repair for ${repo}#${prNumber}\n`);
   console.log(`- **PR:** ${metadata.title}`);
   console.log(`- **Failed checks:** ${failedChecks.length}`);
-  console.log(`- **Worktree:** ${targetDir}\n`);
+  console.log(`- **Worktree:** ${targetDir}`);
+  if (resume) {
+    console.log("- ↻ **Continuing** from an earlier run: the worktree already holds its changes.");
+  }
+  console.log();
   for (const check of failedChecks) {
     console.log(`- ❌ ${check.workflow ? `${check.workflow} / ` : ""}${check.name}`);
   }
@@ -514,7 +537,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
 
   runSpecialistInPane({
     role: "ci-fixer",
-    promptText: buildCiFixPrompt(persona, metadata, failedChecks, diagnosticsPath),
+    promptText: buildCiFixPrompt(persona, metadata, failedChecks, diagnosticsPath, resume),
     targetDir,
     issueOrPrNumber: prNumber,
   });

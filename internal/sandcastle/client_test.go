@@ -503,12 +503,17 @@ func TestNormalizeWorkflow_FallbackAgent(t *testing.T) {
 	assert.Equal(t, "queued", wf.Status)
 }
 
-func TestNewClient_Defaults(t *testing.T) {
-	runner := newFakeRunner()
-	client := NewClient(ClientConfig{}, runner)
+func TestNewClient_DefaultsToTheGroveSandcastleCommand(t *testing.T) {
+	var looked string
+	client := NewClient(ClientConfig{LookPath: func(name string) (string, error) {
+		looked = name
+		return name, nil
+	}}, newFakeRunner())
 
 	info := client.Available(context.Background())
-	_ = info
+
+	assert.True(t, info.Available)
+	assert.Equal(t, "grove-sandcastle", looked, "the installers provide grove-sandcastle, not sandcastle")
 }
 
 func TestNormalizeWorkflowStatus_KnownValues(t *testing.T) {

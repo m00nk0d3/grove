@@ -33,17 +33,16 @@ type AppearanceConfig struct {
 }
 
 type HerdrConfig struct {
-	Enabled             bool   `toml:"enabled"`
-	Binary              string `toml:"binary"`
-	PollIntervalSeconds int    `toml:"poll_interval_seconds"`
-	PreferWorktreeAPI   bool   `toml:"prefer_worktree_api"`
+	Enabled bool `toml:"enabled"`
+	// PollIntervalSeconds is how often Herdr and Sandcastle status are checked.
+	PollIntervalSeconds int  `toml:"poll_interval_seconds"`
+	PreferWorktreeAPI   bool `toml:"prefer_worktree_api"`
 }
 
 type SandcastleConfig struct {
-	Enabled             bool   `toml:"enabled"`
-	Binary              string `toml:"binary"`
-	PollIntervalSeconds int    `toml:"poll_interval_seconds"`
-	DefaultAgent        string `toml:"default_agent"`
+	Enabled      bool   `toml:"enabled"`
+	Binary       string `toml:"binary"`
+	DefaultAgent string `toml:"default_agent"`
 }
 
 type WorktreesConfig struct {
@@ -58,15 +57,13 @@ func DefaultConfig() *Config {
 		GitHub:     GitHubConfig{AutoSync: true, SyncIntervalMinutes: 5},
 		Herdr: HerdrConfig{
 			Enabled:             true,
-			Binary:              "herdr",
 			PollIntervalSeconds: 5,
 			PreferWorktreeAPI:   true,
 		},
 		Sandcastle: SandcastleConfig{
-			Enabled:             true,
-			Binary:              "grove-sandcastle",
-			PollIntervalSeconds: 5,
-			DefaultAgent:        "opencode",
+			Enabled:      true,
+			Binary:       "grove-sandcastle",
+			DefaultAgent: "opencode",
 		},
 	}
 }

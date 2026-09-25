@@ -36,7 +36,7 @@ Modern software development means juggling several things at once: features in f
 - **GitHub sync** — pull requests, issues, reviews, comments, checks, and merge state fetched through the `gh` CLI, refreshed in the background when auto sync is on
 - **Team-aware PR attention** — flags your pull requests with requested changes, unresolved threads, failing checks, or conflicts, and teammates' pull requests waiting on your review
 - **Issue hierarchy** — parent and sub-issues shown as a tree; a sub-issue's worktree can branch from its parent's branch
-- **Global fuzzy finder** — `/` or `Ctrl+F` searches worktrees, issues, pull requests, files, branches, and commits as you type
+- **Global fuzzy finder** — `/` or `Ctrl+F` searches worktrees, issues, pull requests, files, branches, commits, and workflow runs as you type
 - **Settings screen** — `t` opens a fullscreen settings screen with every option, its config key, and a description
 - **23 built-in themes** — 16 dark and 7 light, picked from a list with a live preview
 - **Mouse support** — click the navigation rail, rows, tabs, and actions; scroll with the wheel
@@ -238,8 +238,8 @@ clean                    # remove merged worktrees and branches
 ```
 
 `imp` picks the lean or full workflow from the issue itself; `--lean` and
-`--full` override that choice. `address --continue` resumes a run that stopped
-with its changes still in the worktree.
+`--full` override that choice. `address --continue` and `ci --continue` resume a
+run that stopped with its changes still in the worktree.
 
 ### Address review feedback
 
@@ -397,6 +397,7 @@ Press `/` or `Ctrl+F` anywhere to search, as you type, across:
 | Files | Open the file in `$EDITOR` |
 | Branches | Offer to check the branch out into a worktree |
 | Commits | Open the commit on GitHub |
+| Workflow runs, finished ones included | Open the run in the mission inspector, with its reports |
 
 `Esc` closes the finder without acting.
 
@@ -507,4 +508,4 @@ runtime, and the branch and commit conventions.
 
 ## License
 
-Grove is released under the MIT License.
+Grove is released under the [MIT License](LICENSE).

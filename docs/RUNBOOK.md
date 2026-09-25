@@ -143,11 +143,12 @@ resumes after its last completed stage from its checkpoint in
 `<common-git-dir>/agent-flow/issue-<N>.json`. Delete that checkpoint only to
 start the issue over from the beginning.
 
-### `address` refuses to touch a worktree with uncommitted changes
+### `address` or `ci` refuses to touch a worktree with uncommitted changes
 
 The pull request's worktree has changes, from your own work or an earlier
 failed run. Commit or stash your own work; if the changes are from an earlier
-`address` run, rerun it with `address <pr> --continue`.
+run of the same command, rerun it with `address <pr> --continue` or
+`ci <pr> --continue`.
 
 ### The header shows *Sandcastle: unavailable*
 

@@ -1210,18 +1210,18 @@ func TestPRWorktreePath(t *testing.T) {
 	}{
 		{
 			name:     "simple branch no slashes",
-			repoPath: filepath.Join("/repos", "nexus"),
+			repoPath: filepath.Join("/repos", "grove"),
 			branch:   "main",
-			wantPath: filepath.Join("/repos", "worktrees", "nexus", "main"),
+			wantPath: filepath.Join("/repos", "worktrees", "grove", "main"),
 		},
 		{
 			name:     "branch with slashes converted to dashes",
-			repoPath: filepath.Join("/repos", "nexus"),
+			repoPath: filepath.Join("/repos", "grove"),
 			branch:   "feat/issue-42-my-feature",
-			wantPath: filepath.Join("/repos", "worktrees", "nexus", "feat-issue-42-my-feature"),
+			wantPath: filepath.Join("/repos", "worktrees", "grove", "feat-issue-42-my-feature"),
 		},
 		{
-			name:     "different repo does not collide with nexus",
+			name:     "different repo does not collide with grove",
 			repoPath: filepath.Join("/repos", "nova"),
 			branch:   "feat/issue-42-my-feature",
 			wantPath: filepath.Join("/repos", "worktrees", "nova", "feat-issue-42-my-feature"),
@@ -1240,13 +1240,13 @@ func TestPRWorktreePath(t *testing.T) {
 func TestModel_Enter_InViewPRs_OpensModal(t *testing.T) {
 	m := NewModel()
 	m.view = viewPRs
-	m.RepoPath = "/repos/nexus"
+	m.RepoPath = "/repos/grove"
 	m.prs = []domain.PullRequest{
 		{Number: 1, Title: "My PR", Branch: "feat/issue-1-my-pr"},
 	}
 	m.selectedPRIdx = 0
 	m.Worktrees = []domain.Worktree{
-		{Path: "/repos/nexus", Branch: "main"},
+		{Path: "/repos/grove", Branch: "main"},
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1262,13 +1262,13 @@ func TestModel_Enter_InViewPRs_OpensModal(t *testing.T) {
 func TestModel_Enter_InViewPRs_WorktreeExists_SetsError(t *testing.T) {
 	m := NewModel()
 	m.view = viewPRs
-	m.RepoPath = "/repos/nexus"
+	m.RepoPath = "/repos/grove"
 	m.prs = []domain.PullRequest{
 		{Number: 1, Title: "My PR", Branch: "feat/issue-1-my-pr"},
 	}
 	m.selectedPRIdx = 0
 	m.Worktrees = []domain.Worktree{
-		{Path: "/repos/nexus", Branch: "main"},
+		{Path: "/repos/grove", Branch: "main"},
 		{Path: "/repos/worktrees/feat-issue-1-my-pr", Branch: "feat/issue-1-my-pr"},
 	}
 
@@ -1299,7 +1299,7 @@ func TestModel_Enter_InViewPRs_EmptyList_NoOp(t *testing.T) {
 func TestModel_Enter_InViewIssues_OpensCreateModalForSelectedIssue(t *testing.T) {
 	m := NewModel()
 	m.view = viewIssues
-	m.RepoPath = "/repos/nexus"
+	m.RepoPath = "/repos/grove"
 	m.issues = []domain.Issue{
 		{Number: 1, Title: "First issue"},
 		{Number: 2, Title: "Second issue"},
@@ -1371,7 +1371,7 @@ func TestModel_Enter_InViewWorktrees_SpawnsSession(t *testing.T) {
 	m := NewModel()
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
-		{Path: "/repos/nexus", Branch: "main"},
+		{Path: "/repos/grove", Branch: "main"},
 	}
 	m.selectedIdx = 0
 
@@ -2040,7 +2040,7 @@ func TestModel_NonFailedDashboardWorkflowHasNoRetryAction(t *testing.T) {
 
 func TestModel_Enter_InHerdr_OpensAndFocusesHerdrWorktree(t *testing.T) {
 	navigator := &fakeHerdrNavigator{
-		pane: &domain.PaneRef{PaneID: "w1:p2", CWD: "/repos/nexus"},
+		pane: &domain.PaneRef{PaneID: "w1:p2", CWD: "/repos/grove"},
 	}
 	m := NewModel()
 	m.view = viewWorktrees
@@ -2048,7 +2048,7 @@ func TestModel_Enter_InHerdr_OpensAndFocusesHerdrWorktree(t *testing.T) {
 	m.Config.Herdr.Enabled = true
 	m.Config.Herdr.PreferWorktreeAPI = true
 	m.herdrNavigator = navigator
-	m.Worktrees = []domain.Worktree{{Path: "/repos/nexus", Branch: "main"}}
+	m.Worktrees = []domain.Worktree{{Path: "/repos/grove", Branch: "main"}}
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.NotNil(t, cmd)
@@ -2056,7 +2056,7 @@ func TestModel_Enter_InHerdr_OpensAndFocusesHerdrWorktree(t *testing.T) {
 	msg, ok := cmd().(herdrWorktreeOpenedMsg)
 	require.True(t, ok)
 	require.NoError(t, msg.err)
-	assert.Equal(t, "/repos/nexus", navigator.openedPath)
+	assert.Equal(t, "/repos/grove", navigator.openedPath)
 	assert.Equal(t, domain.RuntimeHerdr, msg.session.Runtime)
 	require.NotNil(t, msg.session.PaneID)
 	assert.Equal(t, "w1:p2", *msg.session.PaneID)
@@ -2064,21 +2064,21 @@ func TestModel_Enter_InHerdr_OpensAndFocusesHerdrWorktree(t *testing.T) {
 
 func TestFocusSessionCmd_HerdrSessionReopensFocusedWorktree(t *testing.T) {
 	navigator := &fakeHerdrNavigator{
-		pane: &domain.PaneRef{PaneID: "w1:p9", CWD: "/repos/nexus"},
+		pane: &domain.PaneRef{PaneID: "w1:p9", CWD: "/repos/grove"},
 	}
 	m := NewModel()
 	m.herdrNavigator = navigator
 	paneID := "w1:p9"
 
 	msg, ok := m.focusSessionCmd(domain.Session{
-		WorktreePath: "/repos/nexus",
+		WorktreePath: "/repos/grove",
 		Runtime:      domain.RuntimeHerdr,
 		PaneID:       &paneID,
 	})().(sessionFocusedMsg)
 
 	require.True(t, ok)
 	require.NoError(t, msg.err)
-	assert.Equal(t, "/repos/nexus", navigator.openedPath)
+	assert.Equal(t, "/repos/grove", navigator.openedPath)
 }
 
 // ---------------------------------------------------------------------------
@@ -2252,10 +2252,10 @@ func TestBuildNewTerminalCmd(t *testing.T) {
 		},
 		{
 			name:     "windows quotes path containing spaces",
-			path:     `C:\My Projects\nexus`,
+			path:     `C:\My Projects\grove`,
 			goos:     "windows",
 			wantExe:  "cmd",
-			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d "C:\My Projects\nexus"`},
+			wantArgs: []string{"cmd", "/C", "start", "cmd", "/K", `cd /d "C:\My Projects\grove"`},
 		},
 		{
 			name:     "darwin uses open -a Terminal",
@@ -2375,7 +2375,7 @@ func TestModel_EnterKeySpawnsSession(t *testing.T) {
 	m := NewModel()
 	m.view = viewWorktrees
 	m.Worktrees = []domain.Worktree{
-		{Path: "/repos/nexus", Branch: "main"},
+		{Path: "/repos/grove", Branch: "main"},
 	}
 	m.selectedIdx = 0
 
@@ -2703,7 +2703,7 @@ func TestBuildNewTabWithCmdCmd(t *testing.T) {
 		{
 			name:            "kitty remote-control with pidFile writes PID before shell",
 			path:            "/repo/wt",
-			pidFile:         "/tmp/nexus.pid",
+			pidFile:         "/tmp/grove.pid",
 			goos:            "linux",
 			kittyWinID:      "42",
 			wantOK:          true,
@@ -3299,7 +3299,7 @@ func TestCheckSessionsCmd_EnrichMixedDB(t *testing.T) {
 // TestPollPIDFile_HappyPath verifies that pollPIDFile returns the PID when
 // the file already contains a valid integer before the first poll.
 func TestPollPIDFile_HappyPath(t *testing.T) {
-	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	f, err := os.CreateTemp("", "grove-pid-test-*.pid")
 	require.NoError(t, err)
 	t.Cleanup(func() { os.Remove(f.Name()) })
 
@@ -3314,7 +3314,7 @@ func TestPollPIDFile_HappyPath(t *testing.T) {
 // TestPollPIDFile_DelayedWrite verifies that pollPIDFile waits and returns
 // the PID when the file is written after a short delay.
 func TestPollPIDFile_DelayedWrite(t *testing.T) {
-	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	f, err := os.CreateTemp("", "grove-pid-test-*.pid")
 	require.NoError(t, err)
 	pidPath := f.Name()
 	require.NoError(t, f.Close())
@@ -3333,14 +3333,14 @@ func TestPollPIDFile_DelayedWrite(t *testing.T) {
 // TestPollPIDFile_Timeout verifies that pollPIDFile returns 0 when the
 // file never appears within the timeout.
 func TestPollPIDFile_Timeout(t *testing.T) {
-	pid := pollPIDFile(os.TempDir()+"/nexus-pid-test-nonexistent.pid", 200*time.Millisecond)
+	pid := pollPIDFile(os.TempDir()+"/grove-pid-test-nonexistent.pid", 200*time.Millisecond)
 	assert.Equal(t, 0, pid, "should return 0 on timeout")
 }
 
 // TestPollPIDFile_InvalidContent verifies that pollPIDFile returns 0 when
 // the file exists but does not contain a valid positive integer.
 func TestPollPIDFile_InvalidContent(t *testing.T) {
-	f, err := os.CreateTemp("", "nexus-pid-test-*.pid")
+	f, err := os.CreateTemp("", "grove-pid-test-*.pid")
 	require.NoError(t, err)
 	t.Cleanup(func() { os.Remove(f.Name()) })
 
@@ -3589,7 +3589,7 @@ func TestModel_Enter_PR_JumpsToExistingSession(t *testing.T) {
 			m.selectedPRIdx = 0
 			m.Worktrees = tt.worktrees
 			m.sessions = tt.sessions
-			m.RepoPath = "/repo/nexus"
+			m.RepoPath = "/repo/grove"
 
 			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			result, ok := updated.(*Model)
@@ -3911,17 +3911,41 @@ func TestFuzzyConfirmSelection_BranchSelection_OpensModal(t *testing.T) {
 	assert.NotNil(t, m.activeModal, "branch selection should open a BranchCheckoutModal")
 }
 
-func TestFuzzyConfirmSelection_AgentSelection_IsNoOp(t *testing.T) {
+func TestFuzzyConfirmSelection_WorkflowSelection_OpensMissionInspector(t *testing.T) {
 	m := NewModel()
+	run := domain.WorkflowRunRef{RunID: "run_42", Kind: "imp", Title: "Implement issue #42", Status: domain.WorkflowSucceeded}
 	m.fuzzyResults = []domain.SearchResult{
-		{Kind: domain.KindAgent, Label: "fix the null pointer", Icon: "🤖", Payload: data.AgentRun{AgentName: "copilot", Prompt: "fix the null pointer"}},
+		{Kind: domain.KindWorkflow, Label: "Implement issue #42", Icon: "⚡", Payload: run},
 	}
 	m.fuzzySelIdx = 0
 
 	cmd := m.fuzzyConfirmSelection()
 
-	assert.Nil(t, cmd, "agent selection is a no-op")
-	assert.Empty(t, m.statusMsg, "agent selection should not set statusMsg")
+	assert.Nil(t, cmd)
+	inspector, ok := m.activeModal.(*modal.MissionModal)
+	require.True(t, ok, "a workflow result opens the mission inspector")
+	assert.Equal(t, "run_42", inspector.RunID())
+}
+
+func TestBuildSearchIndex_IncludesWorkflowRuns(t *testing.T) {
+	m := NewModel()
+	m.RepoPath = t.TempDir()
+	m.missionState = &domain.MissionControlState{WorkflowRuns: []domain.WorkflowRunRef{
+		{RunID: "run_7", Kind: "review", Title: "Review pull request #7", Status: domain.WorkflowSucceeded},
+	}}
+
+	msg, ok := m.buildSearchIndexCmd()().(fuzzyResultsReadyMsg)
+	require.True(t, ok)
+
+	var found *domain.SearchResult
+	for i := range msg.results {
+		if msg.results[i].Kind == domain.KindWorkflow {
+			found = &msg.results[i]
+		}
+	}
+	require.NotNil(t, found, "finished runs are searchable")
+	assert.Equal(t, "Review pull request #7", found.Label)
+	assert.Equal(t, "review succeeded", found.Sub)
 }
 
 func TestFuzzyConfirmSelection_CommitSelection_ReturnsCmd(t *testing.T) {

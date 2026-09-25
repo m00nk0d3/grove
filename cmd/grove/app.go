@@ -680,7 +680,7 @@ type contextActionOption struct {
 	workflowKind string
 }
 
-// Model represents the root Bubbletea model for the Nexus TUI application.
+// Model represents the root Bubbletea model for the Grove TUI application.
 // It manages the list of git worktrees, user interactions, and active modals.
 type Model struct {
 	Worktrees          []domain.Worktree    // List of available git worktrees
@@ -2836,7 +2836,10 @@ func (m *Model) buildSearchIndexCmd() tea.Cmd {
 	prs := make([]domain.PullRequest, len(m.prs))
 	copy(prs, m.prs)
 	repoPath := m.RepoPath
-	db := m.db
+	var workflows []domain.WorkflowRunRef
+	if m.missionState != nil {
+		workflows = append(workflows, m.missionState.WorkflowRuns...)
+	}
 
 	return func() tea.Msg {
 		var (
@@ -2879,6 +2882,17 @@ func (m *Model) buildSearchIndexCmd() tea.Cmd {
 				Sub:     fmt.Sprintf("#%d", pr.Number),
 				Icon:    "🔀",
 				Payload: pr,
+			})
+		}
+		// Workflow runs, finished ones included, so a past run and its
+		// reports can be found by its issue, pull request, or kind.
+		for _, wf := range workflows {
+			cached = append(cached, domain.SearchResult{
+				Kind:    domain.KindWorkflow,
+				Label:   workflowLabel(wf),
+				Sub:     strings.TrimSpace(wf.Kind + " " + strings.ToLower(defaultStatus(wf.Status))),
+				Icon:    "⚡",
+				Payload: wf,
 			})
 		}
 		appendItems(cached)
@@ -2931,35 +2945,6 @@ func (m *Model) buildSearchIndexCmd() tea.Cmd {
 					Sub:     "",
 					Icon:    "🌿",
 					Payload: b,
-				})
-			}
-			appendItems(items)
-		}()
-
-		// agent history
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if db == nil {
-				return
-			}
-			history, err := data.GetAgentHistory(db)
-			if err != nil {
-				slog.Debug("buildSearchIndexCmd: get agent history failed", "err", err)
-				return
-			}
-			var items []domain.SearchResult
-			for _, h := range history {
-				label := h.Prompt
-				if label == "" {
-					label = h.AgentName
-				}
-				items = append(items, domain.SearchResult{
-					Kind:    domain.KindAgent,
-					Label:   label,
-					Sub:     h.AgentName,
-					Icon:    "🤖",
-					Payload: h,
 				})
 			}
 			appendItems(items)
@@ -3559,8 +3544,14 @@ func (m *Model) fuzzyConfirmSelection() tea.Cmd {
 		if hash, ok := result.Payload.(string); ok {
 			return openCommitInBrowserCmd(hash, m.RepoPath)
 		}
-	case domain.KindAgent:
-		// No-op — future: show detail modal.
+	case domain.KindWorkflow:
+		if wf, ok := result.Payload.(domain.WorkflowRunRef); ok {
+			runID := wf.RunID
+			if runID == "" {
+				runID = wf.WorkflowID
+			}
+			m.activeModal = modal.NewMissionModal(wf, agentsForWorkflow(m.missionState, runID))
+		}
 	}
 	return nil
 }
