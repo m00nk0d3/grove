@@ -9,7 +9,21 @@ const THEMES = [
   { name: 'Rosé Pine', id: 'rose-pine', bg: '#191724', accent: '#ebbcba', fg: '#e0def4' },
   { name: 'One Dark', id: 'onedark', bg: '#282c34', accent: '#61afef', fg: '#abb2bf' },
   { name: 'Everforest', id: 'everforest', bg: '#2d353b', accent: '#a7c080', fg: '#d3c6aa' },
+  { name: 'Cyberpunk', id: 'cyberpunk', bg: '#0d0221', accent: '#fcee0a', fg: '#e0e0ff' },
+  { name: "Synthwave '84", id: 'synthwave', bg: '#262335', accent: '#ff7edb', fg: '#f0eff1' },
+  { name: 'Dracula', id: 'dracula', bg: '#282a36', accent: '#bd93f9', fg: '#f8f8f2' },
+  { name: 'Nord', id: 'nord', bg: '#2e3440', accent: '#88c0d0', fg: '#eceff4' },
+  { name: 'Gruvbox', id: 'gruvbox', bg: '#282828', accent: '#fe8019', fg: '#ebdbb2' },
+  { name: 'Solarized Dark', id: 'solarized-dark', bg: '#002b36', accent: '#268bd2', fg: '#93a1a1' },
+  { name: 'Monokai', id: 'monokai', bg: '#272822', accent: '#66d9ef', fg: '#f8f8f2' },
+  { name: 'Ayu Mirage', id: 'ayu-mirage', bg: '#1f2430', accent: '#ffcc66', fg: '#cccac2' },
   { name: 'Light', id: 'light', bg: '#fafafa', accent: '#005cc5', fg: '#24292e' },
+  { name: 'GitHub Light', id: 'github-light', bg: '#ffffff', accent: '#0969da', fg: '#1f2328' },
+  { name: 'Catppuccin Latte', id: 'catppuccin-latte', bg: '#eff1f5', accent: '#8839ef', fg: '#4c4f69' },
+  { name: 'Solarized Light', id: 'solarized-light', bg: '#fdf6e3', accent: '#268bd2', fg: '#073642' },
+  { name: 'Rosé Pine Dawn', id: 'rose-pine-dawn', bg: '#faf4ed', accent: '#907aa9', fg: '#575279' },
+  { name: 'Tokyo Night Day', id: 'tokyonight-day', bg: '#e1e2e7', accent: '#2e7de9', fg: '#3760bf' },
+  { name: 'Gruvbox Light', id: 'gruvbox-light', bg: '#fbf1c7', accent: '#af3a03', fg: '#3c3836' },
 ]
 
 export function Themes() {
@@ -24,10 +38,10 @@ export function Themes() {
           className="mb-14 text-center"
         >
           <p className="mb-3 font-mono text-sm text-[#00d9ff]">// aesthetics</p>
-          <h2 className="text-4xl font-bold tracking-tight">9 built-in themes</h2>
+          <h2 className="text-4xl font-bold tracking-tight">23 built-in themes</h2>
           <p className="mt-4 text-[#4a5568]">
             Press <kbd className="rounded border border-[#1e2a3a] bg-[#0d1117] px-1.5 py-0.5 font-mono text-xs text-[#e2e8f0]">t</kbd> to
-            cycle through themes live, or set one in <code className="font-mono text-xs text-[#00d9ff]">~/.grove/config.toml</code>.
+            open settings and pick a theme from a live-previewed list, or set one in <code className="font-mono text-xs text-[#00d9ff]">~/.grove/config.toml</code>.
           </p>
         </motion.div>
 

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A redesigned settings screen** — `t` opens a fullscreen settings screen
+  with a section rail (Appearance, GitHub, Worktrees, Agents) in place of the
+  small tabbed box. Every setting shows its `config.toml` key and a description,
+  a number that is not a whole number of at least 1 or an empty text value is
+  rejected with the reason instead of being silently ignored, and changes still
+  save as soon as they are made.
+  - **Themes are picked from a list.** The appearance section lists every
+    theme, grouped into dark and light, with its signal colours beside it and a
+    preview of the theme under the cursor drawn in that theme's own colours.
+    Browsing does not change anything; Enter applies the theme.
+  - **An Agents section** sets the default agent (`opencode`, `pi`, or
+    `claude`), switches the Sandcastle runtime and the Herdr integration on or
+    off, and sets the Herdr worktree preference and poll interval.
+- **14 new themes** — Cyberpunk, Synthwave '84, Dracula, Nord, Gruvbox,
+  Solarized Dark, Monokai, and Ayu Mirage, and the light themes GitHub Light,
+  Catppuccin Latte, Solarized Light, Rosé Pine Dawn, Tokyo Night Day, and
+  Gruvbox Light, for 23 in all. Every theme's body text meets a 4.5:1 contrast
+  ratio against its background and panel surface.
+
 - **Claude Code agent backend** — `default_agent = "claude"` launches workflow
   specialists through Claude Code instead of OpenCode or Pi, using Herdr's
   existing `claude` agent kind. Artifact instructions use the native `Write`

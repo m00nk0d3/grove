@@ -530,7 +530,7 @@ func TestModel_T_KeyOpensSettings(t *testing.T) {
 	require.True(t, ok)
 
 	require.NotNil(t, m.activeModal, "T key should open the settings modal")
-	assert.Equal(t, "SETTINGS", m.activeModal.Title())
+	assert.IsType(t, &modal.SettingsModal{}, m.activeModal)
 }
 
 // TestModel_Init_ReturnsSyncCmd verifies that Init() returns a non-nil Cmd,

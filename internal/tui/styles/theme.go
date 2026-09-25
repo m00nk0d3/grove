@@ -7,12 +7,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Themes is the ordered list of available theme names used for cycling.
-var Themes = []string{"digital-noir", "matrix", "light", "everforest", "tokyonight", "catppuccin", "kanagawa", "rose-pine", "onedark"}
-
 // Theme holds the color palette and component styles for a named visual theme.
 type Theme struct {
 	Name    string
+	label   string
+	light   bool
 	accent  string
 	bg      string
 	surface string
@@ -23,119 +22,60 @@ type Theme struct {
 	danger  string
 }
 
+// catalog lists every built-in theme in display order: the default first, the
+// remaining dark themes, then the light ones. Themes and NewTheme both derive
+// from it, so a theme is added in exactly one place.
+var catalog = []Theme{
+	{Name: "digital-noir", label: "Digital Noir", accent: "#00D9FF", bg: "#0a0e27", surface: "#0d1117", fg: "#E2E8F0", muted: "#4A5568", success: "#00FF88", warning: "#FFD700", danger: "#FF4757"},
+	{Name: "matrix", label: "Matrix", accent: "#00FF00", bg: "#000000", surface: "#0a0a0a", fg: "#00FF00", muted: "#006600", success: "#00FF00", warning: "#FFFF00", danger: "#FF0000"},
+	{Name: "cyberpunk", label: "Cyberpunk", accent: "#FCEE0A", bg: "#0d0221", surface: "#140a2e", fg: "#E0E0FF", muted: "#6b5b95", success: "#00FF9F", warning: "#FF9E00", danger: "#FF003C"},
+	{Name: "synthwave", label: "Synthwave '84", accent: "#ff7edb", bg: "#262335", surface: "#1e1a2e", fg: "#f0eff1", muted: "#848bbd", success: "#72f1b8", warning: "#fede5d", danger: "#fe4450"},
+	{Name: "tokyonight", label: "Tokyo Night", accent: "#7aa2f7", bg: "#1a1b26", surface: "#16161e", fg: "#c0caf5", muted: "#565f89", success: "#9ece6a", warning: "#e0af68", danger: "#f7768e"},
+	{Name: "catppuccin", label: "Catppuccin Mocha", accent: "#cba6f7", bg: "#1e1e2e", surface: "#181825", fg: "#cdd6f4", muted: "#6c7086", success: "#a6e3a1", warning: "#fab387", danger: "#f38ba8"},
+	{Name: "dracula", label: "Dracula", accent: "#bd93f9", bg: "#282a36", surface: "#21222c", fg: "#f8f8f2", muted: "#6272a4", success: "#50fa7b", warning: "#f1fa8c", danger: "#ff5555"},
+	{Name: "nord", label: "Nord", accent: "#88c0d0", bg: "#2e3440", surface: "#3b4252", fg: "#eceff4", muted: "#616e88", success: "#a3be8c", warning: "#ebcb8b", danger: "#bf616a"},
+	{Name: "kanagawa", label: "Kanagawa", accent: "#7e9cd8", bg: "#1f1f28", surface: "#16161d", fg: "#dcd7ba", muted: "#727169", success: "#98bb6c", warning: "#e6c384", danger: "#c34043"},
+	{Name: "rose-pine", label: "Rosé Pine", accent: "#c4a7e7", bg: "#191724", surface: "#1f1d2e", fg: "#e0def4", muted: "#6e6a86", success: "#9ccfd8", warning: "#f6c177", danger: "#eb6f92"},
+	{Name: "onedark", label: "One Dark", accent: "#61afef", bg: "#282c34", surface: "#21252b", fg: "#abb2bf", muted: "#5c6370", success: "#98c379", warning: "#e5c07b", danger: "#e06c75"},
+	{Name: "gruvbox", label: "Gruvbox", accent: "#fe8019", bg: "#282828", surface: "#1d2021", fg: "#ebdbb2", muted: "#928374", success: "#b8bb26", warning: "#fabd2f", danger: "#fb4934"},
+	{Name: "everforest", label: "Everforest", accent: "#a7c080", bg: "#2b3339", surface: "#323c41", fg: "#d3c6aa", muted: "#7a8478", success: "#a7c080", warning: "#e69875", danger: "#e67e80"},
+	{Name: "solarized-dark", label: "Solarized Dark", accent: "#268bd2", bg: "#002b36", surface: "#073642", fg: "#93a1a1", muted: "#586e75", success: "#859900", warning: "#b58900", danger: "#dc322f"},
+	{Name: "monokai", label: "Monokai", accent: "#66d9ef", bg: "#272822", surface: "#1e1f1c", fg: "#f8f8f2", muted: "#75715e", success: "#a6e22e", warning: "#e6db74", danger: "#f92672"},
+	{Name: "ayu-mirage", label: "Ayu Mirage", accent: "#ffcc66", bg: "#1f2430", surface: "#191e2a", fg: "#cccac2", muted: "#707a8c", success: "#87d96c", warning: "#ffa659", danger: "#f28779"},
+	{Name: "light", label: "Light", light: true, accent: "#0066CC", bg: "#F0F0F0", surface: "#F5F5F5", fg: "#1A1A1A", muted: "#666666", success: "#008000", warning: "#CC6600", danger: "#CC0000"},
+	{Name: "github-light", label: "GitHub Light", light: true, accent: "#0969da", bg: "#ffffff", surface: "#f6f8fa", fg: "#1f2328", muted: "#656d76", success: "#1a7f37", warning: "#9a6700", danger: "#cf222e"},
+	{Name: "catppuccin-latte", label: "Catppuccin Latte", light: true, accent: "#8839ef", bg: "#eff1f5", surface: "#e6e9ef", fg: "#4c4f69", muted: "#8c8fa1", success: "#40a02b", warning: "#df8e1d", danger: "#d20f39"},
+	{Name: "solarized-light", label: "Solarized Light", light: true, accent: "#268bd2", bg: "#fdf6e3", surface: "#eee8d5", fg: "#073642", muted: "#839496", success: "#859900", warning: "#b58900", danger: "#dc322f"},
+	{Name: "rose-pine-dawn", label: "Rosé Pine Dawn", light: true, accent: "#907aa9", bg: "#faf4ed", surface: "#fffaf3", fg: "#575279", muted: "#9893a5", success: "#56949f", warning: "#ea9d34", danger: "#b4637a"},
+	{Name: "tokyonight-day", label: "Tokyo Night Day", light: true, accent: "#2e7de9", bg: "#e1e2e7", surface: "#e9e9ec", fg: "#3760bf", muted: "#848cb5", success: "#587539", warning: "#8c6c3e", danger: "#f52a65"},
+	{Name: "gruvbox-light", label: "Gruvbox Light", light: true, accent: "#af3a03", bg: "#fbf1c7", surface: "#f2e5bc", fg: "#3c3836", muted: "#7c6f64", success: "#79740e", warning: "#b57614", danger: "#9d0006"},
+}
+
+// Themes is the ordered list of available theme names. The first entry is the
+// default.
+var Themes = func() []string {
+	names := make([]string, len(catalog))
+	for i, t := range catalog {
+		names[i] = t.Name
+	}
+	return names
+}()
+
 // NewTheme creates a Theme for the given name, defaulting to digital-noir.
 func NewTheme(name string) Theme {
-	switch name {
-	case "matrix":
-		return Theme{
-			Name:    "matrix",
-			accent:  "#00FF00",
-			bg:      "#000000",
-			surface: "#0a0a0a",
-			fg:      "#00FF00",
-			muted:   "#006600",
-			success: "#00FF00",
-			warning: "#FFFF00",
-			danger:  "#FF0000",
-		}
-	case "light":
-		return Theme{
-			Name:    "light",
-			accent:  "#0066CC",
-			bg:      "#F0F0F0",
-			surface: "#F5F5F5",
-			fg:      "#1A1A1A",
-			muted:   "#666666",
-			success: "#008000",
-			warning: "#CC6600",
-			danger:  "#CC0000",
-		}
-	case "everforest":
-		return Theme{
-			Name:    "everforest",
-			accent:  "#a7c080",
-			bg:      "#2b3339",
-			surface: "#323c41",
-			fg:      "#d3c6aa",
-			muted:   "#7a8478",
-			success: "#a7c080",
-			warning: "#e69875",
-			danger:  "#e67e80",
-		}
-	case "tokyonight":
-		return Theme{
-			Name:    "tokyonight",
-			accent:  "#7aa2f7",
-			bg:      "#1a1b26",
-			surface: "#16161e",
-			fg:      "#c0caf5",
-			muted:   "#565f89",
-			success: "#9ece6a",
-			warning: "#e0af68",
-			danger:  "#f7768e",
-		}
-	case "catppuccin":
-		return Theme{
-			Name:    "catppuccin",
-			accent:  "#cba6f7",
-			bg:      "#1e1e2e",
-			surface: "#181825",
-			fg:      "#cdd6f4",
-			muted:   "#6c7086",
-			success: "#a6e3a1",
-			warning: "#fab387",
-			danger:  "#f38ba8",
-		}
-	case "kanagawa":
-		return Theme{
-			Name:    "kanagawa",
-			accent:  "#7e9cd8",
-			bg:      "#1f1f28",
-			surface: "#16161d",
-			fg:      "#dcd7ba",
-			muted:   "#727169",
-			success: "#98bb6c",
-			warning: "#e6c384",
-			danger:  "#c34043",
-		}
-	case "rose-pine":
-		return Theme{
-			Name:    "rose-pine",
-			accent:  "#c4a7e7",
-			bg:      "#191724",
-			surface: "#1f1d2e",
-			fg:      "#e0def4",
-			muted:   "#6e6a86",
-			success: "#9ccfd8",
-			warning: "#f6c177",
-			danger:  "#eb6f92",
-		}
-	case "onedark":
-		return Theme{
-			Name:    "onedark",
-			accent:  "#61afef",
-			bg:      "#282c34",
-			surface: "#21252b",
-			fg:      "#abb2bf",
-			muted:   "#5c6370",
-			success: "#98c379",
-			warning: "#e5c07b",
-			danger:  "#e06c75",
-		}
-	default: // digital-noir
-		return Theme{
-			Name:    "digital-noir",
-			accent:  "#00D9FF",
-			bg:      "#0a0e27",
-			surface: "#0d1117",
-			fg:      "#E2E8F0",
-			muted:   "#4A5568",
-			success: "#00FF88",
-			warning: "#FFD700",
-			danger:  "#FF4757",
+	for _, t := range catalog {
+		if t.Name == name {
+			return t
 		}
 	}
+	return catalog[0]
 }
+
+// Label returns the theme's human-readable name.
+func (t Theme) Label() string { return t.label }
+
+// IsLight reports whether the theme is meant for a light background.
+func (t Theme) IsLight() bool { return t.light }
 
 // GetStyle returns a lipgloss.Style for the named component.
 // Unknown component names return a default surface/foreground style.
@@ -283,6 +223,12 @@ func (t Theme) Success() string { return t.success }
 
 // Warning returns the theme's warning color hex string.
 func (t Theme) Warning() string { return t.warning }
+
+// Danger returns the theme's danger color hex string.
+func (t Theme) Danger() string { return t.danger }
+
+// Surface returns the theme's panel surface color hex string.
+func (t Theme) Surface() string { return t.surface }
 
 // MutedBorder returns s with the border foreground dimmed to the muted color.
 // Apply this to unfocused panels to visually de-emphasize them relative to the

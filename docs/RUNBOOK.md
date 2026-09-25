@@ -140,7 +140,7 @@ Key settings:
 | --- | --- |
 | `github.auto_sync` | Enables background sync |
 | `github.sync_interval_minutes` | Refresh cadence |
-| `appearance.theme` | UI theme (`digital-noir`, `matrix`, `light`, `everforest`, `tokyonight`, `catppuccin`, `kanagawa`, `rose-pine`, `onedark`) |
+| `appearance.theme` | UI theme; one of the 23 built-in themes listed in the settings screen (`t`), for example `digital-noir`, `dracula`, `nord`, `github-light` or `solarized-light` |
 | `sandcastle.binary` | Grove workflow telemetry binary; defaults to `grove-sandcastle` |
 | `worktrees.base_branch` | Default branch used when creating worktrees |
 | `worktrees.worktree_root` | Directory where new worktrees are created (relative to repo root) |

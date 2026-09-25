@@ -10,7 +10,7 @@ const FEATURES = [
   { icon: '🌳', title: 'Issue hierarchy', desc: 'Navigate parent/child issue trees and spin up a worktree for any sub-issue in one move.' },
   { icon: '📡', title: 'Active sessions dashboard', desc: 'See which agents are running, which shells are alive, and which worktrees are just sitting there pretending.' },
   { icon: '⬆️', title: 'Auto-update', desc: 'Grove checks for new versions on startup and self-updates in-app. No more brew upgrade guilt-trips.' },
-  { icon: '🎨', title: '9 built-in themes', desc: 'Digital Noir, Matrix, Light, Everforest, Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, One Dark.' },
+  { icon: '🎨', title: '23 built-in themes', desc: '16 dark and 7 light themes, from Digital Noir, Dracula and Nord to GitHub Light and Solarized Light, picked from a live-previewed list.' },
   { icon: '❓', title: 'In-app help', desc: 'Press f1 or ? at any time for a searchable keybindings and troubleshooting reference.' },
   { icon: '💾', title: 'Local persistence', desc: 'Config in ~/.grove/config.toml, metadata cached in SQLite — Grove starts fast, every time.' },
 ]

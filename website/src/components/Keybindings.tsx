@@ -43,7 +43,7 @@ const GROUPS = [
   {
     name: 'Global',
     bindings: [
-      { key: 't', desc: 'Open settings / cycle theme' },
+      { key: 't', desc: 'Open settings' },
       { key: 'u', desc: 'Check for updates' },
       { key: 'f1 / ?', desc: 'Open help modal' },
       { key: 'q / Ctrl+C', desc: 'Quit Grove' },

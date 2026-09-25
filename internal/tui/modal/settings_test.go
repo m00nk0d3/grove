@@ -1,327 +1,365 @@
 package modal
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	githubSection    = 1
+	worktreesSection = 2
+	agentsSection    = 3
+)
+
 // newTestCfg returns a minimal *domain.Config for testing.
 func newTestCfg() *domain.Config {
-	return &domain.Config{
-		Appearance: domain.AppearanceConfig{Theme: "digital-noir"},
-		GitHub: domain.GitHubConfig{
-			AutoSync:            false,
-			SyncIntervalMinutes: 5,
-		},
-		Worktrees: domain.WorktreesConfig{
-			BaseBranch:   "main",
-			WorktreeRoot: "../worktrees",
-		},
-	}
+	cfg := domain.DefaultConfig()
+	cfg.GitHub.AutoSync = false
+	return cfg
 }
 
 // newTestModal creates a SettingsModal backed by a temp-dir config path.
 func newTestModal(t *testing.T) (*SettingsModal, string) {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	m := NewSettingsModal(newTestCfg(), path)
-	return m, path
+	path := filepath.Join(t.TempDir(), "config.toml")
+	return NewSettingsModal(newTestCfg(), path), path
 }
 
-// sendKey is a test helper that sends a single tea.KeyMsg to the modal.
-func sendKey(m *SettingsModal, keyType tea.KeyType, runes ...rune) (*SettingsModal, tea.Cmd) {
-	msg := tea.KeyMsg{Type: keyType}
-	if keyType == tea.KeyRunes && len(runes) > 0 {
-		msg.Runes = runes
-	}
-	updated, cmd := m.Update(msg)
-	next, ok := updated.(*SettingsModal)
-	if !ok {
-		return m, cmd
-	}
-	return next, cmd
+// sendKey sends a single key of the given type to the modal.
+func sendKey(m *SettingsModal, keyType tea.KeyType) (*SettingsModal, tea.Cmd) {
+	updated, cmd := m.Update(tea.KeyMsg{Type: keyType})
+	return updated.(*SettingsModal), cmd
 }
 
 // sendRune sends a KeyRunes message with the given rune string.
 func sendRune(m *SettingsModal, s string) (*SettingsModal, tea.Cmd) {
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
-	updated, cmd := m.Update(msg)
-	next, ok := updated.(*SettingsModal)
-	if !ok {
-		return m, cmd
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+	return updated.(*SettingsModal), cmd
+}
+
+// typeText sends each rune of s to the modal as a separate key.
+func typeText(m *SettingsModal, s string) *SettingsModal {
+	for _, r := range s {
+		m, _ = sendRune(m, string(r))
 	}
-	return next, cmd
+	return m
 }
 
-// TestSettingsModal_Title verifies the modal title.
-func TestSettingsModal_Title(t *testing.T) {
-	m, _ := newTestModal(t)
-	assert.Equal(t, "SETTINGS", m.Title())
+// savedConfig reports the config a command dispatches, if it dispatches
+// SettingsSavedMsg. Status-clear ticks in a batch are not waited for.
+func savedConfig(t *testing.T, cmd tea.Cmd) *domain.Config {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	results := make(chan tea.Msg, 8)
+	var run func(tea.Cmd)
+	run = func(c tea.Cmd) {
+		go func() { results <- c() }()
+	}
+	run(cmd)
+	deadline := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case msg := <-results:
+			switch msg := msg.(type) {
+			case SettingsSavedMsg:
+				return msg.Config
+			case tea.BatchMsg:
+				for _, c := range msg {
+					if c != nil {
+						run(c)
+					}
+				}
+			}
+		case <-deadline:
+			return nil
+		}
+	}
 }
 
-// TestSettingsModal_TabNavigation verifies Tab/Shift+Tab and left/right arrows switch tabs.
-func TestSettingsModal_TabNavigation(t *testing.T) {
+func loadSaved(t *testing.T, path string) *domain.Config {
+	t.Helper()
+	cfg, err := data.LoadConfig(path)
+	require.NoError(t, err)
+	return cfg
+}
+
+func TestSettingsModal_IsFullscreenWithTitle(t *testing.T) {
 	m, _ := newTestModal(t)
-	require.Equal(t, 0, m.activeTab, "should start on first tab")
+	assert.True(t, m.Fullscreen())
+	assert.Contains(t, m.Title(), "SETTINGS")
+}
 
-	// Tab moves forward.
+func TestSettingsModal_SectionNavigation(t *testing.T) {
+	m, _ := newTestModal(t)
+	require.Equal(t, appearanceSection, m.activeSection)
+
 	m, _ = sendKey(m, tea.KeyTab)
-	assert.Equal(t, 1, m.activeTab)
-
-	m, _ = sendKey(m, tea.KeyTab)
-	assert.Equal(t, 2, m.activeTab)
-
-	// Tab wraps around.
-	m, _ = sendKey(m, tea.KeyTab)
-	assert.Equal(t, 0, m.activeTab, "tab should wrap to first tab")
-
-	// Right arrow on a non-choice field (navigate to GitHub tab first).
-	m, _ = sendKey(m, tea.KeyTab) // → tab 1 (GitHub)
-	require.Equal(t, 1, m.activeTab)
-	m, _ = sendKey(m, tea.KeyRight) // should move to tab 2 (Worktrees)
-	assert.Equal(t, 2, m.activeTab)
-
-	// Shift+Tab moves backward.
+	assert.Equal(t, githubSection, m.activeSection)
 	m, _ = sendKey(m, tea.KeyShiftTab)
-	assert.Equal(t, 1, m.activeTab)
-
-	// Left arrow on a non-choice field moves backward.
-	m, _ = sendKey(m, tea.KeyLeft) // → tab 0 (Appearance)
-	assert.Equal(t, 0, m.activeTab)
-
-	// Left arrow on a choice field (Appearance/Theme) cycles the choice, NOT the tab.
-	themeBefore := m.cfg.Appearance.Theme
-	m, _ = sendKey(m, tea.KeyLeft)
-	assert.Equal(t, 0, m.activeTab, "tab should not change when Left on a choice field")
-	assert.NotEqual(t, themeBefore, m.cfg.Appearance.Theme, "theme should have cycled backward")
-}
-
-// TestSettingsModal_CursorNavigation verifies j/k and arrow keys move the cursor.
-func TestSettingsModal_CursorNavigation(t *testing.T) {
-	m, _ := newTestModal(t)
-	// Navigate to GitHub tab which has 2 fields (AutoSync + SyncIntervalMinutes).
+	m, _ = sendKey(m, tea.KeyShiftTab)
+	assert.Equal(t, agentsSection, m.activeSection, "shift+tab wraps to the last section")
 	m, _ = sendKey(m, tea.KeyTab)
-	require.Equal(t, 1, m.activeTab)
-	require.Equal(t, 0, m.cursor)
+	assert.Equal(t, appearanceSection, m.activeSection, "tab wraps to the first section")
 
-	// j moves down.
-	m, _ = sendRune(m, "j")
-	assert.Equal(t, 1, m.cursor)
+	m, _ = sendRune(m, "2")
+	assert.Equal(t, githubSection, m.activeSection, "a digit jumps to that section")
 
-	// k moves up.
-	m, _ = sendRune(m, "k")
-	assert.Equal(t, 0, m.cursor)
-
-	// k at top stays at 0.
-	m, _ = sendRune(m, "k")
-	assert.Equal(t, 0, m.cursor)
-
-	// Down arrow.
-	m, _ = sendKey(m, tea.KeyDown)
-	assert.Equal(t, 1, m.cursor)
-
-	// Up arrow.
-	m, _ = sendKey(m, tea.KeyUp)
-	assert.Equal(t, 0, m.cursor)
+	m, _ = sendKey(m, tea.KeyRight)
+	assert.Equal(t, worktreesSection, m.activeSection, "right switches section off a choice field")
+	m, _ = sendKey(m, tea.KeyLeft)
+	assert.Equal(t, githubSection, m.activeSection)
 }
 
-// TestSettingsView_ToggleBooleanField verifies Space/Enter on a bool field toggles and saves.
-func TestSettingsView_ToggleBooleanField(t *testing.T) {
+func TestSettingsModal_ThemeListStartsOnTheActiveTheme(t *testing.T) {
+	cfg := newTestCfg()
+	cfg.Appearance.Theme = "nord"
+	m := NewSettingsModal(cfg, filepath.Join(t.TempDir(), "config.toml"))
+
+	assert.Equal(t, "nord", styles.Themes[m.cursors[appearanceSection]])
+	assert.Equal(t, "nord", m.hoveredTheme().Name)
+}
+
+func TestSettingsModal_BrowsingThemesPreviewsWithoutApplying(t *testing.T) {
 	m, path := newTestModal(t)
 
-	// Navigate to the GitHub tab (tab 1).
-	m, _ = sendKey(m, tea.KeyTab)
-	require.Equal(t, 1, m.activeTab)
+	m, cmd := sendKey(m, tea.KeyDown)
+	m, _ = sendRune(m, "j")
 
-	// The first field on GitHub tab is AutoSync (bool), currently false.
-	require.Equal(t, 0, m.cursor)
-	initialVal := m.cfg.GitHub.AutoSync
-
-	// Space toggles it.
-	var cmd tea.Cmd
-	m, cmd = sendKey(m, tea.KeySpace)
-	assert.NotEqual(t, initialVal, m.cfg.GitHub.AutoSync, "Space should toggle the bool field")
-
-	// A save command should have been returned.
-	assert.NotNil(t, cmd, "cmd should not be nil after toggle")
-
-	// The config file should now exist on disk.
-	_, err := os.Stat(path)
-	require.NoError(t, err, "config file should exist after save")
-
-	// Toggle again with Enter.
-	m, cmd = sendKey(m, tea.KeyEnter)
-	assert.Equal(t, initialVal, m.cfg.GitHub.AutoSync, "Enter should toggle back to original")
-	assert.NotNil(t, cmd)
+	assert.Nil(t, cmd, "moving through the list saves nothing")
+	assert.Equal(t, styles.Themes[2], m.hoveredTheme().Name)
+	assert.Equal(t, "digital-noir", m.cfg.Appearance.Theme)
+	assert.NoFileExists(t, path)
+	assert.Contains(t, m.View(), m.hoveredTheme().Label())
 }
 
-// TestSettingsView_EditStringField_SavesConfig verifies string editing and saves.
-func TestSettingsView_EditStringField_SavesConfig(t *testing.T) {
-	// Use a config where SyncIntervalMinutes is 0 so the textinput starts empty.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	cfg := newTestCfg()
-	cfg.GitHub.SyncIntervalMinutes = 0
-	m := NewSettingsModal(cfg, path)
+func TestSettingsModal_EnterAppliesAndSavesTheHoveredTheme(t *testing.T) {
+	m, path := newTestModal(t)
+	m, _ = sendKey(m, tea.KeyDown)
+	want := m.hoveredTheme().Name
 
-	// Navigate to GitHub tab, then to the second field (SyncIntervalMinutes — string).
-	m, _ = sendKey(m, tea.KeyTab)
-	m, _ = sendKey(m, tea.KeyDown) // move to SyncIntervalMinutes field
-	require.Equal(t, 1, m.cursor)
-
-	// Press Enter to begin editing.
-	m, _ = sendKey(m, tea.KeyEnter)
-	require.True(t, m.editing, "should be in editing mode after Enter")
-
-	// Type a new value via the textinput.
-	for _, ch := range "15" {
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}}
-		updated, _ := m.Update(msg)
-		if next, ok := updated.(*SettingsModal); ok {
-			m = next
-		}
-	}
-
-	// Confirm with Enter.
 	m, cmd := sendKey(m, tea.KeyEnter)
-	assert.False(t, m.editing, "should exit editing mode after confirming")
-	assert.Equal(t, 15, m.cfg.GitHub.SyncIntervalMinutes)
-	assert.NotNil(t, cmd, "save cmd expected")
 
-	// File must be on disk.
-	_, err := os.Stat(path)
-	require.NoError(t, err)
+	assert.Equal(t, want, m.cfg.Appearance.Theme)
+	saved := savedConfig(t, cmd)
+	require.NotNil(t, saved, "applying a theme dispatches SettingsSavedMsg")
+	assert.Equal(t, want, saved.Appearance.Theme)
+	assert.Equal(t, want, loadSaved(t, path).Appearance.Theme)
 }
 
-// TestSettingsModal_ChoiceCycling verifies Enter/Right/Left on a choice field cycles values.
-func TestSettingsModal_ChoiceCycling(t *testing.T) {
+func TestSettingsModal_ReapplyingTheActiveThemeDoesNotSave(t *testing.T) {
+	m, path := newTestModal(t)
+
+	m, cmd := sendKey(m, tea.KeyEnter)
+
+	assert.Nil(t, savedConfig(t, cmd))
+	assert.NoFileExists(t, path)
+	assert.Contains(t, m.statusMsg, "already active")
+}
+
+func TestSettingsModal_ThemeCursorStaysInTheList(t *testing.T) {
 	m, _ := newTestModal(t)
 
-	// Tab 0 (Appearance) has the Theme choice field.
-	require.Equal(t, 0, m.activeTab)
-	require.Equal(t, 0, m.cursor)
+	m, _ = sendKey(m, tea.KeyUp)
+	assert.Equal(t, 0, m.cursors[appearanceSection])
 
-	initial := m.cfg.Appearance.Theme
-	initialIdx := 0
-	for i, name := range styles.Themes {
-		if name == initial {
-			initialIdx = i
-			break
-		}
-	}
-	nextIdx := (initialIdx + 1) % len(styles.Themes)
+	m, _ = sendRune(m, "G")
+	assert.Equal(t, len(styles.Themes)-1, m.cursors[appearanceSection])
+	m, _ = sendKey(m, tea.KeyDown)
+	assert.Equal(t, len(styles.Themes)-1, m.cursors[appearanceSection])
 
-	// Enter cycles to the next choice.
-	m, _ = sendKey(m, tea.KeyEnter)
-	assert.Equal(t, styles.Themes[nextIdx], m.cfg.Appearance.Theme)
-
-	// Right arrow also cycles forward.
-	m, _ = sendKey(m, tea.KeyRight)
-	assert.Equal(t, styles.Themes[(nextIdx+1)%len(styles.Themes)], m.cfg.Appearance.Theme)
-
-	// Left arrow cycles backward.
-	themeBefore := m.cfg.Appearance.Theme
-	m, _ = sendKey(m, tea.KeyLeft)
-	wantIdx := 0
-	for i, name := range styles.Themes {
-		if name == themeBefore {
-			wantIdx = (i - 1 + len(styles.Themes)) % len(styles.Themes)
-			break
-		}
-	}
-	assert.Equal(t, styles.Themes[wantIdx], m.cfg.Appearance.Theme)
-
-	// Cycling wraps forward: advance to the last theme, then wrap.
-	m.cfg.Appearance.Theme = styles.Themes[len(styles.Themes)-1]
-	m, _ = sendKey(m, tea.KeyEnter)
-	assert.Equal(t, styles.Themes[0], m.cfg.Appearance.Theme, "should wrap to first after last")
-
-	// Cycling wraps backward: go left from first.
-	m.cfg.Appearance.Theme = styles.Themes[0]
-	m, _ = sendKey(m, tea.KeyLeft)
-	assert.Equal(t, styles.Themes[len(styles.Themes)-1], m.cfg.Appearance.Theme, "should wrap to last when going left from first")
+	m, _ = sendRune(m, "g")
+	assert.Equal(t, 0, m.cursors[appearanceSection])
 }
 
-// TestSettingsModal_EscCancelsEdit verifies Esc during string editing discards the change.
-func TestSettingsModal_EscCancelsEdit(t *testing.T) {
-	// Use SyncIntervalMinutes=0 so the initial textinput is empty.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	cfg := newTestCfg()
-	cfg.GitHub.SyncIntervalMinutes = 0
-	m := NewSettingsModal(cfg, path)
+func TestSettingsModal_ToggleBooleanField(t *testing.T) {
+	m, path := newTestModal(t)
+	m, _ = sendKey(m, tea.KeyTab) // GitHub; the cursor is on auto sync
+	require.False(t, m.cfg.GitHub.AutoSync)
 
-	// Navigate to GitHub tab → SyncIntervalMinutes.
+	m, cmd := sendKey(m, tea.KeySpace)
+	assert.True(t, m.cfg.GitHub.AutoSync)
+	assert.NotNil(t, savedConfig(t, cmd))
+	assert.True(t, loadSaved(t, path).GitHub.AutoSync)
+
+	m, _ = sendKey(m, tea.KeyEnter)
+	assert.False(t, m.cfg.GitHub.AutoSync, "enter toggles back")
+}
+
+func TestSettingsModal_EditNumberField(t *testing.T) {
+	m, path := newTestModal(t)
 	m, _ = sendKey(m, tea.KeyTab)
-	m, _ = sendKey(m, tea.KeyDown)
-	original := m.cfg.GitHub.SyncIntervalMinutes
+	m, _ = sendKey(m, tea.KeyDown) // sync interval
 
-	// Begin editing.
 	m, _ = sendKey(m, tea.KeyEnter)
 	require.True(t, m.editing)
+	m.textInput.SetValue("")
+	m = typeText(m, "15")
+	m, cmd := sendKey(m, tea.KeyEnter)
 
-	// Type something new.
-	for _, ch := range "999" {
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}}
-		updated, _ := m.Update(msg)
-		if next, ok := updated.(*SettingsModal); ok {
-			m = next
-		}
+	assert.False(t, m.editing)
+	assert.Equal(t, 15, m.cfg.GitHub.SyncIntervalMinutes)
+	assert.NotNil(t, savedConfig(t, cmd))
+	assert.Equal(t, 15, loadSaved(t, path).GitHub.SyncIntervalMinutes)
+}
+
+func TestSettingsModal_RejectsAnInvalidNumberAndKeepsEditing(t *testing.T) {
+	for _, input := range []string{"soon", "0", "-3"} {
+		t.Run(input, func(t *testing.T) {
+			m, path := newTestModal(t)
+			m, _ = sendKey(m, tea.KeyTab)
+			m, _ = sendKey(m, tea.KeyDown)
+			m, _ = sendKey(m, tea.KeyEnter)
+			m.textInput.SetValue(input)
+
+			m, cmd := sendKey(m, tea.KeyEnter)
+
+			assert.True(t, m.editing, "the editor stays open for a correction")
+			assert.True(t, m.statusErr)
+			assert.Equal(t, 5, m.cfg.GitHub.SyncIntervalMinutes)
+			assert.Nil(t, savedConfig(t, cmd))
+			assert.NoFileExists(t, path)
+		})
 	}
-
-	// Esc cancels without saving.
-	m, _ = sendKey(m, tea.KeyEsc)
-	assert.False(t, m.editing, "should exit editing mode on Esc")
-	assert.Equal(t, original, m.cfg.GitHub.SyncIntervalMinutes, "value should not change on cancel")
 }
 
-// TestSettingsModal_EscClosesSettings verifies Esc while not editing sends ModalCancelledMsg.
-func TestSettingsModal_EscClosesSettings(t *testing.T) {
+func TestSettingsModal_EditTextFieldRejectsEmpty(t *testing.T) {
 	m, _ := newTestModal(t)
-	require.False(t, m.editing)
+	m, _ = sendRune(m, "3") // worktrees; the cursor is on base branch
+	m, _ = sendKey(m, tea.KeyEnter)
+	m.textInput.SetValue("   ")
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	_ = updated
+	m, _ = sendKey(m, tea.KeyEnter)
 
+	assert.True(t, m.editing)
+	assert.Equal(t, "main", m.cfg.Worktrees.BaseBranch)
+}
+
+func TestSettingsModal_EscCancelsEditThenCloses(t *testing.T) {
+	m, _ := newTestModal(t)
+	m, _ = sendRune(m, "3")
+	m, _ = sendKey(m, tea.KeyEnter)
+	m = typeText(m, "-scratch")
+
+	m, cmd := sendKey(m, tea.KeyEsc)
+	assert.False(t, m.editing)
+	assert.Nil(t, cmd)
+	assert.Equal(t, "main", m.cfg.Worktrees.BaseBranch, "a cancelled edit is discarded")
+
+	_, cmd = sendKey(m, tea.KeyEsc)
 	require.NotNil(t, cmd)
-	msg := cmd()
-	_, ok := msg.(ModalCancelledMsg)
-	assert.True(t, ok, "Esc while not editing should send ModalCancelledMsg, got %T", msg)
+	assert.IsType(t, ModalCancelledMsg{}, cmd())
 }
 
-// TestSettingsModal_SetThemeAndWidth verifies SetTheme and SetWidth are applied without panic.
-func TestSettingsModal_SetThemeAndWidth(t *testing.T) {
-	m, _ := newTestModal(t)
+func TestSettingsModal_DefaultAgentCyclesAndSaves(t *testing.T) {
+	m, path := newTestModal(t)
+	m, _ = sendRune(m, "4") // agents; the cursor is on default agent
+	require.Equal(t, "opencode", m.cfg.Sandcastle.DefaultAgent)
 
-	require.NotPanics(t, func() {
-		m.SetTheme(styles.NewTheme("matrix"))
-	})
-	assert.Equal(t, "matrix", m.theme.Name)
+	m, cmd := sendKey(m, tea.KeyRight)
+	assert.Equal(t, agentsSection, m.activeSection, "right cycles a choice instead of switching section")
+	assert.Equal(t, "pi", m.cfg.Sandcastle.DefaultAgent)
+	assert.NotNil(t, savedConfig(t, cmd))
 
-	require.NotPanics(t, func() {
-		m.SetWidth(120)
-	})
-	assert.Equal(t, 120, m.width)
+	m, _ = sendKey(m, tea.KeyEnter)
+	assert.Equal(t, "claude", m.cfg.Sandcastle.DefaultAgent)
+	m, _ = sendKey(m, tea.KeyRight)
+	assert.Equal(t, "opencode", m.cfg.Sandcastle.DefaultAgent, "the choice wraps")
+	m, _ = sendKey(m, tea.KeyLeft)
+	assert.Equal(t, "claude", m.cfg.Sandcastle.DefaultAgent)
+	assert.Equal(t, "claude", loadSaved(t, path).Sandcastle.DefaultAgent)
 }
 
-// TestSettingsModal_ViewRendersTabBar verifies the View output contains tab names.
-func TestSettingsModal_ViewRendersTabBar(t *testing.T) {
+func TestSettingsModal_AgentSwitchesSave(t *testing.T) {
+	m, path := newTestModal(t)
+	m, _ = sendRune(m, "4")
+	m, _ = sendKey(m, tea.KeyDown) // sandcastle runtime
+	m, _ = sendKey(m, tea.KeySpace)
+	m, _ = sendKey(m, tea.KeyDown) // herdr integration
+	m, _ = sendKey(m, tea.KeySpace)
+
+	saved := loadSaved(t, path)
+	assert.False(t, saved.Sandcastle.Enabled)
+	assert.False(t, saved.Herdr.Enabled)
+}
+
+func TestSettingsModal_StaleStatusTickDoesNotClearANewerMessage(t *testing.T) {
 	m, _ := newTestModal(t)
-	m.SetTheme(styles.NewTheme("digital-noir"))
-	m.SetWidth(80)
+	m.setStatus("first", false)
+	stale := clearStatusMsg{seq: m.statusSeq}
+	m.setStatus("second", false)
+
+	updated, _ := m.Update(stale)
+	assert.Equal(t, "second", updated.(*SettingsModal).statusMsg)
+
+	updated, _ = m.Update(clearStatusMsg{seq: m.statusSeq})
+	assert.Empty(t, updated.(*SettingsModal).statusMsg)
+}
+
+func TestSettingsModal_ViewShowsSectionsThemesAndPreview(t *testing.T) {
+	m, _ := newTestModal(t)
+	m.SetWidth(160)
+	m.SetHeight(45)
 
 	view := m.View()
-	assert.True(t, strings.Contains(view, "Appearance") || strings.Contains(view, "APPEARANCE"),
-		"view should contain Appearance tab label")
-	assert.True(t, strings.Contains(view, "GitHub") || strings.Contains(view, "GITHUB"),
-		"view should contain GitHub tab label")
+
+	for _, s := range []string{"APPEARANCE", "GITHUB", "WORKTREES", "AGENTS", "PREVIEW", "DARK", "LIGHT"} {
+		assert.Contains(t, view, s)
+	}
+	for _, name := range styles.Themes {
+		assert.Contains(t, view, styles.NewTheme(name).Label(), "a %d-row screen lists every theme", 45)
+	}
+}
+
+func TestSettingsModal_ViewShowsFieldKeysAndDetail(t *testing.T) {
+	m, _ := newTestModal(t)
+	m.SetWidth(160)
+	m.SetHeight(45)
+	m, _ = sendRune(m, "4")
+
+	view := m.View()
+
+	assert.Contains(t, view, "DEFAULT AGENT")
+	assert.Contains(t, view, "sandcastle.default_agent")
+	assert.Contains(t, view, "opencode / pi / claude")
+}
+
+func TestSettingsModal_ViewFitsTheScreen(t *testing.T) {
+	sizes := []struct{ width, height int }{{160, 45}, {100, 24}, {64, 20}, {60, 0}}
+	for _, size := range sizes {
+		for section := range 4 {
+			m, _ := newTestModal(t)
+			m.SetWidth(size.width)
+			m.SetHeight(size.height)
+			m.activeSection = section
+			m.cursors[appearanceSection] = len(styles.Themes) - 1
+
+			view := m.View()
+
+			width, rows := m.layout()
+			for i, line := range strings.Split(view, "\n") {
+				assert.LessOrEqual(t, lipgloss.Width(line), width,
+					"%dx%d section %d line %d overflows", size.width, size.height, section, i)
+			}
+			if rows > 0 {
+				assert.Equal(t, rows, lipgloss.Height(view),
+					"%dx%d section %d fills exactly the rows it is given", size.width, size.height, section)
+			}
+			if section == appearanceSection {
+				assert.Contains(t, view, styles.NewTheme(styles.Themes[len(styles.Themes)-1]).Label(),
+					"%dx%d keeps the hovered theme in view", size.width, size.height)
+			}
+		}
+	}
 }

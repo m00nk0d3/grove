@@ -42,7 +42,7 @@ In short: if you work on multiple features simultaneously, Grove removes the glu
 - **Auto-update notifications** — Grove checks for new versions on startup and can update itself; no more `brew upgrade` guilt-trips
 - **Global fuzzy finder** — press `/` or `Ctrl+F` to search across worktrees, issues, PRs, files, branches, and agent history simultaneously; results update in real-time as you type
 - **Workflow telemetry** — monitor Sandcastle runs and their agents without Grove owning agent process launches
-- **9 built-in themes** — Digital Noir, Matrix, Light, Everforest, Tokyo Night, Catppuccin, Kanagawa, Rosé Pine, and One Dark; cycle them live with `t`
+- **23 built-in themes** — 16 dark (Digital Noir, Matrix, Cyberpunk, Synthwave, Tokyo Night, Catppuccin, Dracula, Nord, and more) and 7 light (GitHub Light, Catppuccin Latte, Solarized Light, and more); press `t` to open settings and pick one from a live-previewed list
 - **In-app help** — press `f1` or `?` at any time for a searchable keybindings and troubleshooting reference
 - **Local persistence** — config lives in `~/.grove/config.toml`; metadata is cached in SQLite so Grove starts fast
 
@@ -187,8 +187,12 @@ auto_sync = true
 sync_interval_minutes = 5
 
 [appearance]
-# UI theme. Options: "digital-noir", "matrix", "light", "everforest",
-#            "tokyonight", "catppuccin", "kanagawa", "rose-pine", "onedark"
+# UI theme. Pick one in the settings screen (`t`), or set any of:
+#   dark:  "digital-noir", "matrix", "cyberpunk", "synthwave", "tokyonight",
+#          "catppuccin", "dracula", "nord", "kanagawa", "rose-pine", "onedark",
+#          "gruvbox", "everforest", "solarized-dark", "monokai", "ayu-mirage"
+#   light: "light", "github-light", "catppuccin-latte", "solarized-light",
+#          "rose-pine-dawn", "tokyonight-day", "gruvbox-light"
 theme = "digital-noir"
 
 [sandcastle]
