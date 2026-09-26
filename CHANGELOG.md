@@ -332,6 +332,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A failed review cycle is recovered instead of repeated** — when a review fix
+  cycle died between the implementer finishing and its commit (the commit
+  validates first, so failing tests leave the fixes on disk), the next run
+  re-entered the same cycle against a worktree full of changes it would not
+  commit. The reviewer is sent to read the pull request's diff from GitHub, so
+  it cannot see work that was never committed: it reported the same blockers,
+  the cycle counter never advanced, and the run looped on work already done —
+  or approved, and refused forever on a dirty tree. The review loop now finishes
+  what an interrupted cycle owed, committing and publishing its fixes under that
+  cycle's own message before anyone reviews them, and the check that decides a
+  run is complete requires a clean worktree as well as a published branch, so a
+  run can no longer announce an approved pull request that is missing changes
+  made to it.
+- **An implementation run no longer reports success while a review fix is
+  unpublished** — the review loop committed a cycle's fixes and pushed them as
+  two steps, and recorded the cycle only after both. A push that failed, or a
+  pane closed between them, left the fix in the worktree and nowhere else while
+  the checkpoint still said the cycle had not happened. The next run reviewed
+  the fixed code, approved it, posted the verdict and finished with
+  `COMPLETE: PR approved` — and the pull request never received the fix, because
+  `publish` was already recorded as done and never pushed again. Publishing is
+  now decided by comparing the branch with the remote rather than by assuming a
+  push landed: a stranded commit is pushed, a branch that moved under the run is
+  refused with both sides named instead of being force-pushed, and a final gate
+  before the run reports itself complete means no commit can be left behind
+  quietly, from any cause.
 - **`ci --continue` works** — when a pull request's worktree held uncommitted
   changes, `ci` refused and said to rerun with `--continue`, then rejected the
   flag. It now accepts it, like `address`: the run continues in the worktree,
