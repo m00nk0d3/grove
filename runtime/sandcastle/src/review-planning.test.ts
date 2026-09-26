@@ -612,6 +612,44 @@ test("the prompt engineer is told frameworks belong in the structured field", as
   assert.match(prompt, /"frameworks": \[\s*\{ "name": "React"/);
 });
 
+test("the prompt engineer is shown the literal root value, not a gloss on it", async () => {
+  const { SPECIALISTS } = await import("./specialists.js");
+  const prompt = SPECIALISTS.PROMPT_ENGINEER(
+    "owner/repo",
+    ".agent/issue-1/draft.json",
+    [
+      // The repository root, whose value is the empty string. Its label is the
+      // stack name, because stack-detector falls back to it when a manifest at
+      // the root declares nothing more specific.
+      {
+        root: "",
+        marker: "package.json",
+        label: "TYPESCRIPT",
+        dependencies: ["electron", "react"],
+      },
+      {
+        root: "backend",
+        marker: "backend/pyproject.toml",
+        label: "PYTHON",
+        dependencies: ["fastapi"],
+      },
+    ],
+    [],
+  );
+
+  // The root project's own value is printed, not the phrase standing in for it.
+  // Listing only "the repository root" asked for a value the prompt never
+  // showed, and the first profile written for a single-project repository put
+  // the label in 'root' — which the validator rejects as omitting the root
+  // project, failing the whole run.
+  assert.match(prompt, /- root "" \(the repository root\): TYPESCRIPT \(package\.json\)/);
+  assert.match(prompt, /- root "backend": PYTHON \(backend\/pyproject\.toml\)/);
+  // And the schema says where the value comes from, so the two fields are not
+  // read as interchangeable.
+  assert.match(prompt, /"root": "<the root value from the listing above>"/);
+  assert.match(prompt, /never its\s+label/);
+});
+
 test("a repository with no manifest yet is not profiled, and says so", async () => {
   const { readProfileDraft } = await import("./project-profile.js");
   const root = scratch("greenfield-");

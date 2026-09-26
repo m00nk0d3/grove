@@ -174,6 +174,7 @@ fi
 install_executable "$TMP_DIR/$BINARY" "$INSTALL_DIR/$BINARY"
 install_wrapper grove-sandcastle sandcastle.js
 install_wrapper imp orchestrator.js
+install_wrapper agent-flow orchestrator.js
 install_wrapper review pr-review.js
 install_wrapper resolve conflict-resolver.js
 install_wrapper ci ci-fix.js

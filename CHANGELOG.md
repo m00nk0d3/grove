@@ -329,6 +329,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   planned for it, and skipped only when both are identical. Only passes are
   remembered, so a failure is never cached into a success. Set
   `AGENT_FLOW_REVALIDATE_ALWAYS=1` to run every time regardless.
+- **`agent-flow` is installed** — the README, the runbook and the runtime
+  package all offer `agent-flow` as an alias for `imp`, but neither installer
+  wrote a shim for it, so on a machine installed from a release the command the
+  documentation names was simply not there. Both installers now provide it
+  alongside `imp`, pointing at the same orchestrator.
 
 ### Fixed
 
@@ -552,6 +557,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   derived from both `os.Getwd()` and `git worktree list`, which disagree on path
   separators on Windows, so each repository was cached under two keys. Cache
   keys are now normalized, including in the staleness check.
+- **A repository whose only project is at its root can be profiled** — the
+  detector gives the repository root the empty string as its path, but the
+  prompt showed that project as the words "the repository root" and then asked
+  for its `root` "as listed above", so the value it wanted was never on the
+  page. The prompt engineer filled the field with the only uppercase token it
+  had been shown, the project's label, and validation rejected the profile for
+  omitting the root project — failing the run before any work started, for
+  every single-project repository, which is most new projects. The listing now
+  prints each project's real path (`root ""` for the repository root) and says
+  that `root` is a path while `label` is the stack name.
 
 ### Changed
 

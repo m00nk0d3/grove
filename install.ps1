@@ -119,6 +119,7 @@ try {
     $commands = @{
         "grove-sandcastle" = "sandcastle.js"
         "imp" = "orchestrator.js"
+        "agent-flow" = "orchestrator.js"
         "review" = "pr-review.js"
         "resolve" = "conflict-resolver.js"
         "ci" = "ci-fix.js"
