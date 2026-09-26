@@ -332,6 +332,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **An implementation run no longer reports success while a review fix is
+  unpublished** — the review loop committed a cycle's fixes and pushed them as
+  two steps, and recorded the cycle only after both. A push that failed, or a
+  pane closed between them, left the fix in the worktree and nowhere else while
+  the checkpoint still said the cycle had not happened. The next run reviewed
+  the fixed code, approved it, posted the verdict and finished with
+  `COMPLETE: PR approved` — and the pull request never received the fix, because
+  `publish` was already recorded as done and never pushed again. Publishing is
+  now decided by comparing the branch with the remote rather than by assuming a
+  push landed: a stranded commit is pushed, a branch that moved under the run is
+  refused with both sides named instead of being force-pushed, and a final gate
+  before the run reports itself complete means no commit can be left behind
+  quietly, from any cause.
 - **`ci --continue` works** — when a pull request's worktree held uncommitted
   changes, `ci` refused and said to rerun with `--continue`, then rejected the
   flag. It now accepts it, like `address`: the run continues in the worktree,

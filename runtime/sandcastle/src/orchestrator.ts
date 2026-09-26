@@ -73,6 +73,7 @@ import {
   loadWorkflowState,
   LEAN_WORKFLOW_STEPS,
   parseCliArgs,
+  publishBranch,
   requireCleanWorktree,
   resolveAgentBackend,
   runCommand,
@@ -1413,6 +1414,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     if (!state.completedSteps.includes("review")) {
       if (!(await confirmStartPrReview(prUrl))) {
         workflowPaused = true;
+        // A cycle interrupted between its commit and its push leaves work the
+        // remote has never seen, and a deferral is the last moment this run can
+        // still get it out before it reports itself finished.
+        publishBranch(targetDir, branchName);
         console.log(
           `\x1b[33m[Paused]\x1b[0m PR review deferred. Resume with agent-flow ${issueNum}.`,
         );
@@ -1491,7 +1496,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
         fs.rmSync(verdictPath, { force: true });
         await commitChanges(`fix: address PR review cycle ${cycle} (#${issueNum})`);
-        runCommand("git", ["push", "origin", branchName], { cwd: targetDir });
+        publishBranch(targetDir, branchName);
         saveWorkflowState(statePath, state);
         console.log(
           `\n\x1b[33m[PR Review Fixes Applied]\x1b[0m A fresh reviewer will verify cycle ${cycle + 1}.`,
@@ -1516,6 +1521,13 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       state.completedSteps.push("review");
       saveWorkflowState(statePath, state);
     }
+    // The last gate, and the only one that survives a resume. Every stage above
+    // records itself as done whether or not its push landed, and the review
+    // loop is not re-entered once it has approved, so a commit stranded by a
+    // failed or interrupted push would otherwise leave this run reporting
+    // success on a pull request that never received it. Nothing is reportable as
+    // complete until the branch is on the remote.
+    publishBranch(targetDir, branchName);
     workflowSucceeded = true;
   } finally {
     if (specialistPaneId) {

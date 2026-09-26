@@ -938,6 +938,82 @@ export function synchronizeDefaultBranch(
   return defaultBranch;
 }
 
+export type BranchPublication = "published" | "pushed";
+
+function commitCount(count: number): string {
+  return `${count} commit${count === 1 ? "" : "s"}`;
+}
+
+// Putting a branch on the remote is the one delivery step a resume cannot
+// repeat. The stage that made the commit is recorded as done before the push is
+// attempted, so a push that fails — a branch the `address` workflow or a web
+// editor moved, a dropped connection, a pane closed mid-review — leaves the
+// change in the worktree and nowhere else, and the next run reviews the fixed
+// code, approves it, and reports success on a pull request that never received
+// the fix. Publication is therefore decided by comparing the branch against the
+// remote, and calling it again is how a stranded commit is recovered.
+export function publishBranch(
+  targetDir: string,
+  branchName: string,
+  runner: CommandRunner = runCommand,
+): BranchPublication {
+  const refspec = `HEAD:refs/heads/${branchName}`;
+  const remoteRef = `refs/remotes/origin/${branchName}`;
+  let onRemote: string | null;
+  try {
+    onRemote = runner("git", ["ls-remote", "--heads", "origin", branchName], {
+      cwd: targetDir,
+    }).trim();
+  } catch {
+    // The remote could not be asked what it holds. Git still knows how to
+    // refuse a push it cannot fast-forward, so it makes the decision.
+    runner("git", ["push", "origin", refspec], { cwd: targetDir });
+    return "pushed";
+  }
+
+  if (onRemote === "") {
+    runner("git", ["push", "-u", "origin", refspec], { cwd: targetDir });
+    console.log(`\x1b[33m[Git]\x1b[0m Pushed ${branchName} to origin.`);
+    return "pushed";
+  }
+
+  runner("git", ["fetch", "--prune", "origin", `+refs/heads/${branchName}:${remoteRef}`], {
+    cwd: targetDir,
+  });
+  // HEAD first, so the left count is what this worktree holds and the right is
+  // what the remote holds.
+  const [ahead, behind] = runner(
+    "git",
+    ["rev-list", "--left-right", "--count", `HEAD...${remoteRef}`],
+    { cwd: targetDir },
+  )
+    .split(/\s+/)
+    .map((value) => Number(value));
+  if (ahead === 0) {
+    console.log(
+      `\x1b[33m[Git]\x1b[0m ${branchName} is already published; nothing to push.`,
+    );
+    return "published";
+  }
+  if (behind > 0) {
+    // A force-push is a decision about someone else's work, and no automatic
+    // answer to a diverged branch is safe. Say what holds each side.
+    throw new Error(
+      `${branchName} has diverged from origin/${branchName}: ${commitCount(ahead)} here, ` +
+        `${commitCount(behind)} on the remote.\n` +
+        `  ${targetDir}\n` +
+        "The commits made here are not in the pull request, and pushing them would " +
+        "require rewriting what the remote holds.\n" +
+        "Reconcile the branch by hand, then run the workflow again.",
+    );
+  }
+  runner("git", ["push", "origin", refspec], { cwd: targetDir });
+  console.log(
+    `\x1b[33m[Git]\x1b[0m Pushed ${commitCount(ahead)} to origin/${branchName}.`,
+  );
+  return "pushed";
+}
+
 export function getWorkflowStatePath(
   repoRoot: string,
   issueNum: string,

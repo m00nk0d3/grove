@@ -27,6 +27,7 @@ import {
   loadWorkflowState,
   parseCliArgs,
   PI_COMPACTION_GUARD_PATH,
+  publishBranch,
   resolveAgentBackend,
   slugifyIssueTitle,
   synchronizeDefaultBranch,
@@ -2191,6 +2192,69 @@ test("the delivery commit is retitled only while it is still unpublished", () =>
     retitleDeliveryCommit("/wt", "agent/x-1086", title, already.runner),
     "skipped",
   );
+});
+
+test("a branch is published by comparing it with the remote, not by assuming a push landed", () => {
+  const branch = "agent/x-1086";
+  const onRemote = `abc123\trefs/heads/${branch}`;
+  const fake = (opts: { remote?: string; counts?: string; lsRemoteThrows?: boolean }) => {
+    const calls: string[][] = [];
+    const runner = (_command: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === "ls-remote") {
+        if (opts.lsRemoteThrows) throw new Error("network down");
+        return opts.remote ?? "";
+      }
+      if (args[0] === "rev-list") return opts.counts ?? "0\t0";
+      return "";
+    };
+    return { calls, runner };
+  };
+  const pushed = (calls: string[][]) =>
+    calls.find((args) => args[0] === "push");
+
+  // A branch the remote has never seen is created, and its upstream set.
+  const fresh = fake({});
+  assert.equal(publishBranch("/wt", branch, fresh.runner), "pushed");
+  assert.deepEqual(pushed(fresh.calls), [
+    "push",
+    "-u",
+    "origin",
+    `HEAD:refs/heads/${branch}`,
+  ]);
+
+  // Already published: nothing is sent, which is what makes calling this twice
+  // safe at the end of a run.
+  const current = fake({ remote: onRemote, counts: "0\t0" });
+  assert.equal(publishBranch("/wt", branch, current.runner), "published");
+  assert.equal(pushed(current.calls), undefined);
+
+  // A commit stranded by a push that failed or never ran: this is the recovery.
+  const ahead = fake({ remote: onRemote, counts: "2\t0" });
+  assert.equal(publishBranch("/wt", branch, ahead.runner), "pushed");
+  assert.deepEqual(pushed(ahead.calls), [
+    "push",
+    "origin",
+    `HEAD:refs/heads/${branch}`,
+  ]);
+
+  // A branch that moved under the run is never rewritten automatically.
+  const diverged = fake({ remote: onRemote, counts: "1\t3" });
+  assert.throws(
+    () => publishBranch("/wt", branch, diverged.runner),
+    /diverged from origin\/agent\/x-1086: 1 commit here, 3 commits on the remote/,
+  );
+  assert.equal(pushed(diverged.calls), undefined);
+
+  // A remote that cannot be asked is left for git to judge: it still refuses a
+  // push it cannot fast-forward, so the run fails rather than claiming success.
+  const offline = fake({ lsRemoteThrows: true });
+  assert.equal(publishBranch("/wt", branch, offline.runner), "pushed");
+  assert.deepEqual(pushed(offline.calls), [
+    "push",
+    "origin",
+    `HEAD:refs/heads/${branch}`,
+  ]);
 });
 
 test("a JavaScript project checked out without its dependencies gets them installed", () => {
