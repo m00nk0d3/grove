@@ -494,6 +494,72 @@ test("verification refuses when nothing can validate the change", async () => {
   }
 });
 
+test("a commit path that skipped validation still strips trailing whitespace", async () => {
+  const { stripTrailingWhitespace, verifyWorktree } = await import(
+    "./workflow-utils.js"
+  );
+  const { execFileSync } = await import("node:child_process");
+  const root = scratch("whitespace-");
+  const git = (args: string[]) =>
+    execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git(["init", "--quiet", "-b", "main"]);
+    git(["config", "core.autocrlf", "false"]);
+    fs.writeFileSync(path.join(root, "tracked.txt"), "clean\n");
+    git(["add", "-A"]);
+    git([
+      "-c", "user.name=T", "-c", "user.email=t@e.com",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init",
+    ]);
+
+    // A project whose only command succeeds, so validation passes and is
+    // remembered against the worktree's fingerprint.
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "x" }));
+    fs.writeFileSync(path.join(root, "verify.sh"), "#!/usr/bin/env sh\nexit 0\n");
+    fs.chmodSync(path.join(root, "verify.sh"), 0o755);
+    const profile = {
+      repoSummary: "x",
+      projects: [
+        {
+          root: "",
+          label: "SHELL",
+          marker: "package.json",
+          ecosystem: "shell",
+          frameworks: [],
+          personas: {
+            planning: "", tests: "", implementation: "",
+            verification: "", review: "", documentation: "",
+          },
+          test: { command: "./verify.sh", args: [], verified: true, evidence: "ok" },
+        },
+      ],
+      concerns: [],
+    };
+    await verifyWorktree(root, ["tracked.txt"], profile as never);
+
+    // The recovered review fixes land after that validation, so the worktree
+    // is untouched by anything but the fix itself and verification is skipped
+    // on the next call. The whitespace a model left still has to go, because
+    // the commit that follows runs `git diff --cached --check`.
+    fs.writeFileSync(path.join(root, "tracked.txt"), "clean   \ndirty\t\n");
+    stripTrailingWhitespace(root);
+    assert.equal(
+      fs.readFileSync(path.join(root, "tracked.txt"), "utf8"),
+      "clean\ndirty\n",
+      "trailing spaces and tabs must be stripped before the commit check",
+    );
+    // Which is what lets the commit the orchestrator actually runs succeed.
+    git(["add", "-A"]);
+    assert.equal(
+      execFileSync("git", ["diff", "--cached", "--check"], { cwd: root, stdio: "pipe" })
+        .toString(),
+      "",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a command only reads pull request fields it actually asks GitHub for", async () => {
   const { pullRequestChangedFiles } = await import("./workflow-utils.js");
 

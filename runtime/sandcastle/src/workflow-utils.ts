@@ -1619,28 +1619,7 @@ export async function verifyWorktree(
     console.log(`\x1b[36m[Validation]\x1b[0m ${task.label}`);
     await runVerificationTask(task, cwd);
   }
-  // Strip trailing whitespace from all tracked files before diff --check
-  const changedFiles = runCommand(
-    "git",
-    ["diff", "--name-only", "HEAD"],
-    { cwd: targetDir },
-  );
-  if (changedFiles) {
-    for (const file of changedFiles.split("\n").filter(Boolean)) {
-      try {
-        const absPath = path.join(targetDir, file);
-        if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
-          const content = fs.readFileSync(absPath, "utf8");
-          const cleaned = content.replace(/[ \t]+$/gm, "");
-          if (cleaned !== content) {
-            fs.writeFileSync(absPath, cleaned);
-          }
-        }
-      } catch {
-        // Skip files that can't be read (e.g. binary files)
-      }
-    }
-  }
+  stripTrailingWhitespace(targetDir);
   runCommand("git", ["diff", "--check"], { cwd: targetDir });
 
   // Recorded after the whitespace strip above, so the remembered tree is the
@@ -1649,4 +1628,34 @@ export async function verifyWorktree(
     cacheKey,
     worktreeFingerprint(targetDir, labels),
   );
+}
+
+// Models leave trailing whitespace on lines they write, and `git diff --check`
+// refuses to stage a file that has any — so an otherwise finished run dies at
+// the commit with a message about two spaces. Stripping it is a property of the
+// tree, not of the validation that usually found it, so this is exported and
+// called by every commit path: a commit made after validation was skipped
+// (nothing changed, so the cache returned early) would otherwise keep the
+// whitespace that the check is about to reject.
+export function stripTrailingWhitespace(targetDir: string): void {
+  const changedFiles = runCommand(
+    "git",
+    ["diff", "--name-only", "HEAD"],
+    { cwd: targetDir },
+  );
+  if (!changedFiles) return;
+  for (const file of changedFiles.split("\n").filter(Boolean)) {
+    try {
+      const absPath = path.join(targetDir, file);
+      if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+        const content = fs.readFileSync(absPath, "utf8");
+        const cleaned = content.replace(/[ \t]+$/gm, "");
+        if (cleaned !== content) {
+          fs.writeFileSync(absPath, cleaned);
+        }
+      }
+    } catch {
+      // Skip files that can't be read (e.g. binary files)
+    }
+  }
 }

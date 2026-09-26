@@ -79,6 +79,7 @@ import {
   runCommand,
   saveWorkflowState,
   slugifyIssueTitle,
+  stripTrailingWhitespace,
   synchronizeDefaultBranch,
   uncommittedChanges,
   verifyWorktree,
@@ -998,7 +999,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           `\x1b[32m[Resume]\x1b[0m Workflow completed with no changes (new project/initialization case).`,
         );
         return; // Success - nothing to commit means we're done
+      } else {
+        await verifyWorktree(targetDir, undefined, profile);
       }
+      // verifyWorktree strips trailing whitespace too, but only when it is not
+      // skipped: it returns early when nothing changed since validation last
+      // passed, which is exactly the case for a commit of recovered review
+      // fixes. The strip is what keeps `diff --check` below from refusing them.
+      stripTrailingWhitespace(targetDir);
       runCommand("git", ["add", "-A"], { cwd: targetDir });
       runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
       runCommand(
