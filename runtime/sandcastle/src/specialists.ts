@@ -231,7 +231,14 @@ This repository's projects, as detected, with the dependencies each one declares
 ${projects
   .map(
     (project) =>
-      `- ${project.root || "the repository root"}: ${project.label} (${project.marker})\n` +
+      // The repository root's own value is the empty string. A listing that
+      // said only "the repository root" asked for a value the prompt never
+      // showed, and the first profile written for a single-project repository
+      // put the project's label in 'root' — which validation rejects as
+      // omitting the root project. Print the literal.
+      `- root ${
+        project.root === "" ? '"" (the repository root)' : `"${project.root}"`
+      }: ${project.label} (${project.marker})\n` +
       `  declares: ${project.dependencies.length > 0 ? project.dependencies.join(", ") : "nothing this runtime could read"}`,
   )
   .join("\n")}
@@ -273,7 +280,7 @@ Required work:
    register to match:
 
 ${IMPLEMENTATION_PROMPTS.CSHARP}
-3. For each project give the command that runs its tests, and the command that
+4. For each project give the command that runs its tests, and the command that
    prepares a fresh checkout when its ecosystem needs one, together with the
    path whose presence means that preparation can be skipped (node_modules,
    vendor, .venv, target).
@@ -282,13 +289,13 @@ ${IMPLEMENTATION_PROMPTS.CSHARP}
      will be read as part of the program's name and will fail.
    - Report the command this repository already uses. Prefer what its CI or its
      manifest scripts run over anything you would choose yourself.
-4. Run each test command once, in its own project directory, and record what
+5. Run each test command once, in its own project directory, and record what
    happened in 'evidence'. A test suite that fails for reasons that predate your
    work still proves the command is the right one, so set 'verified' true. If a
    command would need network access, containers, credentials, or more than a
    few minutes, do not run it: set 'verified' false and say so in 'evidence'.
    An unverified command is used only when nothing else is known.
-5. Describe the review concerns this repository raises. For security, database
+6. Describe the review concerns this repository raises. For security, database
    and interface-contract work, give the path vocabulary this repository
    actually uses as regular expressions over lowercased forward-slashed
    repository-relative paths, set 'augments' to 'security-audit',
@@ -310,7 +317,7 @@ Completion criteria:
     "repoSummary": "one to three sentences describing the repository",
     "projects": [
       {
-        "root": "<as listed above>",
+        "root": "<the root value from the listing above>",
         "marker": "<as listed above>",
         "label": "<UPPERCASE, as listed above>",
         "ecosystem": "one sentence a person would recognise the project by",
@@ -338,6 +345,11 @@ Completion criteria:
   }
 - Omit 'setup' for a project whose ecosystem needs no preparation step.
 - Report every project listed above, and no project that is not listed.
+- 'root' is the directory the project owns, relative to the repository root,
+  copied exactly from the listing above. The repository root itself is the
+  empty string, so a project listed as 'root ""' takes "root": "" — never its
+  label, and never the words "the repository root". 'root' is a path and
+  'label' is the uppercase stack name; swapping them fails validation.
 `,
 
   LEAN_PLANNER: (
