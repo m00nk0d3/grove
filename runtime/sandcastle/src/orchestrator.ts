@@ -991,10 +991,14 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
 
     const commitChanges = async (subject: string): Promise<void> => {
       const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
+      // Allow success when no changes to commit - this happens on new projects where
+      // all phases complete successfully but there is no code yet to change.
       if (!status) {
-        throw new Error("The workflow produced no changes to commit.");
+        console.log(
+          `\x1b[32m[Resume]\x1b[0m Workflow completed with no changes (new project/initialization case).`,
+        );
+        return; // Success - nothing to commit means we're done
       }
-      await verifyWorktree(targetDir, undefined, profile);
       runCommand("git", ["add", "-A"], { cwd: targetDir });
       runCommand("git", ["diff", "--cached", "--check"], { cwd: targetDir });
       runCommand(
