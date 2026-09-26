@@ -80,6 +80,7 @@ import {
   saveWorkflowState,
   slugifyIssueTitle,
   synchronizeDefaultBranch,
+  uncommittedChanges,
   verifyWorktree,
   warnIfWindowsPathLimitLikely,
   type CommandRunner,
@@ -1353,7 +1354,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         );
       }
       console.log(`\x1b[33m[Git]\x1b[0m Pushing branch ${branchName}...`);
-      runCommand("git", ["push", "-u", "origin", branchName], { cwd: targetDir });
+      publishBranch(targetDir, branchName);
       console.log(`\x1b[35m[GitHub]\x1b[0m Opening pull request...`);
       prUrl = runCommand(
         "gh",
@@ -1424,6 +1425,27 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         return;
       }
       while (!state.approved) {
+        const cycle = state.reviewCyclesCompleted + 1;
+
+        // A cycle that failed between the implementer finishing and its commit
+        // left the fixes in the worktree and nowhere else, and the reviewer
+        // reads the pull request's diff from GitHub, where they do not exist. It
+        // cannot see them, so it reports the same blockers, the counter never
+        // advances, and the cycle repeats on work that is already done. Finish
+        // what the interrupted cycle owed before asking anyone to review it:
+        // verified and published, exactly as it would have been had it not been
+        // interrupted. The message it carries is that cycle's own, and the
+        // counter still does not advance — this work is about to be reviewed as
+        // the cycle it belongs to, not counted as one already reviewed.
+        if (uncommittedChanges(targetDir)) {
+          console.log(
+            `\n\x1b[33m[Review Fixes Recovered]\x1b[0m An earlier cycle left changes uncommitted; committing and publishing them as cycle ${cycle} before the reviewer reads the pull request.`,
+          );
+          await commitChanges(`fix: address PR review cycle ${cycle} (#${issueNum})`);
+          publishBranch(targetDir, branchName);
+          saveWorkflowState(statePath, state);
+        }
+
         if (
           state.reviewCyclesCompleted > 0 &&
           state.reviewCyclesCompleted % REVIEW_BATCH_SIZE === 0 &&
@@ -1434,7 +1456,6 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           );
         }
 
-        const cycle = state.reviewCyclesCompleted + 1;
         fs.rmSync(verdictPath, { force: true });
         const reviewState = captureWorktreeState(
           targetDir,
@@ -1470,7 +1491,8 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         state.finalVerdict = formatReviewVerdict(verdict, cycle);
 
         if (verdict.verdict === "approved") {
-          fs.rmSync(verdictPath, { force: true });
+        const cycle = state.reviewCyclesCompleted + 1;
+        fs.rmSync(verdictPath, { force: true });
           requireCleanWorktree(targetDir);
           state.approved = true;
           saveWorkflowState(statePath, state);
@@ -1527,6 +1549,13 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     // failed or interrupted push would otherwise leave this run reporting
     // success on a pull request that never received it. Nothing is reportable as
     // complete until the branch is on the remote.
+    //
+    // The worktree is checked first, and it is a separate condition rather than
+    // part of the same one: publishBranch compares HEAD with the remote, so a
+    // tree full of uncommitted work reads to it as "already published" and the
+    // run would announce a pull request that is missing every change the run
+    // made to it. Checked here, that is a refusal naming the files instead.
+    requireCleanWorktree(targetDir);
     publishBranch(targetDir, branchName);
     workflowSucceeded = true;
   } finally {

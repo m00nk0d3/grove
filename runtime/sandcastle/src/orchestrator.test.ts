@@ -28,9 +28,11 @@ import {
   parseCliArgs,
   PI_COMPACTION_GUARD_PATH,
   publishBranch,
+  requireCleanWorktree,
   resolveAgentBackend,
   slugifyIssueTitle,
   synchronizeDefaultBranch,
+  uncommittedChanges,
   warnIfWindowsPathLimitLikely,
 } from "./workflow-utils.js";
 import compactionGuard, {
@@ -2257,6 +2259,88 @@ test("a branch is published by comparing it with the remote, not by assuming a p
   ]);
 });
 
+test("what counts as uncommitted work is read once, and read as porcelain status", () => {
+  const calls: { command: string; args: string[]; cwd?: string }[] = [];
+  const runner = (command: string, args: string[], options?: { cwd?: string }) => {
+    calls.push({ command, args, cwd: options?.cwd });
+    return " M src/a.ts\n?? src/new.ts\n";
+  };
+
+  // Both a stage refusing to continue and a stage adopting what an interrupted
+  // one left have to agree on what a change is, or the second commits nothing
+  // and the first refuses over something it would have accepted.
+  assert.equal(uncommittedChanges("/wt", runner), " M src/a.ts\n?? src/new.ts\n");
+  assert.throws(
+    () => requireCleanWorktree("/wt", runner),
+    /left uncommitted changes:\n M src\/a\.ts/,
+  );
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.command, "git");
+    assert.deepEqual(call.args, ["status", "--porcelain"]);
+    assert.equal(call.cwd, "/wt");
+  }
+
+  // A clean tree is an empty string, not undefined and not a space: the callers
+  // branch on truthiness, and " " would read as a refusal.
+  const clean = () => "";
+  assert.equal(uncommittedChanges("/wt", clean), "");
+  requireCleanWorktree("/wt", clean);
+});
+
+test("an interrupted review cycle's fixes are published before anyone reviews them", async () => {
+  const { fileURLToPath } = await import("node:url");
+  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const source = fs.readFileSync(path.join(srcDir, "orchestrator.ts"), "utf8");
+  const loop = source.slice(source.indexOf("while (!state.approved) {"));
+  assert.ok(loop.length > 0, "the review loop was not found");
+
+  // The reviewer reads the pull request's diff from GitHub. Fixes that were
+  // never committed are not in it, so it cannot see them, reports the same
+  // blockers, and the cycle never advances. The leftovers have to be committed
+  // and published first, and before the reviewer is invoked rather than after.
+  const recovery = loop.indexOf("uncommittedChanges(targetDir)");
+  assert.ok(recovery >= 0, "the review loop never looks for uncommitted work");
+  const reviewer = loop.indexOf("SPECIALISTS.PR_REVIEWER(");
+  assert.ok(reviewer > 0, "the reviewer was not found in the review loop");
+  assert.ok(
+    recovery < reviewer,
+    "uncommitted review fixes must be committed and published before the reviewer reads the pull request",
+  );
+  const between = loop.slice(recovery, reviewer);
+  assert.match(
+    between,
+    /await commitChanges\(`fix: address PR review cycle/,
+    "the recovered fixes must be committed",
+  );
+  assert.match(
+    between,
+    /publishBranch\(targetDir, branchName\)/,
+    "the recovered fixes must be published, or the reviewer cannot see them either",
+  );
+});
+
+test("a run cannot report a pull request approved while its worktree still holds the work", async () => {
+  const { fileURLToPath } = await import("node:url");
+  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const source = fs.readFileSync(path.join(srcDir, "orchestrator.ts"), "utf8");
+
+  // publishBranch compares HEAD with the remote, so uncommitted work reads to it
+  // as "already published" and the run announces a pull request that is missing
+  // every change made to it. The worktree is checked first, as its own
+  // condition.
+  const gate = source.slice(source.indexOf("    requireCleanWorktree(targetDir);\n    publishBranch"));
+  assert.ok(gate.length > 0, "the success gate does not check the worktree");
+  const clean = gate.indexOf("requireCleanWorktree(targetDir)");
+  const publish = gate.indexOf("publishBranch(targetDir, branchName)");
+  const succeeded = gate.indexOf("workflowSucceeded = true");
+  assert.ok(clean >= 0, "the success gate must require a clean worktree");
+  assert.ok(
+    clean < publish && publish < succeeded,
+    "the worktree must be checked before publishing and before success is recorded",
+  );
+});
+
 test("a JavaScript project checked out without its dependencies gets them installed", () => {
   const root = fs.mkdtempSync(path.join(process.cwd(), ".js-deps-"));
   try {
@@ -2733,4 +2817,94 @@ test("the workflow waits for each step before recording it as done", () => {
       .map(([lineNumber, line]) => `${lineNumber}: ${line.trim()}`)
       .join(" | ")}`,
   );
+});
+
+test("an interrupted review cycle's fixes are invisible to the pull request until they are committed", () => {
+  // The reviewer is sent to read the pull request's diff from GitHub, so what it
+  // judges is what the remote holds. A cycle that died before its commit left the
+  // fixes on disk, where no reviewer will ever see them, which is how one
+  // cycle's blockers came to be reported again and again with the counter
+  // standing still. This walks that sequence against real git.
+  const root = fs.mkdtempSync(path.join(process.cwd(), "recover-fixes-"));
+  const remote = path.join(root, "origin.git");
+  const work = path.join(root, "work");
+  const branch = "agent/issue-1";
+  const git = (cwd: string, ...args: string[]): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  // What the pull request shows: its base against the branch head, which is
+  // what `gh pr diff` reports and therefore what the reviewer reads. The remote
+  // is asked directly for the head, because a tracking ref would report the
+  // local mirror of it rather than the branch the pull request actually points
+  // at.
+  const pullRequestDiff = (): string =>
+    git(work, "diff", "refs/remotes/origin/main...HEAD", "--name-only");
+  const remoteHead = (): string =>
+    git(work, "ls-remote", "origin", `refs/heads/${branch}`).split("\t")[0];
+
+  try {
+    fs.mkdirSync(work);
+    execFileSync("git", ["init", "--quiet", "--bare", remote]);
+    execFileSync("git", ["init", "--quiet", work]);
+    git(work, "config", "user.email", "test@example.com");
+    git(work, "config", "user.name", "Test");
+    git(work, "checkout", "--quiet", "-b", "main");
+    fs.writeFileSync(path.join(work, "a.ts"), "export const a = 1;\n");
+    git(work, "add", "-A");
+    git(work, "commit", "--quiet", "-m", "first");
+    git(work, "remote", "add", "origin", remote);
+    publishBranch(work, "main");
+
+    // The delivery commit, published, is the pull request as the reviewer first
+    // sees it.
+    git(work, "checkout", "--quiet", "-b", branch);
+    fs.writeFileSync(path.join(work, "b.ts"), "export const b = 1;\n");
+    git(work, "add", "-A");
+    git(work, "commit", "--quiet", "-m", "feat: the issue (#1)");
+    assert.equal(publishBranch(work, branch), "pushed");
+    assert.equal(pullRequestDiff(), "b.ts");
+
+    // The implementer fixes the reviewer's blockers, and the cycle dies before
+    // committing them.
+    fs.writeFileSync(path.join(work, "a.ts"), "export const a = 2;\n");
+
+    assert.ok(
+      uncommittedChanges(work).includes("a.ts"),
+      "the interrupted cycle's fixes must be recognisable as uncommitted work",
+    );
+    assert.equal(
+      pullRequestDiff(),
+      "b.ts",
+      "a reviewer reading the pull request cannot see work that was never committed",
+    );
+    assert.equal(
+      remoteHead(),
+      git(work, "rev-parse", "HEAD"),
+      "the remote still points at the delivery commit: the fix is on disk and nowhere else",
+    );
+
+    // What the review loop does before invoking the reviewer: finish the commit
+    // the interrupted cycle owed, and publish it.
+    git(work, "add", "-A");
+    git(work, "commit", "--quiet", "-m", "fix: address PR review cycle 1 (#1)");
+    assert.equal(publishBranch(work, branch), "pushed");
+    assert.equal(uncommittedChanges(work), "", "the worktree is clean once recovered");
+
+    assert.equal(
+      pullRequestDiff().split("\n").sort().join(" "),
+      "a.ts b.ts",
+      "the recovered fix is now in the pull request the reviewer reads",
+    );
+    assert.equal(
+      remoteHead(),
+      git(work, "rev-parse", "HEAD"),
+      "the remote holds the recovered commit",
+    );
+    assert.equal(
+      publishBranch(work, branch),
+      "published",
+      "recovering twice must not push twice",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

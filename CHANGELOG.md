@@ -332,6 +332,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A failed review cycle is recovered instead of repeated** — when a review fix
+  cycle died between the implementer finishing and its commit (the commit
+  validates first, so failing tests leave the fixes on disk), the next run
+  re-entered the same cycle against a worktree full of changes it would not
+  commit. The reviewer is sent to read the pull request's diff from GitHub, so
+  it cannot see work that was never committed: it reported the same blockers,
+  the cycle counter never advanced, and the run looped on work already done —
+  or approved, and refused forever on a dirty tree. The review loop now finishes
+  what an interrupted cycle owed, committing and publishing its fixes under that
+  cycle's own message before anyone reviews them, and the check that decides a
+  run is complete requires a clean worktree as well as a published branch, so a
+  run can no longer announce an approved pull request that is missing changes
+  made to it.
 - **An implementation run no longer reports success while a review fix is
   unpublished** — the review loop committed a cycle's fixes and pushed them as
   two steps, and recorded the cycle only after both. A push that failed, or a

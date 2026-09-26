@@ -1199,8 +1199,23 @@ export function assertAgentSettled(output: string, role: string): void {
   }
 }
 
-export function requireCleanWorktree(targetDir: string): void {
-  const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
+// What the workflow counts as a change it has not yet delivered: porcelain
+// status, so tracked edits and untracked files alike, and nothing the tree
+// ignores. One definition, because the question is asked from both sides — a
+// stage that must refuse to continue over uncommitted work, and a stage that
+// has to recognise the leftovers of an interrupted one and finish them.
+export function uncommittedChanges(
+  targetDir: string,
+  runner: CommandRunner = runCommand,
+): string {
+  return runner("git", ["status", "--porcelain"], { cwd: targetDir });
+}
+
+export function requireCleanWorktree(
+  targetDir: string,
+  runner: CommandRunner = runCommand,
+): void {
+  const status = uncommittedChanges(targetDir, runner);
   if (status) {
     throw new Error(
       `The agent workflow left uncommitted changes:\n${status}`,
