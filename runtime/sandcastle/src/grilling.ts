@@ -23,52 +23,25 @@ export async function generateGrillingArtifacts(
 ): Promise<GrillingArtifacts> {
   const artifactsPath = path.join(commonDir, "agent-flow", "grilling");
 
+  // Read context artifact from expected path per SANDCASTLE_JSON_CONTRACT
+  let contextContent: string;
   try {
-    // Read context artifact from expected path per SANDCASTLE_JSON_CONTRACT
-    let contextContent: string;
-    try {
-      contextContent = readFileSync(path.join(artifactsPath, "context.md"), "utf8") || "";
-    } catch {
-      throw new Error("Grilling workflow completed but context.md not found at expected path");
-    }
-
-    // Read spec artifact from expected path per SANDCASTLE_JSON_CONTRACT
-    let specContent: string;
-    try {
-      specContent = readFileSync(path.join(artifactsPath, "spec.md"), "utf8") || "";
-    } catch {
-      throw new Error("Grilling workflow completed but spec.md not found at expected path");
-    }
-
-    return { context: contextContent, spec: specContent };
+    contextContent = readFileSync(path.join(artifactsPath, "context.md"), "utf8") || "";
   } catch (err) {
-    throw new Error(`Failed to generate grilling artifacts: ${String(err)}`);
+    throw new Error(`Grilling workflow completed but context.md not found at expected path: ${String(err)}`);
   }
+
+  // Read spec artifact from expected path per SANDCASTLE_JSON_CONTRACT
+  let specContent: string;
+  try {
+    specContent = readFileSync(path.join(artifactsPath, "spec.md"), "utf8") || "";
+  } catch (err) {
+    throw new Error(`Grilling workflow completed but spec.md not found at expected path: ${String(err)}`);
+  }
+
+  return { context: contextContent, spec: specContent };
 }
 
-export async function readGrillingArtifacts(
-  commonDir: string
-): Promise<GrillingArtifacts> {
-  const contextPath = path.join(commonDir, "agent-flow", "grilling", "context.md");
-  const specPath = path.join(commonDir, "agent-flow", "grilling", "spec.md");
-
-  let content: string;
-
-  try {
-    content = readFileSync(contextPath, "utf8");
-    return { context: content, spec: "" };
-  } catch {
-    // Context may not exist yet
-  }
-
-  try {
-    content = readFileSync(specPath, "utf8");
-    return { context: "", spec: content };
-  } catch {
-    // Neither exists - workflow hasn't completed with artifacts
-    throw new Error("Grilling workflow completed but neither context nor spec artifacts found");
-  }
-}
 
 /**
  * Format a full transcript document from specialist conversation entries.
@@ -90,10 +63,10 @@ function formatContextDocument(transcript: Array<{ agent: string; message: strin
 function formatSpec(transcript: Array<{ agent: string; message: string }>): string {
   let spec = "### Specification\n\n";
 
-  // Pattern matching for actionable items with better regex-based detection
+  const seen = new Set<string>();
   const patterns = [
     /feature[:\s](.+?)(?:[\.\n]|$)/gi,              // feature: description
-    /implement[:\s](.+?)(?:[\.\n]|$)/gi,            // implement: description  
+    /implement[:\s](.+?)(?:[\.\n]|$)/gi,            // implement: description
     /requirement[:\s](.+?)(?:[\.\n]|$)/gi,         // requirement: description
     /task[:\s](.+?)(?:[\.\n]|$)/gi,                 // task: description
     /^-[\s]+(.+)$/gm,                                // bullet points (not in quotes)
@@ -102,11 +75,10 @@ function formatSpec(transcript: Array<{ agent: string; message: string }>): stri
 
   for (const entry of transcript) {
     const lines = entry.message.split("\n");
-    const seen = new Set<string>();
-    
+
     for (const line of lines) {
       let found = false;
-      
+
       // Try each pattern in order
       for (const pattern of patterns) {
         const match = line.match(pattern);
@@ -127,12 +99,12 @@ function formatSpec(transcript: Array<{ agent: string; message: string }>): stri
   const trimmedSpec = spec.replace(/[\s]*\n\s*$/, "");
   if (trimmedSpec === "### Specification") {
     spec = `### Specification\n\n**Summary of Key Points**\n\n`;
-    
+
     // Extract any key terms or concepts mentioned in the transcript
     for (const entry of transcript) {
       const messageLower = entry.message.toLowerCase();
-      if (messageLower.includes("implement") || 
-          messageLower.includes("build") || 
+      if (messageLower.includes("implement") ||
+          messageLower.includes("build") ||
           messageLower.includes("create") ||
           messageLower.includes("add")) {
         const sentences = entry.message.split(/[.!?]+/);
@@ -145,7 +117,7 @@ function formatSpec(transcript: Array<{ agent: string; message: string }>): stri
         }
       }
     }
-    
+
     // Add generic action items if still empty
     if (spec.trim().endsWith("### Specification\n")) {
       spec = "### Specification\n\n**Implementation Guidelines**\n\n" +
