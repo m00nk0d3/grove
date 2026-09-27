@@ -340,6 +340,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A blank optional field no longer re-runs the prompt engineer for ever.** The
+  profile validator read `augments`, `validatedBy`, `setup` and `skipWhenPresent`
+  with `!== undefined`, so an explicit `null` was refused as a wrong value rather
+  than read as absent. The prompt does ask for those fields to be omitted, but a
+  JSON template with a `null` where the value is unknown is the shape an agent
+  reaches for first. A refused draft is never written to the profile, so the
+  profile stayed stale, so every later workflow invoked the prompt engineer again
+  and drew the same rejection — a full agent run per workflow, for ever, on a
+  field that was blank. A blank now reads as absent; a value that is present but
+  wrong is still refused.
+- **A `@types/*` bump no longer marks a whole monorepo stale.** The manifest
+  digest hashed `devDependencies` wholesale, so `@types/node` moving
+  `^26.6.2` → `^26.6.3` marked the repository's specialists as wrong and summoned
+  the prompt engineer to rewrite all of them. Type definitions describe types to
+  the compiler; no code the project builds, runs or reviews comes out of them.
+  Dependency maps are also key-sorted now, so reordering them reads as the
+  reformat it is. A real dependency or test-script change still re-profiles.
+- **Surfaces are asked for, and an omission is refused.** The prompt engineer
+  listed the detected surfaces as context, then described an output shape with no
+  `surfaces` key, no required-work item covering them, and no rule to report
+  them — so every profile written so far described none, and validation accepted
+  the omission as `[]` where projects get a bidirectional check. In a repository
+  with no manifest at its root, a change confined to a surface then validated
+  every project rather than the one that covers it. The prompt now asks for each
+  surface's `validatedBy`, names the empty string as a valid owner, and the
+  validator refuses a detected surface the profile left out.
 - **A failed review cycle is recovered instead of repeated** — when a review fix
   cycle died between the implementer finishing and its commit (the commit
   validates first, so failing tests leave the fixes on disk), the next run
@@ -578,6 +604,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   backends fail fast with a consistent error.
 - The completion-artifact retry path now covers every non-Pi backend instead of
   OpenCode alone, and its guidance adapts to the active backend.
+- A profile surface records only `root` and `validatedBy`, which is all
+  verification reads. `ProfileSurface.purpose` and its six personas were
+  validated at the same length limits as a project's and then read by nothing —
+  `personaFor` only ever consulted `profile.projects` — so the prompt engineer
+  paid for six specialists per surface in exchange for text no code path could
+  reach. Surfaces written against the older shape are read past, not refused.
+- `PROJECT_PROFILE_VERSION` is 3. An existing profile is used for the run in
+  progress and regenerated on the next one, rather than being held to a
+  requirement that postdates it.
 
 ## [v0.7.1] - 2026-09-20
 

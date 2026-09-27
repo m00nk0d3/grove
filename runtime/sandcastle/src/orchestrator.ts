@@ -1100,12 +1100,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           ),
           [absoluteDraftPath],
           () => {
-            readProfileDraft(absoluteDraftPath, projects);
+            readProfileDraft(absoluteDraftPath, projects, surfaces);
           },
         );
         profile = writeProfile(
           profilePath,
-          readProfileDraft(absoluteDraftPath, projects),
+          readProfileDraft(absoluteDraftPath, projects, surfaces),
           fingerprintRepoShape(targetDir, projects, surfaces),
         );
         fs.rmSync(absoluteDraftPath, { force: true });
