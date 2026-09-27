@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
@@ -25,6 +26,7 @@ type ComposeModal struct {
 	cancel     bool            // true if cancel mode (n key)
 	step       composeStep     // current step: kind | content | confirm
 	kindIdx    int             // selected kind index
+	textInput  textinput.Model // multi-line text input for content editing
 }
 
 type composeStep int
@@ -67,6 +69,11 @@ func NewComposeModal(msg ComposeInitMsg, isEditMode bool) *ComposeModal {
 		cancel: false,
 		step:   step,
 		kindIdx: 0,
+		textInput: func() textinput.Model {
+			ti := textinput.New()
+			ti.Placeholder = "Type your content here (use Enter for new lines)…"
+			return ti
+		}(),
 	}
 }
 
@@ -100,6 +107,41 @@ func (m *ComposeModal) Title() string {
 	return m.title
 }
 
+// renderKindSelector renders the kind selection screen with 2 options.
+func renderKindSelector(m *ComposeModal) string {
+	kinds := []string{"idea", "bug"}
+	bold := lipgloss.NewStyle().Bold(true)
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#888"))
+
+	var b strings.Builder
+	for i, kind := range kinds {
+		cursor := bold.Render("▶")
+		if m.kindIdx != i {
+			cursor = "  "
+		}
+		line := fmt.Sprintf("%s %s", cursor, bold.Render(kind))
+		b.WriteString(muted.Render(line))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// renderContentEditor renders the content entry screen with multi-line text input.
+func renderContentEditor(m *ComposeModal) string {
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888")).Render("Title: ")
+	return fmt.Sprintf("%s%s\n\n%s", titleStyle, m.initMsg.Title, m.textInput.View())
+}
+
+// renderConfirmSave renders the save confirmation screen.
+func renderConfirmSave(m *ComposeModal) string {
+	status := "ACCEPT"
+	if m.cancel {
+		status = "CANCELLED"
+	}
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#0f0"))
+	return fmt.Sprintf("%s %s", titleStyle.Render("Entry Ready:"), status)
+}
+
 // View renders the compose modal content.
 func (m *ComposeModal) View() string {
 	if m.height <= 0 {
@@ -125,11 +167,11 @@ func (m *ComposeModal) View() string {
 	var content string
 	switch m.step {
 	case composeKind:
-		content = renderKindSelector(m, m.width)
+		content = renderKindSelector(m)
 	case composeContent:
-		content = renderContentEditor(m, m.width)
+		content = renderContentEditor(m)
 	case composeConfirm:
-		content = renderConfirmSave(m, m.width)
+		content = renderConfirmSave(m)
 	default:
 		content = "Initializing…"
 	}
@@ -177,20 +219,25 @@ func (m *ComposeModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.step = composeKind
 			}
 
-		case tea.KeyUp:
-			if m.step == composeKind {
+		case tea.KeyUp, tea.KeyCtrlP:
+			if m.step == composeContent && m.textInput.Focused() {
+				return m, nil
+			}
+			if m.kindIdx > 0 {
 				m.kindIdx--
-				if m.kindIdx < 0 {
-					m.kindIdx = len(kinds) - 1
-				}
+			} else if m.kindIdx == 0 {
+				m.step = composeKind
 			}
 
 		case tea.KeyDown:
-			if m.step == composeKind {
+			if m.step == composeContent && m.textInput.Focused() {
+				m.textInput.Focus()
+				return m, nil
+			}
+			if m.kindIdx < len(kinds)-1 {
 				m.kindIdx++
-				if m.kindIdx >= len(kinds) {
-					m.kindIdx = 0
-				}
+			} else if m.kindIdx == len(kinds)-1 {
+				m.step = composeContent
 			}
 
 		case tea.KeyCtrlN:
@@ -198,48 +245,17 @@ func (m *ComposeModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Update textinput when focused on content step
+		if m.step == composeContent {
+			var inputCmd tea.Cmd
+			m.textInput, inputCmd = m.textInput.Update(msg)
+			return m, inputCmd
+		}
+
 		return m, nil
 	}
+
 	return m, nil
-}
-
-// renderKindSelector renders the kind selection screen with 2 options.
-func renderKindSelector(m *ComposeModal, width int) string {
-	kinds := []string{"idea", "bug"}
-	bold := lipgloss.NewStyle().Bold(true)
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#888"))
-
-	var b strings.Builder
-	for i, kind := range kinds {
-		cursor := bold.Render("▶")
-		if m.kindIdx != i {
-			cursor = "  "
-		}
-		line := fmt.Sprintf("%s %s", cursor, bold.Render(kind))
-		b.WriteString(muted.Render(line))
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-// renderContentEditor renders the content entry screen.
-func renderContentEditor(m *ComposeModal, width int) string {
-	if m.content == "" {
-		m.content = "(enter idea or bug details here...)"
-	}
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888")).Render("Title: ")
-	contentStyle := lipgloss.NewStyle().MarginLeft(10)
-	return fmt.Sprintf("%s%s\n\n%s", titleStyle, m.initMsg.Title, contentStyle.Render(m.content))
-}
-
-// renderConfirmSave renders the save confirmation screen.
-func renderConfirmSave(m *ComposeModal, width int) string {
-	status := "ACCEPT"
-	if m.cancel {
-		status = "CANCELLED"
-	}
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#0f0"))
-	return fmt.Sprintf("%s %s", titleStyle.Render("Entry Ready:"), status)
 }
 
 // EntrySaveCmd saves the composed entry to disk and returns the saved message or error.

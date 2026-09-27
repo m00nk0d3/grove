@@ -830,20 +830,21 @@ func NewModel() *Model {
 		}
 	}
 
-	return &Model{
-		Config:             cfg,
-		themeIdx:           themeIdx,
-		statusErr:          configErr,
-		focused:            panelList,
-		insideHerdr:        os.Getenv("HERDR_ENV") != "",
-		dismissedWorkflows: loadDismissedWorkflows(),
-		fuzzyInput: func() textinput.Model {
-			ti := textinput.New()
-			ti.Placeholder = "Search worktrees, issues, PRs, files…"
-			return ti
-		}(),
-		labs:               []domain.LabEntry{}, // Will be loaded via refreshWorktreesCmd handler
-	}
+		return &Model{
+			Config:             cfg,
+			themeIdx:           themeIdx,
+			statusErr:          configErr,
+			focused:            panelList,
+			insideHerdr:        os.Getenv("HERDR_ENV") != "",
+			dismissedWorkflows: loadDismissedWorkflows(),
+			fuzzyInput: func() textinput.Model {
+				ti := textinput.New()
+				ti.Placeholder = "Search worktrees, issues, PRs, files…"
+				return ti
+			}(),
+			labs:               []domain.LabEntry{}, // Will be loaded via refreshWorktreesCmd handler
+			labFilter:          domain.LabFilterAll,
+		}
 }
 
 // Init initializes the model and triggers an initial worktree list load and GitHub sync.
@@ -1304,7 +1305,31 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focused == panelCtx {
 				return m.runSelectedContextAction()
 			}
-			return m.activateSelectedItem()
+			// In viewLab, Enter activates or edits the selected entry
+			if m.view == viewLab && m.activeModal == nil {
+				selected, ok := m.selectedLab()
+				if !ok || selected.Kind == "" {
+					// No valid entry - open compose modal for new entry
+					m.activeModal = modal.NewComposeModal(
+						modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
+						false, // isEditMode
+					)
+				} else if selected.Content == "" {
+					// Empty content - open compose modal for new entry
+					m.activeModal = modal.NewComposeModal(
+						modal.ComposeInitMsg{Kind: string(selected.Kind), RepoPath: m.RepoPath},
+						false, // isEditMode
+					)
+				} else {
+					// Non-empty entry with content - edit it
+					m.activeModal = modal.NewComposeModal(
+						modal.ComposeInitMsg{Kind: string(selected.Kind), Title: selected.Title, Content: selected.Content, RepoPath: m.RepoPath},
+						true, // isEditMode
+					)
+				}
+			} else {
+				return m.activateSelectedItem()
+			}
 		case tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyCtrlC:
@@ -1446,6 +1471,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "/":
 				return m, m.openFuzzyCmd()
+			// Filter cycling when in viewLab (keys 1/2/3 cycle between all/idea/bug filters)
+			case "1", "2", "3":
+				if m.view == viewLab {
+					switch msg.String() {
+					case "1", "1\r":
+						m.labFilter = domain.LabFilterAll
+					case "2", "2\r":
+						m.labFilter = domain.LabFilterIdea
+					case "3", "3\r":
+						m.labFilter = domain.LabFilterBug
+					}
+				}
+			// Edit handler for viewLab (only when in viewLab and not already handled by dashboard switch)
+			case "e", "E":
+				if m.view == viewLab && m.activeModal == nil {
+					// Edit selected lab entry if one exists
+					selected, ok := m.selectedLab()
+					if ok && selected.ID != "" {
+						m.activeModal = modal.NewComposeModal(
+							modal.ComposeInitMsg{Kind: string(domain.LabFilterIdea), RepoPath: m.RepoPath},
+							true, // isEditMode
+						)
+					}
+				}
 			}
 		}
 
