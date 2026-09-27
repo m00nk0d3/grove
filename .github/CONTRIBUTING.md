@@ -103,7 +103,11 @@ Run `make test` before opening a pull request. CI runs `make test` and
 
 - **Go tests:** Run `make test` for both Go and TypeScript runtime tests.
 - **Lab view features:** Test new Lab entries with `'l'`, ensure filtering (1/2/3) works, and verify shape workflow (`s`) creates GitHub issues correctly.
-- **Workflow kinds:** All workflows (`imp|review|address|ci|resolve|clean|grilling`) should pass validation in their respective runtime tests.
+- **Workflow kinds:** All workflows (`imp|review|address|ci|resolve|clean|grilling`) should pass validation in their respective runtime tests. Grilling tests cover:
+  - Artifact generation on workflow completion (both `context.md` and `spec.md`)
+  - Context document contains full conversation transcript
+  - Spec contains extracted actionable requirements from answers
+  - Artifacts are readable by Grove TUI at expected paths
 
 ### Linting
 

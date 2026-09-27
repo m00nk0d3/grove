@@ -208,13 +208,20 @@ removed only with `--stop`. `status` counts only `queued` and `running` runs in
 
 Reports are not part of the command interface: Grove reads them directly from
 `<common-git-dir>/agent-flow/`, where the workflows write them beside their
-checkpoints.
+checkpoints. Grilling artifacts (`context.md`, `spec.md`) follow a separate path
+under `grilling/`.
 
-| Kind | Files |
-| --- | --- |
-| `imp` | `issue-<N>-implementation-report.md`, `issue-<N>-review-verdict.md` |
-| `review` | `pr-<N>-<head sha, 8 characters>-review.md`, one per reviewed head |
-| `ci` | `ci-pr-<N>/failures.md` |
+| Kind | Files | Path |
+| --- | --- | --- |
+| `imp` | `issue-<N>-implementation-report.md`, `issue-<N>-review-verdict.md` | `agent-flow/` |
+| `review` | `pr-<N>-<head sha, 8 characters>-review.md` | `agent-flow/` (one per reviewed head) |
+| `ci` | `ci-pr-<N>/failures.md` | `agent-flow/ci-pr-<N>/` |
+
+Grilling artifacts for a completed grilling workflow:
+
+| Kind | Files | Path |
+| --- | --- | --- |
+| `grilling` | `context.md`, `spec.md` | `agent-flow/grilling/` |
 
 The same directory holds `issue-<N>.json` (an `imp` run's checkpoint, which a
 retry resumes from), `issue-<N>-pr-title.txt`, `issue-<N>-lean-evidence.json`,
