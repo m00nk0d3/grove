@@ -650,6 +650,26 @@ export function getProjectProfilePath(repoRoot: string): string {
   );
 }
 
+// The prompt engineer's draft lives beside the profile it becomes, for the same
+// reason the profile does: an untracked file inside the worktree dirties `git
+// status`, shows up in the untracked-file lists the workflow reads as its change
+// set, and trips the clean-checkout guards — which then reads as a repository
+// change worth re-profiling on the next run. Per issue so concurrent workflows
+// on the same repository do not share one draft.
+export function getProjectProfileDraftPath(
+  repoRoot: string,
+  issueNum: string,
+): string {
+  const gitCommonDir = runCommand("git", ["rev-parse", "--git-common-dir"], {
+    cwd: repoRoot,
+  });
+  return path.join(
+    path.resolve(repoRoot, gitCommonDir),
+    "agent-flow",
+    `project-profile.issue-${issueNum}.draft.json`,
+  );
+}
+
 // The files a pull request changes, which is the scope that decides which
 // specialist reviews or repairs it. A Python pull request in a repository that
 // also holds a TypeScript app should summon a Python reviewer.
@@ -1637,18 +1657,39 @@ export async function verifyWorktree(
 // called by every commit path: a commit made after validation was skipped
 // (nothing changed, so the cache returned early) would otherwise keep the
 // whitespace that the check is about to reject.
+//
+// Both tracked edits and brand-new untracked files are stripped: the delivery
+// commit runs `git add -A` followed by `git diff --cached --check`, and the
+// cached check sees newly added files that the unstaged `git diff --check`
+// inside verification never looked at. Files with null bytes are left alone so
+// a binary checked out for a workflow is never rewritten as UTF-8 text.
 export function stripTrailingWhitespace(targetDir: string): void {
-  const changedFiles = runCommand(
+  const tracked = runCommand(
     "git",
     ["diff", "--name-only", "HEAD"],
     { cwd: targetDir },
   );
-  if (!changedFiles) return;
-  for (const file of changedFiles.split("\n").filter(Boolean)) {
+  let untracked = "";
+  try {
+    untracked = runCommand(
+      "git",
+      ["ls-files", "--others", "--exclude-standard"],
+      { cwd: targetDir },
+    );
+  } catch {
+    // An unreadable index simply yields no untracked names.
+  }
+  const files = new Set(
+    `${tracked}\n${untracked}`.split("\n").map((line) => line.trim()).filter(Boolean),
+  );
+  if (files.size === 0) return;
+  for (const file of files) {
     try {
       const absPath = path.join(targetDir, file);
       if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
-        const content = fs.readFileSync(absPath, "utf8");
+        const raw = fs.readFileSync(absPath);
+        if (raw.includes(0)) continue; // binary: do not rewrite as text
+        const content = raw.toString("utf8");
         const cleaned = content.replace(/[ \t]+$/gm, "");
         if (cleaned !== content) {
           fs.writeFileSync(absPath, cleaned);

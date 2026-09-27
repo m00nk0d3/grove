@@ -808,6 +808,44 @@ test("test specialist does not invent tests for non-behavioral changes", () => {
   assert.match(prompt, /no test changes are appropriate/i);
 });
 
+test("test specialist mandates red-green TDD for behavioral changes", () => {
+  const prompt = SPECIALISTS.TEST_ENGINEER(
+    TS_PERSONA,
+    "42",
+    ".agent/REQUIREMENTS.md",
+    ".agent/CONTEXT.md",
+    ".agent/PLAN.md",
+  );
+
+  assert.match(prompt, /red-green TDD/i);
+  assert.match(prompt, /fail for the expected reason \(red\)/i);
+  assert.match(prompt, /only case where zero test delta is acceptable/i);
+});
+
+test("implementation prompt requires consuming red tests first", () => {
+  const prompt = getImplementationPrompt(
+    TS_PERSONA,
+    "42",
+    ".agent/REQUIREMENTS.md",
+    ".agent/CONTEXT.md",
+    ".agent/PLAN.md",
+  );
+
+  assert.match(prompt, /run them first to confirm the failure/i);
+  assert.match(prompt, /write the failing test first yourself/i);
+});
+
+test("verifier rejects behavioral diffs with zero test delta", () => {
+  const verifier = SPECIALISTS.VERIFIER(
+    TS_PERSONA,
+    "42",
+    ".agent/REQUIREMENTS.md",
+    ".agent/PLAN.md",
+  );
+
+  assert.match(verifier, /zero test delta fails/i);
+});
+
 test("lean specialists have distinct planning, implementation, and review contracts", () => {
   const planner = SPECIALISTS.LEAN_PLANNER(
     TS_PERSONA,
@@ -831,13 +869,18 @@ test("lean specialists have distinct planning, implementation, and review contra
   assert.match(planner, /scope, acceptance criteria, affected areas/);
   assert.match(planner, /only new or modified artifact/);
   assert.match(planner, /Do not modify product code/);
+  assert.match(planner, /exact test file/i);
   assert.match(prompt, /Lean Implementation Specialist/);
   assert.match(prompt, /Read the complete GitHub issue using: gh issue view/);
   assert.match(prompt, /LEAN_PLAN\.md/);
-  assert.match(prompt, /do not invent permanent tests/i);
+  assert.match(prompt, /without inventing tests for issue-specific wording/i);
+  assert.match(prompt, /red-green TDD/i);
+  assert.match(prompt, /before the failing test exists/i);
+  assert.match(prompt, /zero test delta is incomplete/i);
   assert.match(prompt, /Do not commit, push, create or edit pull requests/);
   assert.match(reviewer, /independent Lean Verifier and Reviewer/);
   assert.match(reviewer, /Inspect the complete git diff/);
+  assert.match(reviewer, /zero test delta is a blocker/i);
   assert.match(reviewer, /Do not modify source files/);
   assert.match(reviewer, /implementation specialist can fix them/);
   assert.match(reviewer, /"status":"complete"/);
