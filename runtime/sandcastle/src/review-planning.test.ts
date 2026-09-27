@@ -451,7 +451,7 @@ test("a pattern that can take exponential time to match is refused", async () =>
     // regex cannot be interrupted: the run would stall for ever with no error.
     write([{ id: "evil", title: "evil", pathPatterns: ["^(a+)+$"], checklist: ["x"] }]);
     assert.throws(
-      () => readProfileDraft(draftPath, detected),
+      () => readProfileDraft(draftPath, detected, []),
       /exponential time/,
     );
 
@@ -459,7 +459,7 @@ test("a pattern that can take exponential time to match is refused", async () =>
     write([
       { id: "fine", title: "fine", pathPatterns: ["(^|/)migrations?(/|$)"], checklist: ["x"] },
     ]);
-    assert.equal(readProfileDraft(draftPath, detected).concerns.length, 1);
+    assert.equal(readProfileDraft(draftPath, detected, []).concerns.length, 1);
 
     // Everything rendered into a prompt is bounded.
     write([
@@ -470,7 +470,7 @@ test("a pattern that can take exponential time to match is refused", async () =>
         checklist: Array.from({ length: 2000 }, (_, i) => `item ${i}`),
       },
     ]);
-    assert.throws(() => readProfileDraft(draftPath, detected), /checklist items/);
+    assert.throws(() => readProfileDraft(draftPath, detected, []), /checklist items/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -697,6 +697,56 @@ test("artifact paths are built posix, not with the platform separator", async ()
   assert.match(declaration[1], /\.agent\//, "agentDir should read as a posix path");
 });
 
+test("the prompt engineer is asked for the surfaces it is shown", async () => {
+  const { SPECIALISTS } = await import("./specialists.js");
+  const prompt = SPECIALISTS.PROMPT_ENGINEER(
+    "owner/repo",
+    ".agent/issue-1/draft.json",
+    [{ root: "", marker: "go.mod", label: "GO", dependencies: [] }],
+    [{ root: "internal/data/migrations", label: "SQL", evidence: "9 of 9 files are .sql" }],
+  );
+
+  // The surface is listed as context, which is not the same as being asked for.
+  // Listing it and then describing an output shape with no 'surfaces' key is how
+  // every profile so far came back with "surfaces": [], silently, while the
+  // validator had no check that the detected surfaces were described at all.
+  assert.match(prompt, /- internal\/data\/migrations: SQL \(9 of 9 files are \.sql\)/);
+  assert.match(prompt, /"surfaces": \[/);
+  // Required work, not just the schema: an agent fills in what it is asked for.
+  assert.match(prompt, /For each surface listed above, say which project's tests cover it/);
+  // And the fallback the field exists to remove is named, so an empty
+  // 'validatedBy' reads as the cost it is rather than as a blank field.
+  assert.match(prompt, /validat\w+ every project in the repository/);
+  assert.match(prompt, /Report every surface listed above, and no surface that is not listed/);
+  // The repository root is a valid owner, and it is the empty string.
+  assert.match(prompt, /the repository root is named as "validatedBy": ""/);
+  // What is read is what is asked for: the older shape's label, purpose and
+  // personas are dead, and the prompt says so rather than inviting them.
+  assert.match(prompt, /Only the 'root' and 'validatedBy' fields are read/);
+  // And the step numbers still run, with the surfaces step among them.
+  assert.match(prompt, /\n6\. For each surface listed above/);
+  assert.match(prompt, /\n7\. Describe the review concerns/);
+});
+
+test("a repository with no surfaces is not asked for any", async () => {
+  const { SPECIALISTS } = await import("./specialists.js");
+  const prompt = SPECIALISTS.PROMPT_ENGINEER(
+    "owner/repo",
+    ".agent/issue-1/draft.json",
+    [{ root: "", marker: "go.mod", label: "GO", dependencies: [] }],
+    [],
+  );
+
+  // Asking for a key nothing can fill is how a field ends up empty and the
+  // emptiness looks meaningful.
+  assert.doesNotMatch(prompt, /"surfaces"/);
+  assert.doesNotMatch(prompt, /Report every surface listed above/);
+  // The step numbers stay a run. Emitting the surfaces step's number whether or
+  // not the step is there renders as "6.6." on every repository without one.
+  assert.doesNotMatch(prompt, /\n\d+\.\d+\./);
+  assert.match(prompt, /\n6\. Describe the review concerns/);
+});
+
 test("the prompt engineer is told frameworks belong in the structured field", async () => {
   const { SPECIALISTS } = await import("./specialists.js");
   const prompt = SPECIALISTS.PROMPT_ENGINEER(
@@ -777,7 +827,7 @@ test("a repository with no manifest yet is not profiled, and says so", async () 
       draftPath,
       JSON.stringify({ repoSummary: "new", projects: [], surfaces: [], concerns: [] }),
     );
-    assert.throws(() => readProfileDraft(draftPath, []), /lists no projects/);
+    assert.throws(() => readProfileDraft(draftPath, [], []), /lists no projects/);
 
     // And the orchestrator's own guard is the skip, stated in the source so the
     // reason survives a refactor.

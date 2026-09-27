@@ -217,7 +217,12 @@ export const SPECIALISTS = {
       dependencies: string[];
     }[],
     surfaces: { root: string; label: string; evidence: string }[] = [],
-  ): string => `
+  ): string => {
+    // The surfaces step only exists when there is a surface to describe, so the
+    // step after it is numbered from what is actually in the list. Hard-coding
+    // both numbers renders as "6.7." the moment a repository has no surfaces.
+    const concernsStep = surfaces.length > 0 ? 7 : 6;
+    return `
 You are the Prompt Engineer for ${repo}.
 
 ${CODE_ORGANIZATION_STANDARD}
@@ -249,6 +254,9 @@ This repository's surfaces — directories of work with no manifest of their own
 ${surfaces
   .map((surface) => `- ${surface.root}: ${surface.label} (${surface.evidence})`)
   .join("\n")}
+Every one of these needs an entry in 'surfaces'. They are listed here as context
+for the projects above as well, but the entry is not optional: a surface with no
+owner makes a change inside it validate every project in the repository.
 `
     : ""
 }
@@ -295,7 +303,21 @@ ${IMPLEMENTATION_PROMPTS.CSHARP}
    command would need network access, containers, credentials, or more than a
    few minutes, do not run it: set 'verified' false and say so in 'evidence'.
    An unverified command is used only when nothing else is known.
-6. Describe the review concerns this repository raises. For security, database
+${
+  surfaces.length > 0
+    ? `6. For each surface listed above, say which project's tests cover it, in
+   'surfaces'. Work out which suite actually exercises that directory — a SQL
+   migration is covered by whatever runs against the database, a stylesheet tree
+   by whatever builds the pages it styles — and name that project's 'root'
+   exactly as listed above, the repository root included.
+   - A surface with no 'validatedBy' is not an answer. It falls back to running
+     every project in the repository, which is the cost this field removes.
+   - Only the 'root' and 'validatedBy' fields are read. Do not write a label, a
+     purpose or personas for a surface: nothing downstream reads them, and text
+     that is never acted on is a maintenance claim nobody made.
+`
+    : ""
+}${concernsStep}. Describe the review concerns this repository raises. For security, database
    and interface-contract work, give the path vocabulary this repository
    actually uses as regular expressions over lowercased forward-slashed
    repository-relative paths, set 'augments' to 'security-audit',
@@ -341,16 +363,35 @@ Completion criteria:
         "pathPatterns": ["(^|/)migrations?(/|$)"],
         "checklist": ["one point per line"]
       }
-    ]
+    ]${
+      surfaces.length > 0
+        ? `,
+    "surfaces": [
+      {
+        "root": "<the root value from the surface listing above>",
+        "validatedBy": "<the root of the project whose tests cover it>"
+      }
+    ]`
+        : ""
+    }
   }
 - Omit 'setup' for a project whose ecosystem needs no preparation step.
-- Report every project listed above, and no project that is not listed.
+- Report every project listed above, and no project that is not listed.${
+  surfaces.length > 0
+    ? `
+- Report every surface listed above, and no surface that is not listed.
+- A surface's 'root' and 'validatedBy' are both project-style roots: copy them
+  from the listing above. A project listed as 'root ""' is the empty string, so
+  the repository root is named as "validatedBy": "".`
+    : ""
+}
 - 'root' is the directory the project owns, relative to the repository root,
   copied exactly from the listing above. The repository root itself is the
   empty string, so a project listed as 'root ""' takes "root": "" — never its
   label, and never the words "the repository root". 'root' is a path and
   'label' is the uppercase stack name; swapping them fails validation.
-`,
+`;
+  },
 
   LEAN_PLANNER: (
     persona: string,

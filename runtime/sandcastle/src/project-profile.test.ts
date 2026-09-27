@@ -7,6 +7,7 @@ import {
   loadProfile,
   readProfileDraft,
   writeProfile,
+  PROJECT_PROFILE_VERSION,
   ROLE_KEYS,
   type RepoProfileDraft,
   type RoleKey,
@@ -20,7 +21,12 @@ import {
   getVerificationCommand,
   ensureProjectSetup,
 } from "./workflow-utils.js";
-import { detectStack, detectStackProjects, type StackProject } from "./stack-detector.js";
+import {
+  detectStack,
+  detectStackProjects,
+  detectSurfaces,
+  type StackProject,
+} from "./stack-detector.js";
 
 function personas(text: string): Record<RoleKey, string> {
   return Object.fromEntries(
@@ -253,17 +259,17 @@ test("the profile draft is validated before any of it reaches an agent", () => {
     fs.writeFileSync(draftPath, typeof value === "string" ? value : JSON.stringify(value));
   try {
     write(draft());
-    assert.equal(readProfileDraft(draftPath, detected).projects[0].label, "RUST");
+    assert.equal(readProfileDraft(draftPath, detected, []).projects[0].label, "RUST");
 
     // A fence with its language tag is a formatting slip, not a failed profile.
     write("```json\n" + JSON.stringify(draft()) + "\n```");
-    assert.equal(readProfileDraft(draftPath, detected).projects.length, 1);
+    assert.equal(readProfileDraft(draftPath, detected, []).projects.length, 1);
 
     // Commands are spawned without a shell, so an operator cannot appear.
     const shelled = draft();
     shelled.projects[0].test = command("cargo test && cargo clippy", []);
     write(shelled);
-    assert.throws(() => readProfileDraft(draftPath, detected), /not a single executable/);
+    assert.throws(() => readProfileDraft(draftPath, detected, []), /not a single executable/);
 
     const badPattern = draft({
       concerns: [
@@ -271,23 +277,156 @@ test("the profile draft is validated before any of it reaches an agent", () => {
       ],
     });
     write(badPattern);
-    assert.throws(() => readProfileDraft(draftPath, detected), /\(unclosed/);
+    assert.throws(() => readProfileDraft(draftPath, detected, []), /\(unclosed/);
 
     const missingRole = draft();
     delete (missingRole.projects[0].personas as Record<string, string>).review;
     write(missingRole);
-    assert.throws(() => readProfileDraft(draftPath, detected), /'review' persona/);
+    assert.throws(() => readProfileDraft(draftPath, detected, []), /'review' persona/);
 
     // A profile describing a different repository than the one being worked in.
     write(draft());
     assert.throws(
       () =>
-        readProfileDraft(draftPath, [
-          ...detected,
-          { stack: "TYPESCRIPT", root: "frontend", marker: "frontend/package.json" },
-        ]),
+        readProfileDraft(
+          draftPath,
+          [
+            ...detected,
+            { stack: "TYPESCRIPT", root: "frontend", marker: "frontend/package.json" },
+          ],
+          [],
+        ),
       /missing an entry for 'frontend'/,
     );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an optional field the prompt engineer left null is read as absent", () => {
+  const root = scratch(".profile-null-");
+  const draftPath = path.join(root, "draft.json");
+  const detected: StackProject[] = [
+    { stack: "TYPESCRIPT", root: "frontend", marker: "frontend/package.json", label: "TYPESCRIPT" },
+  ];
+  // Loose on purpose: this is the raw JSON the agent writes, before validation,
+  // and the point is what a key holding null does to it.
+  const base = (): {
+    repoSummary: string;
+    projects: Record<string, unknown>[];
+    surfaces: Record<string, unknown>[];
+    concerns: Record<string, unknown>[];
+  } => ({
+    repoSummary: "A frontend and its migrations.",
+    projects: [
+      {
+        root: "frontend",
+        marker: "frontend/package.json",
+        label: "TYPESCRIPT",
+        ecosystem: "A React app",
+        frameworks: [],
+        personas: personas("React"),
+        test: command("npm", ["test"]),
+        setup: null,
+      },
+    ],
+    surfaces: [{ root: "migrations", validatedBy: null }],
+    concerns: [
+      {
+        id: "worktree-lifecycle",
+        title: "worktree lifecycle",
+        augments: null,
+        pathPatterns: ["^internal/"],
+        checklist: ["one point"],
+      },
+    ],
+  });
+  const write = (value: unknown) => fs.writeFileSync(draftPath, JSON.stringify(value));
+  try {
+    // A JSON template with every key filled in and a null where the value is
+    // unknown is the shape an agent reaches for. It means "no value", which is
+    // what leaving the key out means, so it must not be read as a wrong value.
+    write(base());
+    const read = readProfileDraft(draftPath, detected, [{ root: "migrations", label: "SQL" }]);
+    assert.equal(read.projects[0].setup, undefined);
+    assert.equal(read.surfaces[0].validatedBy, undefined);
+    assert.equal(read.concerns[0].augments, undefined);
+
+    // A value that is present but wrong is still refused: only the blank is
+    // forgiven, so nothing reaches a reviewer as a silently missing instruction.
+    const wrongAugments = base();
+    wrongAugments.concerns[0].augments = 7;
+    write(wrongAugments);
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, [{ root: "migrations", label: "SQL" }]),
+      /invalid augments value/,
+    );
+
+    const wrongValidatedBy = base();
+    wrongValidatedBy.surfaces[0].validatedBy = 7;
+    write(wrongValidatedBy);
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, [{ root: "migrations", label: "SQL" }]),
+      /invalid validatedBy/,
+    );
+
+    const wrongSkipWhenPresent = base();
+    wrongSkipWhenPresent.projects[0].setup = { ...command("npm", ["ci"]), skipWhenPresent: 7 };
+    write(wrongSkipWhenPresent);
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, [{ root: "migrations", label: "SQL" }]),
+      /invalid skipWhenPresent path/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a surface the detector found and the profile left out is refused", () => {
+  const root = scratch(".profile-surfaces-");
+  const draftPath = path.join(root, "draft.json");
+  const detected: StackProject[] = [
+    { stack: "UNKNOWN", root: "backend", marker: "backend/Cargo.toml", label: "RUST" },
+  ];
+  const surfaces = [{ root: "migrations", label: "SQL" }];
+  const write = (value: unknown) => fs.writeFileSync(draftPath, JSON.stringify(value));
+  try {
+    // The omission this guard exists for: the prompt listed the surface as
+    // context and its output shape had no 'surfaces' key, so the agent returned
+    // none and every migration change validated every project in the repository.
+    write(draft());
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, surfaces),
+      /missing an entry for the SQL surface at 'migrations'/,
+    );
+
+    const described = draft({ surfaces: [{ root: "migrations", validatedBy: "backend" }] });
+    write(described);
+    const read = readProfileDraft(draftPath, detected, surfaces);
+    assert.equal(read.surfaces[0].validatedBy, "backend");
+    // Only what verification reads survives; the rest of the older shape is
+    // read past rather than refused, so a stale profile is not a broken one.
+    assert.equal((read.surfaces[0] as unknown as Record<string, unknown>).personas, undefined);
+
+    // A surface the detector never found is as wrong as a project it never
+    // found, and just as likely to be a guess than a reading.
+    write(draft({ surfaces: [{ root: "styles", validatedBy: "backend" }] }));
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, []),
+      /'styles', which is not a surface in this repository/,
+    );
+
+    // And a surface validated by a project that does not exist falls back to
+    // validating everything, which is the cost the field removes.
+    write(draft({ surfaces: [{ root: "migrations", validatedBy: "frontend" }] }));
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, surfaces),
+      /validated by 'frontend'/,
+    );
+
+    // Nothing to describe means nothing to check.
+    write(draft());
+    assert.equal(readProfileDraft(draftPath, detected, []).surfaces.length, 0);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -317,6 +456,51 @@ test("the fingerprint moves when the repository's shape does, and not otherwise"
     fs.mkdirSync(path.join(root, "backend"));
     fs.writeFileSync(path.join(root, "backend", "Cargo.toml"), "[package]\n");
     assert.notEqual(shape(), withScript);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a type definition bump does not summon the prompt engineer", () => {
+  const root = scratch(".profile-types-");
+  try {
+    fs.mkdirSync(path.join(root, "frontend"));
+    const manifest = path.join(root, "frontend", "package.json");
+    const write = (value: unknown) =>
+      fs.writeFileSync(manifest, JSON.stringify(value));
+    write({
+      scripts: { test: "vitest" },
+      devDependencies: { "@types/node": "^26.6.2", typescript: "^5.9.0" },
+    });
+    const shape = () => fingerprintRepoShape(root, detectStackProjects(root));
+    const original = shape();
+
+    // @types/node moves a patch every few days and no code the project builds,
+    // runs or reviews comes out of it.
+    write({
+      scripts: { test: "vitest" },
+      devDependencies: { "@types/node": "^26.6.3", typescript: "^5.9.0" },
+    });
+    assert.equal(shape(), original, "a @types patch bump is not a change of shape");
+
+    // Reordering dependencies is a reformat, like reordering the keys above.
+    write({
+      scripts: { test: "vitest" },
+      devDependencies: { typescript: "^5.9.0", "@types/node": "^26.6.2" },
+    });
+    assert.equal(shape(), original, "dependency order is not a change of shape");
+
+    // A real dependency change still is: it can bring a framework with it.
+    write({
+      scripts: { test: "vitest" },
+      devDependencies: { typescript: "^5.9.0", vitest: "^3.0.0" },
+    });
+    assert.notEqual(shape(), original, "a new dependency is a change of shape");
+
+    // As is a new test script, which is the change the filter exists to keep.
+    const withVite = shape();
+    write({ scripts: { test: "jest" }, devDependencies: { typescript: "^5.9.0" } });
+    assert.notEqual(shape(), withVite);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -352,6 +536,58 @@ test("a profile is reported stale or invalid rather than thrown away", () => {
     const newer = loadProfile(profilePath, root, projects);
     assert.equal(newer.status, "invalid");
     assert.match(newer.reason, /newer version/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an older profile is used now, not refused for what it could not have known", () => {
+  const root = scratch(".profile-oldversion-");
+  const profilePath = path.join(root, "agent-flow", "project-profile.json");
+  const surfaces = [{ root: "migrations", label: "SQL" }];
+  try {
+    fs.mkdirSync(path.join(root, "backend"));
+    fs.writeFileSync(path.join(root, "backend", "Cargo.toml"), "[package]\n");
+    fs.mkdirSync(path.join(root, "migrations"));
+    for (const name of ["001.sql", "002.sql", "003.sql"]) {
+      fs.writeFileSync(path.join(root, "migrations", name), "-- x\n");
+    }
+    const projects = detectStackProjects(root);
+    assert.equal(detectSurfaces(root, projects).length, 1, "the surface is real");
+
+    // Written by the schema before surfaces had to be described, so it has none.
+    // Holding it to the current requirement would report it invalid and discard
+    // a set of personas, when the caller is about to regenerate it anyway.
+    fs.mkdirSync(path.dirname(profilePath), { recursive: true });
+    fs.writeFileSync(
+      profilePath,
+      JSON.stringify({
+        ...draft(),
+        surfaces: [],
+        version: PROJECT_PROFILE_VERSION - 1,
+        fingerprint: fingerprintRepoShape(root, projects, surfaces),
+      }),
+    );
+    const older = loadProfile(profilePath, root, projects, surfaces);
+    assert.equal(older.status, "stale");
+    assert.match(older.reason, /profile version/);
+    assert.ok(older.profile, "a persona set the old schema did write is still usable");
+    assert.equal(older.profile!.projects[0].personas.implementation.length > 0, true);
+
+    // The same omission in a current-version profile is a real defect, and the
+    // caller has already been told the profile is fine to use.
+    fs.writeFileSync(
+      profilePath,
+      JSON.stringify({
+        ...draft(),
+        surfaces: [],
+        version: PROJECT_PROFILE_VERSION,
+        fingerprint: fingerprintRepoShape(root, projects, surfaces),
+      }),
+    );
+    const current = loadProfile(profilePath, root, projects, surfaces);
+    assert.equal(current.status, "invalid");
+    assert.match(current.reason, /missing an entry for the SQL surface/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

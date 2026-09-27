@@ -11,7 +11,7 @@ import { stackLabel, type StackProject } from "./stack-detector.js";
 // tree: sandcastle leaves no footprint in the projects it is pointed at, and an
 // untracked file can be rewritten mid-run without dirtying a worktree and
 // tripping the workflow's own clean-checkout guards.
-export const PROJECT_PROFILE_VERSION = 2;
+export const PROJECT_PROFILE_VERSION = 3;
 
 // One specialist per stage of the workflow. Grouping the fifteen prompt builders
 // onto six keys keeps the generated text tractable while still giving every step
@@ -76,16 +76,18 @@ export interface ProfileProject {
 }
 
 // A surface is a body of work with no manifest of its own: SQL migrations, a
-// stylesheet tree, infrastructure definitions. It has specialists but no test
-// command, so it names the project whose suite covers it instead.
+// stylesheet tree, infrastructure definitions. It has no test command of its own,
+// so all it has to say is whose tests cover it.
+//
+// That is the whole of it. An earlier shape also asked for a label, a purpose and
+// six personas, and nothing ever read them: `personaFor` only ever consulted a
+// project's personas, so the prompt engineer paid for six specialists per surface
+// and a hard validation failure if one came back too short, in exchange for text
+// no code path could reach. What is left here is what verification actually
+// consumes.
 export interface ProfileSurface {
   /** Directory owning the surface, relative to the repository root. */
   root: string;
-  /** What the surface is: "SQL", "STYLES". */
-  label: string;
-  /** What this body of work is for, in a sentence. */
-  purpose: string;
-  personas: Record<RoleKey, string>;
   /**
    * The root of the project whose tests cover changes here. Without it a change
    * confined to this surface has to fall back to validating every project.
@@ -155,6 +157,30 @@ const PACKAGE_JSON_SIGNIFICANT = [
   "packageManager",
 ];
 
+// The maps whose entries are package names, as opposed to `scripts` and
+// `workspaces`, whose entries are keyed by anything the manifest chooses.
+const PACKAGE_JSON_DEPENDENCY_MAPS = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+];
+
+// Type definitions describe types to the compiler; no code the project builds,
+// runs or reviews comes out of them. `@types/node` moves a patch every few days,
+// and without this one bump marks the whole monorepo stale and summons the prompt
+// engineer to rewrite every specialist for a change that cannot make one of them
+// wrong. Dependencies are also sorted below, so reordering them is a reformat
+// rather than a change of substance.
+function significantDependencies(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([name]) => !name.startsWith("@types/"))
+    .sort(([a], [b]) => a.localeCompare(b));
+  return Object.fromEntries(entries);
+}
+
 function manifestDigestInput(absoluteMarkerPath: string): string {
   let raw: string;
   try {
@@ -175,7 +201,10 @@ function manifestDigestInput(absoluteMarkerPath: string): string {
     // used here: it filters keys at every level, which would erase the contents
     // of `scripts` and hide the very change this is watching for.
     for (const key of PACKAGE_JSON_SIGNIFICANT) {
-      if (key in parsed) significant[key] = parsed[key];
+      if (!(key in parsed)) continue;
+      significant[key] = PACKAGE_JSON_DEPENDENCY_MAPS.includes(key)
+        ? significantDependencies(parsed[key])
+        : parsed[key];
     }
     return JSON.stringify(significant);
   } catch {
@@ -235,6 +264,20 @@ function unwrapJson(content: string): string {
     if (closing >= 0) text = text.slice(0, closing);
   }
   return text.replace(/<!--[\s\S]*?-->/g, "").trim();
+}
+
+// An optional field the agent was told to omit comes back as `null` about as
+// often as it is left out, because a JSON template with every key filled in and a
+// null where the value is unknown is the shape models reach for first. `null` and
+// absent mean the same thing, so both do.
+//
+// The cost of getting this wrong is not one failed run. A draft the validator
+// refuses is never written to the profile, so the profile stays stale, so the
+// next workflow invokes the prompt engineer again and draws the same rejection —
+// a full agent run burned per workflow, for ever, on a field that was blank.
+// Refusing a genuinely wrong value is still right; only the blank is forgiven.
+function isAbsent(value: unknown): value is null | undefined {
+  return value === undefined || value === null;
 }
 
 // Commands are handed to spawnSync with no shell, so a shell line does not fail
@@ -321,7 +364,7 @@ function readCommand(
     verified: candidate.verified,
     evidence: candidate.evidence,
   };
-  if (setup && candidate.skipWhenPresent !== undefined) {
+  if (setup && !isAbsent(candidate.skipWhenPresent)) {
     if (
       typeof candidate.skipWhenPresent !== "string" ||
       path.isAbsolute(candidate.skipWhenPresent) ||
@@ -398,24 +441,18 @@ function readSurface(value: unknown, index: number): ProfileSurface {
   if (!value || typeof value !== "object") {
     fail(`Profile surface ${index} is not an object.`);
   }
+  // A surface written against the older shape brings a label, a purpose and six
+  // personas with it. They are read past rather than refused: the profile that
+  // carries them is still correct about the only thing that matters, which is
+  // who validates this surface, and a run is not degraded to the conservative
+  // answer over text nothing consumes.
   const candidate = value as Partial<ProfileSurface>;
   const root = readRelativeRoot(candidate.root, `Profile surface ${index}`);
   if (!root) {
     fail(`Profile surface ${index} has an empty root.`);
   }
-  if (typeof candidate.label !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(candidate.label)) {
-    fail(`Profile surface '${root}' needs an uppercase label such as SQL or STYLES.`);
-  }
-  if (typeof candidate.purpose !== "string" || !candidate.purpose.trim()) {
-    fail(`Profile surface '${root}' has no purpose.`);
-  }
-  const surface: ProfileSurface = {
-    root,
-    label: candidate.label,
-    purpose: candidate.purpose,
-    personas: readPersonas(candidate.personas, `Profile surface '${root}'`),
-  };
-  if (candidate.validatedBy !== undefined) {
+  const surface: ProfileSurface = { root };
+  if (!isAbsent(candidate.validatedBy)) {
     if (typeof candidate.validatedBy !== "string") {
       fail(`Profile surface '${root}' has an invalid validatedBy.`);
     }
@@ -459,7 +496,7 @@ function readProject(value: unknown, index: number): ProfileProject {
     personas: readPersonas(candidate.personas, `Profile project '${root}'`),
     test: readCommand(candidate.test, `Profile project '${root}' test command`),
   };
-  if (candidate.setup !== undefined) {
+  if (!isAbsent(candidate.setup)) {
     project.setup = readCommand(
       candidate.setup,
       `Profile project '${root}' setup command`,
@@ -526,7 +563,7 @@ function readConcern(value: unknown, index: number): ProfileConcern {
     pathPatterns: candidate.pathPatterns as string[],
     checklist: candidate.checklist as string[],
   };
-  if (candidate.augments !== undefined) {
+  if (!isAbsent(candidate.augments)) {
     if (typeof candidate.augments !== "string" || !candidate.augments.trim()) {
       fail(`Profile concern '${candidate.id}' has an invalid augments value.`);
     }
@@ -538,9 +575,15 @@ function readConcern(value: unknown, index: number): ProfileConcern {
 // readProfileDraft validates what the prompt engineer wrote, in the manner of the
 // audit verdict reader: forgive formatting, refuse anything that would be acted on
 // wrongly, and say in one sentence what is missing.
+//
+// `detectedSurfaces` is required rather than defaulted, because the whole point of
+// passing it is the check that every one of them was described. A caller that
+// quietly omitted the argument would be running without the guard while looking
+// like it ran with it.
 export function readProfileDraft(
   draftPath: string,
   detected: StackProject[],
+  detectedSurfaces: { root: string; label: string }[],
 ): RepoProfileDraft {
   if (!fs.existsSync(draftPath)) {
     throw new Error(`The prompt engineer wrote no profile: ${draftPath}`);
@@ -621,9 +664,31 @@ export function readProfileDraft(
     }
     // A surface validated by a project that does not exist would silently fall
     // back to validating everything, which is the behaviour surfaces exist to fix.
-    if (surface.validatedBy !== undefined && !seen.has(surface.validatedBy)) {
+    if (!isAbsent(surface.validatedBy) && !seen.has(surface.validatedBy)) {
       throw new Error(
         `Profile surface '${surface.root}' says it is validated by '${surface.validatedBy}', which is not a project in this repository.`,
+      );
+    }
+  }
+  // A surface the detector found and the profile left out is a surface with no
+  // owner, so a change confined to it validates every project in the repository —
+  // the cost surfaces exist to remove, paid in full and in silence. The same
+  // check projects get, because the same silence is what hid this: the prompt
+  // listed the surfaces as context, asked for no 'surfaces' key in its output
+  // shape, and said nothing about reporting them, so the agent returned none and
+  // there was nowhere for that to be noticed.
+  const detectedSurfaceRoots = new Set(detectedSurfaces.map((surface) => surface.root));
+  for (const detectedSurface of detectedSurfaces) {
+    if (!surfaceRoots.has(detectedSurface.root)) {
+      throw new Error(
+        `The project profile is missing an entry for the ${detectedSurface.label} surface at '${detectedSurface.root}'.`,
+      );
+    }
+  }
+  for (const surface of surfaces) {
+    if (!detectedSurfaceRoots.has(surface.root)) {
+      throw new Error(
+        `The project profile describes a surface at '${surface.root}', which is not a surface in this repository.`,
       );
     }
   }
@@ -686,7 +751,17 @@ export function loadProfile(
   }
   let draft: RepoProfileDraft;
   try {
-    draft = readProfileDraft(profilePath, projects);
+    // A profile written against an older schema is not held to a requirement
+    // that postdates it. It is regenerated on this very run — the caller's
+    // freshness test sends an older version to the prompt engineer — so
+    // refusing it over a field its schema never had would throw away a usable
+    // set of personas and degrade the run in progress to the built-ins, which
+    // is exactly what the version check below exists to prevent.
+    draft = readProfileDraft(
+      profilePath,
+      projects,
+      candidate.version < PROJECT_PROFILE_VERSION ? [] : surfaces,
+    );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return { profile: null, status: "invalid", reason: detail };
