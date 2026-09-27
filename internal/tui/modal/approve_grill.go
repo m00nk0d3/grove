@@ -201,12 +201,14 @@ func (m *ApproveGrillModal) commitArtifactsCmd() tea.Cmd {
 		repoPath := m.artifacts.RepoPath
 
 		if m.action == actionApprove {
-			err := writeArtifact(repoPath, artifactContext, m.artifacts.Context)
+			contextPath, _ := artifactPaths(repoPath, m.artifacts.OutputPath, artifactContext)
+			err := writeArtifact(contextPath, m.artifacts.Context)
 			if err != nil {
 				return GrillingArtifactsCommitErr{Error: err}
 			}
 
-			err = writeArtifact(repoPath, artifactSpec, m.artifacts.Spec)
+			specPath, _ := artifactPaths(repoPath, m.artifacts.OutputPath, artifactSpec)
+			err = writeArtifact(specPath, m.artifacts.Spec)
 			if err != nil {
 				return GrillingArtifactsCommitErr{Error: err}
 			}
@@ -218,8 +220,16 @@ func (m *ApproveGrillModal) commitArtifactsCmd() tea.Cmd {
 	}
 }
 
-// writeArtifact writes the artifact to disk at repo root.
-func writeArtifact(repoPath string, name string, content string) error {
-	path := filepath.Join(repoPath, name+".md")
+// artifactPaths resolves the output path for artifacts.
+// If OutputPath is specified, use it; otherwise default to repo root.
+func artifactPaths(repoPath, outputPath, name string) (string, error) {
+	if outputPath != "" {
+		return filepath.Join(outputPath, name+".md"), nil
+	}
+	return filepath.Join(repoPath, name+".md"), nil
+}
+
+// writeArtifact writes the artifact to disk at the specified path.
+func writeArtifact(path string, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }

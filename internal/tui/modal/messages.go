@@ -7,9 +7,10 @@ import (
 
 // GrillingArtifacts holds the context and spec documents produced by grilling.
 type GrillingArtifacts struct {
-	Context  string
-	Spec     string
-	RepoPath string
+	Context   string
+	Spec      string
+	RepoPath  string
+	OutputPath string // Optional custom output path (empty uses default repo root)
 }
 
 // Modal extends tea.Model with a Title for themed overlay rendering.

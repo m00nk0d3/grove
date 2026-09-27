@@ -1778,21 +1778,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, wf := range msg.snapshot.Workflows {
 			if wf.Kind == modal.WorkflowKindGrilling && wf.Status == "completed" {
 				// Grilling completed - read artifacts from expected paths per SANDCASTLE_JSON_CONTRACT
+				// Include runId in artifact paths to prevent race conditions when multiple workflows run concurrently
+				runID := wf.RunID
+				if runID == "" {
+					runID = wf.WorkflowID
+				}
 				repoRoot := m.RepoPath
 				commonDir := filepath.Join(repoRoot, ".git", "common")
-				grillingDir := filepath.Join(commonDir, "agent-flow", "grilling")
+				grillingDir := filepath.Join(commonDir, "agent-flow", "grilling", runID)
 
 				var contextContent string
 				var specContent string
 
-				// Read context artifact
+				// Read context artifact with runId in path
 				contextPath := filepath.Join(grillingDir, "context.md")
 				ctxBytes, readErr := os.ReadFile(contextPath)
 				if readErr == nil {
 					contextContent = string(ctxBytes)
 				}
 
-				// Read spec artifact
+				// Read spec artifact with runId in path
 				specPath := filepath.Join(grillingDir, "spec.md")
 				spcBytes, readErr2 := os.ReadFile(specPath)
 				if readErr2 == nil {
