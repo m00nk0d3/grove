@@ -22,55 +22,28 @@ export async function generateGrillingArtifacts(
 ): Promise<GrillingArtifacts> {
   const artifactsPath = path.join(commonDir, "agent-flow", "grilling");
 
-  // Create artifacts directory
-  const artifactsBase = path.join(commonDir, "agent-flow");
-  if (!readFileSync) {
-    throw new Error("File system unavailable");
-  }
-
   try {
-    // Try to read from existing grilling reports
-    let contextPath = "";
-    let specPath = "";
-
-    // Look for context and spec files in the agent-flow directory
-    const files = fs.readdirSync(artifactsBase);
-    for (const file of files) {
-      if (file.endsWith("-context.md")) {
-        contextPath = path.join(artifactsBase, file);
-      } else if (file.endsWith("-spec.md") || file.endsWith("-spec.json")) {
-        specPath = path.join(artifactsBase, file);
-      }
-    }
-
-    // Fallback: try standard naming convention
-    if (!contextPath) {
-      contextPath = path.join(artifactsBase, "issue-grilling-context.md");
-    }
-    if (!specPath) {
-      specPath = path.join(artifactsBase, "issue-grilling-spec.md");
-    }
-
-    let context: string;
-    let spec: string;
-
+    // Read context artifact from expected path per SANDCASTLE_JSON_CONTRACT
+    let contextContent: string;
     try {
-      // Read context document
-      context = readFileSync(contextPath, "utf8") || "";
-
-      // Read spec file
-      spec = readFileSync(specPath, "utf8") || "";
+      contextContent = readFileSync(path.join(artifactsPath, "context.md"), "utf8") || "";
     } catch {
-      throw new Error("Grilling workflow completed but artifacts not found at expected paths. Check common directory for agent-flow/grilling files.");
+      throw new Error("Grilling workflow completed but context.md not found at expected path");
     }
 
-    return { context, spec };
+    // Read spec artifact from expected path per SANDCASTLE_JSON_CONTRACT
+    let specContent: string;
+    try {
+      specContent = readFileSync(path.join(artifactsPath, "spec.md"), "utf8") || "";
+    } catch {
+      throw new Error("Grilling workflow completed but spec.md not found at expected path");
+    }
+
+    return { context: contextContent, spec: specContent };
   } catch (err) {
     throw new Error(`Failed to generate grilling artifacts: ${String(err)}`);
   }
 }
-
-import fs from "node:fs";
 
 export async function readGrillingArtifacts(
   commonDir: string

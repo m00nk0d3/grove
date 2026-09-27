@@ -37,7 +37,6 @@ func setupApproveGrillTest(repoPath string, ctxContent, specContent string) *App
 		width:      80,
 		height:     24,
 		theme:      &styles.Theme{},
-		contextIdx: 0,
 	}
 }
 
@@ -56,7 +55,6 @@ func setupApproveGrillRejectTest(repoPath string, ctxContent, specContent string
 		width:      80,
 		height:     24,
 		theme:      &styles.Theme{},
-		contextIdx: 0,
 	}
 }
 

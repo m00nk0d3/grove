@@ -1777,26 +1777,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg.err == nil && m.sandcastleSnapshot != nil {
 		for _, wf := range msg.snapshot.Workflows {
 			if wf.Kind == modal.WorkflowKindGrilling && wf.Status == "completed" {
-				// Grilling completed - read artifacts from repo root
+				// Grilling completed - read artifacts from expected paths per SANDCASTLE_JSON_CONTRACT
 				repoRoot := m.RepoPath
 				commonDir := filepath.Join(repoRoot, ".git", "common")
+				grillingDir := filepath.Join(commonDir, "agent-flow", "grilling")
 
-				// Look for grilling artifacts in the agent-flow directory
 				var contextContent string
 				var specContent string
 
-				files, _ := os.ReadDir(filepath.Join(commonDir, "agent-flow"))
-				for _, file := range files {
-					name := file.Name()
-					if name == "context.md" || strings.Contains(name, "-context.md") {
-						contextPath := filepath.Join(commonDir, "agent-flow", name)
-						ctxContent, _ := os.ReadFile(contextPath)
-						contextContent = string(ctxContent)
-					} else if (name == "spec.md" || strings.Contains(name, "-spec.md") || name == "issue-grilling-spec.md") && (strings.HasSuffix(name, ".md") || strings.HasSuffix(name, ".json")) {
-						specPath := filepath.Join(commonDir, "agent-flow", name)
-						spcContent, _ := os.ReadFile(specPath)
-						specContent = string(spcContent)
-					}
+				// Read context artifact
+				contextPath := filepath.Join(grillingDir, "context.md")
+				ctxBytes, readErr := os.ReadFile(contextPath)
+				if readErr == nil {
+					contextContent = string(ctxBytes)
+				}
+
+				// Read spec artifact
+				specPath := filepath.Join(grillingDir, "spec.md")
+				spcBytes, readErr2 := os.ReadFile(specPath)
+				if readErr2 == nil {
+					specContent = string(spcBytes)
 				}
 
 				if contextContent != "" && specContent != "" {

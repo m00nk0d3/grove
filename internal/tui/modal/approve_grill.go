@@ -39,25 +39,23 @@ const (
 // NewApproveGrillModal creates a new approval modal for reviewing grilling artifacts.
 func NewApproveGrillModal(artifacts GrillingArtifacts) *ApproveGrillModal {
 	return &ApproveGrillModal{
-		artifacts:  artifacts,
-		step:       stepContext,
-		action:     actionApprove,
-		width:      0,
-		height:     0,
-		theme:      nil,
-		contextIdx: 0,
+		artifacts: artifacts,
+		step:      stepContext,
+		action:    actionApprove,
+		width:     0,
+		height:    0,
+		theme:     nil,
 	}
 }
 
 // ApproveGrillModal handles the multi-step approval flow for grilling artifacts.
 type ApproveGrillModal struct {
-	artifacts   GrillingArtifacts
-	step        approveGrillStep
-	action      GrillingArtifactAction
-	width       int
-	height      int
-	theme       *styles.Theme
-	contextIdx  int
+	artifacts GrillingArtifacts
+	step      approveGrillStep
+	action    GrillingArtifactAction
+	width     int
+	height    int
+	theme     *styles.Theme
 }
 
 // Init satisfies tea.Model.
@@ -162,7 +160,6 @@ func (m *ApproveGrillModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyEnter:
 		if m.step == stepContext {
-			m.contextIdx++
 			m.action = actionApprove
 			m.step = stepSpec
 		} else {
@@ -171,7 +168,6 @@ func (m *ApproveGrillModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyTab:
 		if m.step == stepContext {
-			m.contextIdx++
 			m.action = actionApprove
 			m.step = stepSpec
 		} else {
