@@ -370,7 +370,7 @@ Objective:
 Required work:
 1. Read the complete GitHub issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels,comments
 2. Read repository instructions and inspect the smallest relevant code, tests, configuration, and documentation surface.
-3. Record scope, acceptance criteria, affected areas and exact paths, implementation approach, appropriate validation, assumptions, and regression risks.
+3. Record scope, acceptance criteria, affected areas and exact paths, implementation approach, appropriate validation, assumptions, and regression risks. For executable behavior changes, name the exact test file(s) to add or update and the targeted validation command that covers the final diff; for documentation-only, metadata-only, or similarly non-behavioral work, state explicitly that no test delta is expected and which existing lint, link, schema, formatting, or build command validates it instead.
 4. Write the complete handoff to '${leanPlanPath}'. Keep it concise and actionable.
 
 Boundaries:
@@ -400,11 +400,10 @@ Objective:
 Required work:
 1. Read the complete GitHub issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels,comments
 2. Read repository instructions and '${leanPlanPath}', then inspect the relevant implementation path, surrounding code, tests, configuration, and documentation.
-3. Implement the complete fix, reconciling the plan with current repository evidence when necessary.
-4. Add or update focused tests only when the issue changes executable behavior and a meaningful regression test is warranted.
-5. For documentation-only, metadata-only, or similarly non-behavioral work, do not invent permanent tests for issue-specific wording.
-6. Validate with the repository's native targeted tests, type checks, lint checks, documentation checks, or build commands as appropriate.
-7. Inspect the final diff and leave a cleanly scoped, reviewable working tree containing only the intended uncommitted changes.
+3. For executable behavior changes, follow strict red-green TDD: first add or update the focused test(s) named in the plan, run them to confirm they fail for the expected reason (red), then implement the complete fix, reconciling the plan with current repository evidence when necessary, until they pass (green). Never implement production code before the failing test exists.
+4. Add or update focused tests for every executable behavior change; a behavioral fix with zero test delta is incomplete. Only documentation-only, metadata-only, or similarly non-behavioral work may skip permanent tests, and then only without inventing tests for issue-specific wording.
+5. Validate with the repository's native targeted tests, type checks, lint checks, documentation checks, or build commands as appropriate.
+6. Inspect the final diff and leave a cleanly scoped, reviewable working tree containing only the intended uncommitted changes.
 
 Boundaries:
 - Do not commit, push, create or edit pull requests, or alter Git history.
@@ -434,9 +433,9 @@ Objective:
 Required work:
 1. Read the complete GitHub issue using: gh issue view ${issueNum} --repo ${repo} --json title,body,labels,comments and read repository instructions and '${leanPlanPath}'.
 2. Inspect the complete git diff and relevant surrounding code without relying on the implementer's summary.
-3. Check every acceptance criterion, correctness, regressions, scope discipline, tests, compatibility, and maintainability.
+3. Check every acceptance criterion, correctness, regressions, scope discipline, tests, compatibility, and maintainability. For executable behavior changes, a diff with zero test delta is a blocker: report it as blockers with the missing test file(s) as the required fix. Only documentation-only, metadata-only, or similarly non-behavioral changes may pass without a test delta.
 4. Do not modify source files. If blockers exist, describe them precisely so the implementation specialist can fix them.
-5. Run the smallest repository-native validation that covers the final diff. For documentation-only or non-behavioral changes, do not invent permanent tests.
+5. Run the smallest repository-native validation that covers the final diff, including the new or updated tests. For documentation-only or non-behavioral changes, use the existing validation and do not invent permanent tests.
 6. Write exactly one JSON object to '${completionPath}' with this schema:
     {"status":"complete","verdict":"approved|blockers","summary":"specific evidence-based implementation conclusion","changes":["concrete behavior or API change reviewed"],"architecture":["component interaction or data flow, naming relevant files or symbols"],"validation":["command and result"],"acceptanceCriteria":[{"criterion":"criterion from the issue","evidence":"specific implementation and validation evidence or blocker","status":"✅|⚠️|❌"}],"compatibility":["specific compatibility result or constraint"],"risks":["specific residual risk, blocker, or 'No known residual risks after ...' with supporting scope"],"reviewedAreas":["specific acceptance criterion or risk checked"]}
     Use only "✅", "⚠️", or "❌" for each acceptanceCriteria status. Every array must be non-empty. Do not use generic claims such as "focused implementation", "preserved existing architecture", or "validation passed" without naming concrete behavior, components, commands, and results.
@@ -473,7 +472,7 @@ Required work:
 1. Re-read the original implementation handoff at '${planPath}' and the reviewer verdict at '${reviewPath}'.
 2. Inspect the current diff and repository state; preserve correct existing work.
 3. Fix every evidence-based blocker within the issue scope using established project patterns.
-4. Add or update focused tests when behavior changes require them.
+4. Add or update focused tests for every behavior change you touch; keep a behavioral fix with zero test delta from passing.
 5. Run the smallest repository-native validation covering the fixes and inspect the final diff.
 
 Boundaries:
@@ -589,14 +588,14 @@ You are the Test Engineer for issue #${issueNum}.
 ${CODE_ORGANIZATION_STANDARD}
 
 Objective:
-- Read '${requirementsPath}', '${contextPath}', and '${planPath}', then establish appropriate evidence for the requested change.
+- Read '${requirementsPath}', '${contextPath}', and '${planPath}', then establish appropriate evidence for the requested change using test-driven development.
 
 Required work:
 1. Determine from the requirements and plan whether the issue changes executable behavior.
-2. For executable behavior changes, add the smallest focused tests covering the reported failure, acceptance criteria, and meaningful edge cases. Follow existing test conventions and confirm the new assertions fail for the expected reason.
+2. For executable behavior changes, follow strict red-green TDD: first add the smallest focused tests covering the reported failure, acceptance criteria, and meaningful edge cases, following existing test conventions. Run them and confirm the new assertions fail for the expected reason (red) before any production fix. Then hand off with the failing commands recorded so the implementer turns them green without weakening them.
 3. For documentation, metadata, or configuration-only changes where no meaningful behavioral test exists, do not invent a permanent test merely to enforce issue-specific wording. Make no test-file changes.
-4. For those non-behavioral changes, identify existing documentation lint, link checking, schema validation, formatting, or build commands. If none exist, use focused pre-change inspection and record that no test changes are appropriate.
-5. Distinguish expected red-phase failures from unrelated baseline failures in your final response.
+4. For those non-behavioral changes, identify existing documentation lint, link checking, schema validation, formatting, or build commands. If none exist, use focused pre-change inspection and record that no test changes are appropriate. This is the only case where zero test delta is acceptable, and it must be stated explicitly with the validation the verifier should use instead.
+5. Distinguish expected red-phase failures from unrelated baseline failures in your final response, naming the exact test files added and the failing command output.
 
 Boundaries:
 - Do not implement the production fix.
@@ -628,8 +627,8 @@ Required work:
 1. Inspect the complete diff and the surrounding code it depends on before
    running anything. Judge the code itself; do not rely on any earlier agent's
    summary of what it did.
-2. Run the narrowest tests, type checks, lint checks, and build commands that cover the changed behavior.
-3. For documentation, metadata, or configuration-only changes, prefer existing documentation lint, link checking, schema validation, formatting, or build commands; do not require a newly invented test.
+2. Run the narrowest tests, type checks, lint checks, and build commands that cover the changed behavior, including the new or updated red-green tests. For executable behavior changes, a diff with zero test delta fails this stage: fix it by adding the missing focused test(s) or send it back as incomplete.
+3. For documentation, metadata, or configuration-only changes, prefer existing documentation lint, link checking, schema validation, formatting, or build commands; only those non-behavioral changes may pass without a newly invented test.
 4. Challenge the implementation as an adversary would: regressions, missing
    edge cases, unsafe input handling, concurrency, compatibility breaks, weak
    error propagation, and oversized or mixed-responsibility touched files. A
@@ -971,11 +970,11 @@ You are the Implementation Specialist for issue #${issueNum}.
 ${CODE_ORGANIZATION_STANDARD}
 
 Objective:
-- Implement the production fix described by '${planPath}' and satisfy '${requirementsPath}'.
+- Implement the production fix described by '${planPath}' and satisfy '${requirementsPath}', using test-driven development.
 
 Required work:
 1. Read '${requirementsPath}', '${contextPath}', and '${planPath}', plus the tests and existing partial diff.
-2. Implement the smallest complete fix using the repository's established abstractions.
+2. If the Test Engineer left failing (red) tests, run them first to confirm the failure, then implement the smallest complete fix using the repository's established abstractions until they pass (green). If no red tests exist for an executable behavior change, write the failing test first yourself before the production fix.
 3. Preserve backward compatibility unless the requirements explicitly change it.
 4. Run the focused tests relevant to behavioral changes and iterate until they pass. For documentation, metadata, or configuration-only changes, run the repository's existing targeted validation without inventing tests for issue-specific wording.
 

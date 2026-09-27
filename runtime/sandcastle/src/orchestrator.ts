@@ -30,6 +30,10 @@ import {
 } from "./project-profile.js";
 import { runSpecialistInPane } from "./herdr-specialist.js";
 import {
+  resolveProjectStatuses,
+  setIssueProjectStatus,
+} from "./project-board.js";
+import {
   collectChangedFiles,
   hasDocumentationSurface,
   planReviewPasses,
@@ -68,6 +72,7 @@ import {
   FULL_WORKFLOW_STEPS,
   planVerification,
   unresolvedProjects,
+  getProjectProfileDraftPath,
   getProjectProfilePath,
   getWorkflowStatePath,
   loadWorkflowState,
@@ -631,7 +636,11 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const projects = detectStackProjects(targetDir);
     const surfaces = detectSurfaces(targetDir, projects);
     const profilePath = getProjectProfilePath(repoRoot);
-    const profileDraftPath = `${agentDir}/project-profile.json`;
+    // Beside the profile in the git common directory, never in the worktree:
+    // an untracked draft inside the checkout dirties `git status`, leaks into
+    // the untracked-file lists the workflow reads as its change set, and trips
+    // the clean-checkout guards — which then re-triggers profiling.
+    const absoluteDraftPath = getProjectProfileDraftPath(repoRoot, issueNum);
     const requirementsPath = `${agentDir}/REQUIREMENTS.md`;
     const contextPath = `${agentDir}/CONTEXT.md`;
     const planPath = `${agentDir}/PLAN.md`;
@@ -656,6 +665,30 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     const implementerSessionId = implementationSessionId(repo, issueNum);
     console.log(`\x1b[36m[Sandcastle]\x1b[0m ${targetDir} on ${branchName}`);
     console.log(`\x1b[36m[Stack Detector]\x1b[0m Assigned specialist: ${stack}`);
+    // The issue is now being worked: reflect that on the GitHub project board
+    // so nobody has to move it by hand. Best-effort — a missing token scope or
+    // a board without this status only logs a warning. Never move backwards on
+    // resume: once published, the board stays in review.
+    const projectStatuses = resolveProjectStatuses();
+    if (projectStatuses && !state.completedSteps.includes("publish")) {
+      try {
+        for (const update of setIssueProjectStatus(
+          repo,
+          issueNum,
+          projectStatuses.start,
+        )) {
+          console.log(
+            `\x1b[36m[Project]\x1b[0m ${update.projectTitle}: Status → ${update.optionName}`,
+          );
+        }
+      } catch (error) {
+        console.log(
+          `\x1b[33m[Project]\x1b[0m Could not update the project board: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
     if (state.completedSteps.length > 0) {
       console.log(
         `\x1b[33m[Resume]\x1b[0m Continuing after ${state.completedSteps.at(-1)}.`,
@@ -1047,13 +1080,12 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
         console.log(
           `\x1b[36m[Prompt Engineer]\x1b[0m Writing this repository's specialists: ${why}.`,
         );
-        fs.mkdirSync(path.join(targetDir, agentDir), { recursive: true });
-        const absoluteDraftPath = path.join(targetDir, profileDraftPath);
+        fs.mkdirSync(path.dirname(absoluteDraftPath), { recursive: true });
         runSpecialist(
           "prompt-engineer",
           SPECIALISTS.PROMPT_ENGINEER(
             repo,
-            profileDraftPath,
+            absoluteDraftPath,
             projects.map((project) => ({
               root: project.root,
               marker: project.marker,
@@ -1423,6 +1455,28 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       }
       state.prUrl = prUrl;
     });
+
+    // The pull request is up: move the board from progress to review, same
+    // best-effort terms as the start-of-workflow update above.
+    if (projectStatuses && prUrl) {
+      try {
+        for (const update of setIssueProjectStatus(
+          repo,
+          issueNum,
+          projectStatuses.publish,
+        )) {
+          console.log(
+            `\x1b[36m[Project]\x1b[0m ${update.projectTitle}: Status → ${update.optionName}`,
+          );
+        }
+      } catch (error) {
+        console.log(
+          `\x1b[33m[Project]\x1b[0m Could not update the project board: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
 
     if (!state.completedSteps.includes("review")) {
       if (!(await confirmStartPrReview(prUrl))) {

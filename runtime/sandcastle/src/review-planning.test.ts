@@ -560,6 +560,52 @@ test("a commit path that skipped validation still strips trailing whitespace", a
   }
 });
 
+test("whitespace stripping covers untracked files but leaves binaries alone", async () => {
+  const { stripTrailingWhitespace } = await import("./workflow-utils.js");
+  const { execFileSync } = await import("node:child_process");
+  const root = scratch("whitespace-untracked-");
+  const git = (args: string[]) =>
+    execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git(["init", "--quiet", "-b", "main"]);
+    git(["config", "core.autocrlf", "false"]);
+    fs.writeFileSync(path.join(root, "tracked.txt"), "clean\n");
+    git(["add", "-A"]);
+    git([
+      "-c", "user.name=T", "-c", "user.email=t@e.com",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init",
+    ]);
+
+    // A brand-new file the implementer created: invisible to `git diff
+    // --name-only HEAD` and to the unstaged `git diff --check` inside
+    // verification, but fatal to the `git diff --cached --check` the delivery
+    // commit runs after `git add -A`.
+    fs.writeFileSync(path.join(root, "new-feature.ts"), "export const x = 1;   \n");
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x20, 0x20]);
+    fs.writeFileSync(path.join(root, "asset.bin"), binary);
+
+    stripTrailingWhitespace(root);
+    assert.equal(
+      fs.readFileSync(path.join(root, "new-feature.ts"), "utf8"),
+      "export const x = 1;\n",
+      "untracked files must be stripped before the delivery commit",
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, "asset.bin")),
+      binary,
+      "binary files must never be rewritten as text",
+    );
+    git(["add", "-A"]);
+    assert.equal(
+      execFileSync("git", ["diff", "--cached", "--check"], { cwd: root, stdio: "pipe" })
+        .toString(),
+      "",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a command only reads pull request fields it actually asks GitHub for", async () => {
   const { pullRequestChangedFiles } = await import("./workflow-utils.js");
 
