@@ -165,3 +165,13 @@ type EntrySavedMsg struct {
 type EntrySavedErrMsg struct {
 	Error error // Error message
 }
+
+
+// ContextActionGrill is the string constant for the grilling context action.
+const ContextActionGrill = "grill"
+
+// GrillingSessionStartedMsg is dispatched when a grilling workflow starts successfully.
+type GrillingSessionStartedMsg struct {
+	Workflow domain.WorkflowRunRef // The workflow run for the griller
+	EntryID  string                // ID of the Lab entry being grilled
+}

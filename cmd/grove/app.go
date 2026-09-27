@@ -1916,7 +1916,7 @@ func (m *Model) renderView() string {
 	if actionIdx >= len(actions) {
 		actionIdx = max(0, len(actions)-1)
 	}
-	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, m.labs, m.labFilter, func() *domain.ExternalIntegration {
+	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, m.labs, m.selectedLabIdx, m.labFilter, func() *domain.ExternalIntegration {
 		if m.herdrSnapshot != nil {
 			return &m.herdrSnapshot.Integration
 		}
@@ -2725,6 +2725,36 @@ func (m *Model) removeWorkflowCmd(runID string, stop bool) tea.Cmd {
 	}
 }
 
+
+// startGrillingWorkflowCmd starts a grilling session workflow for a Lab entry.
+func (m *Model) startGrillingWorkflowCmd(msg modal.WorkflowLaunchMsg, worktreePath string, entryID string) tea.Cmd {
+	starter := m.workflowStarter
+	repoPath := m.RepoPath
+
+	defaultAgent := msg.AgentKind
+	if defaultAgent == "" {
+		defaultAgent = "pi"
+	}
+
+	return func() tea.Msg {
+		if starter == nil {
+			return sandcastleWorkflowStartedMsg{kind: modal.WorkflowKindImplement, err: fmt.Errorf("runtime unavailable")}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		workflow, err := starter.StartWorkflow(ctx, sandcastle.StartWorkflowRequest{
+			Kind:        msg.Kind,
+			RepoPath:    repoPath,
+			IssueNumber: msg.IssueNumber,
+			AgentKind:   defaultAgent,
+			Source:      "grove",
+		})
+
+		return sandcastleWorkflowStartedMsg{workflow: workflow, kind: msg.Kind, err: err}
+	}
+}
 // defaultHealthChecker is the production sessionHealthChecker backed by real
 // herdr and sandcastle clients.
 type defaultHealthChecker struct {
@@ -3297,6 +3327,26 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
+	case modal.ContextActionGrill:
+		entry, ok := m.selectedLab()
+		if !ok {
+			m.statusErr = "No Lab entry selected — select one first"
+			return m, clearMsgCmd()
+		}
+
+		worktree, ok := m.selectedWorktree()
+		if !ok {
+			m.statusErr = "No worktree selected for grilling session"
+			return m, clearMsgCmd()
+		}
+
+		request := modal.WorkflowLaunchMsg{
+			Kind:    modal.WorkflowKindImplement,
+			AgentKind: "pi",
+		}
+
+		m.statusMsg = fmt.Sprintf("Starting grilling session for %s…", entry.Title)
+		return m, m.startGrillingWorkflowCmd(request, worktree.Path, entry.ID)
 	default:
 		m.statusErr = fmt.Sprintf("Unknown action: %s", action)
 		return m, clearErrorCmd()
@@ -3313,6 +3363,8 @@ func (m *Model) availableContextActions() []contextActionOption {
 		m.prs,
 		m.selectedPRIdx,
 		m.sessions,
+		m.labs,
+		m.selectedLabIdx,
 		dashboardActionContext{state: m.missionState, tab: m.dashboardTab, selected: m.selectedMissionIdx, dismissed: m.dismissedWorkflows},
 	))
 }
@@ -3332,7 +3384,7 @@ type dashboardActionContext struct {
 	dismissed map[string]bool
 }
 
-func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session, dashboard ...dashboardActionContext) []contextActionOption {
+func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session, labs []domain.LabEntry, labIdx int, dashboard ...dashboardActionContext) []contextActionOption {
 	switch view {
 	case viewIssues:
 		if len(issues) == 0 || issueIdx < 0 || issueIdx >= len(issues) {
@@ -3378,6 +3430,16 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 			contextActionOption{icon: "!", label: "Delete worktree", action: modal.ContextActionDelete},
 			contextActionOption{icon: "◇", label: "Clean merged work", workflowKind: modal.WorkflowKindClean},
 		)
+
+	case viewLab:
+		if len(labs) == 0 || labIdx < 0 || labIdx >= len(labs) {
+			return nil
+		}
+		actions := []contextActionOption{
+			{icon: "🔥", label: "Grill entry", action: modal.ContextActionGrill},
+			{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
+		}
+		return actions
 	default:
 		actions := []contextActionOption{
 			{icon: "◎", label: "Inspect workflow", action: modal.ContextActionInspect},
