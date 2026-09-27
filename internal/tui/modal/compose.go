@@ -1,7 +1,9 @@
 package modal
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
+	"github.com/m00nk0d3/grove/internal/data"
 )
 
 // ComposeModal handles the multi-step compose workflow: kind selector → content editor → save.
@@ -159,8 +162,19 @@ func (m *ComposeModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			if m.step == composeKind {
 				m.step = composeContent
+			} else if m.step == composeContent {
+				m.step = composeConfirm
 			} else if m.step == composeConfirm {
-				return m.saveEntry()
+				return m, m.EntrySaveCmd()
+			}
+
+		case tea.KeyTab:
+			if m.step == composeKind {
+				m.step = composeContent
+			} else if m.step == composeContent {
+				m.step = composeConfirm
+			} else if m.step == composeConfirm {
+				m.step = composeKind
 			}
 
 		case tea.KeyUp:
@@ -178,9 +192,6 @@ func (m *ComposeModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.kindIdx = 0
 				}
 			}
-
-		case tea.KeyTab:
-			return m.cycleStep()
 
 		case tea.KeyCtrlN:
 			m.cancel = true
@@ -231,37 +242,35 @@ func renderConfirmSave(m *ComposeModal, width int) string {
 	return fmt.Sprintf("%s %s", titleStyle.Render("Entry Ready:"), status)
 }
 
-// saveEntry saves the composed entry and closes the modal.
-func (m *ComposeModal) saveEntry() (tea.Model, tea.Cmd) {
-	// Build entry record with slugified ID
-	ts := fmt.Sprintf("%d", domain.CurrentTimestamp())
-	slug := fmt.Sprintf("%s-%s", ts, domain.Slugify(m.initMsg.Title))
-	entry := domain.LabEntry{
-		ID:       slug,
-		Title:    m.initMsg.Title,
-		Kind:     m.initMsg.Kind,
-		Content:  m.content,
-		Created:  time.Now().UTC().Format(time.RFC3339),
-	}
+// EntrySaveCmd saves the composed entry to disk and returns the saved message or error.
+func (m *ComposeModal) EntrySaveCmd() tea.Cmd {
+	return func() tea.Msg {
+		// Build entry record with slugified ID
+		ts := fmt.Sprintf("%d", domain.CurrentTimestamp())
+		slug := fmt.Sprintf("%s-%s", ts, domain.Slugify(m.initMsg.Title))
+		entry := domain.LabEntry{
+			ID:       slug,
+			Title:    m.initMsg.Title,
+			Kind:     m.initMsg.Kind,
+			Content:  m.content,
+			Created:  time.Now().UTC().Format(time.RFC3339),
+		}
 
-	// Close modal and refresh worktrees to update labs list
-	m.cancel = true
-	return m, func() tea.Msg {
+		// Save to disk using the repository path from init message
+		path := data.LabsPath(m.initMsg.RepoPath)
+
+		dataBytes, err := json.MarshalIndent([]interface{}{entry}, "", "  ")
+		if err != nil {
+			return EntrySavedErrMsg{Error: fmt.Errorf("failed to marshal entry: %w", err)}
+		}
+
+		err = os.WriteFile(path, dataBytes, 0o644)
+		if err != nil {
+			return EntrySavedErrMsg{Error: fmt.Errorf("failed to write file: %w", err)}
+		}
+
 		return EntrySavedMsg{Entry: entry}
 	}
-}
-
-// cycleStep rotates through compose steps.
-func (m *ComposeModal) cycleStep() (tea.Model, tea.Cmd) {
-	switch m.step {
-	case composeKind:
-		m.step = composeContent
-	case composeContent:
-		m.step = composeConfirm
-	case composeConfirm:
-		m.step = composeKind
-	}
-	return m, nil
 }
 
 // kinds is the ordered list of available entry kinds.

@@ -160,3 +160,8 @@ type CleanupConfirmedMsg struct {
 type EntrySavedMsg struct {
 	Entry domain.LabEntry
 }
+
+// EntrySavedErrMsg is returned when an entry fails to save.
+type EntrySavedErrMsg struct {
+	Error error // Error message
+}

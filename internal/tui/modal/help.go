@@ -67,6 +67,18 @@ var keybindingGroups = []bindingGroup{
 		},
 	},
 	{
+		title: "LAB VIEW",
+		bindings: [][2]string{
+			{"↑/↓  j/k", "Navigate entries"},
+			{"a / A", "Create new entry"},
+			{"e / E", "Edit selected entry (removes it first)"},
+			{"1", "Filter: All entries"},
+			{"2", "Filter: Ideas only"},
+			{"3", "Filter: Bugs only"},
+			{"d / D", "Delete selected entry"},
+		},
+	},
+	{
 		title: "GLOBAL",
 		bindings: [][2]string{
 			{"f1 / ?", "Open this help modal"},

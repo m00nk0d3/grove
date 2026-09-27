@@ -132,7 +132,7 @@ func renderSessionBlock(s *domain.Session) string {
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, sessions []domain.Session, labs []domain.LabEntry, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, selections ...int) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, sessions []domain.Session, labs []domain.LabEntry, filter domain.LabFilter, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, selections ...int) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
@@ -239,7 +239,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	case viewPRs:
 		list = renderPRList(prs, selectedPRIdx, theme, listInner, panelHeight, focused == panelList)
 	case viewLab:
-		list = renderLab(labs, selectedIdx, worktrees, theme, listInner, panelHeight, focused == panelList)
+		list = renderLab(labs, selectedIdx, filter, worktrees, theme, listInner, panelHeight, focused == panelList)
 	default:
 		list = renderWorktreePanel(worktrees, selectedIdx, theme, listInner, panelHeight, focused == panelList, sessions)
 	}
@@ -1245,7 +1245,7 @@ func renderContextActions(theme styles.Theme, actions []contextActionOption, act
 	return b.String()
 }
 
-func renderLab(labs []domain.LabEntry, selectedIdx int, worktrees []domain.Worktree, theme styles.Theme, listInner, panelHeight int, focused bool) string {
+func renderLab(labs []domain.LabEntry, selectedIdx int, filter domain.LabFilter, worktrees []domain.Worktree, theme styles.Theme, listInner, panelHeight int, focused bool) string {
 	const (
 		cursorW      = 2
 		idW          = 8
@@ -1255,7 +1255,20 @@ func renderLab(labs []domain.LabEntry, selectedIdx int, worktrees []domain.Workt
 		fixedTotal   = cursorW + idW + titleW + kindW + contentW // 92
 	)
 
-	bodyWidth := listInner - scrollbarWidth(len(labs), len(labs))
+	// Filter entries based on the active filter
+	var filtered []domain.LabEntry
+	switch filter {
+	case domain.LabFilterAll:
+		filtered = labs
+	case domain.LabFilterIdea, domain.LabFilterBug:
+		for _, lab := range labs {
+			if lab.Kind == string(filter) {
+				filtered = append(filtered, lab)
+			}
+		}
+	}
+
+	bodyWidth := listInner - scrollbarWidth(len(filtered), len(filtered))
 	nameW := bodyWidth - fixedTotal
 	if nameW < 10 {
 		nameW = 10
@@ -1264,23 +1277,23 @@ func renderLab(labs []domain.LabEntry, selectedIdx int, worktrees []domain.Workt
 	type entry struct {
 		cursor, id, title, kind, content string
 	}
-	visible := labs
+	visible := filtered
 	startIdx := 0
-	count := len(labs)
+	count := len(filtered)
 	if panelHeight > 0 {
 		available := panelHeight - listHeaderRows - 2 // -2 for hints
 		if available < 0 {
 			available = 1
 		}
 		count = available
-		if count > len(labs) {
-			count = len(labs)
+		if count > len(filtered) {
+			count = len(filtered)
 		}
 		startIdx = 0
 		if selectedIdx-startIdx >= count {
 			startIdx = max(0, selectedIdx-count+1)
 		}
-		visible = labs[startIdx : startIdx+count]
+		visible = filtered[startIdx : startIdx+count]
 	}
 
 	entries := make([]entry, len(visible))
@@ -1348,7 +1361,7 @@ func renderLab(labs []domain.LabEntry, selectedIdx int, worktrees []domain.Workt
 		t.Row(e.cursor, e.id, e.title, e.kind, e.content)
 	}
 
-	body := attachScrollbar(t.Render(), listHeaderRows, len(labs), len(visible), startIdx, theme)
+	body := attachScrollbar(t.Render(), listHeaderRows, len(filtered), len(visible), startIdx, theme)
 
 	st := theme.GetStyle("lab-list").Width(listInner + panelPaddingOverhead)
 	if !focused {

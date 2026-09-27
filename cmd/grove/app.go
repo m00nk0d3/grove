@@ -623,11 +623,11 @@ func saveDismissedWorkflows(dismissed map[string]bool) error {
 func loadLabsFromJSON(repoPath string) ([]domain.LabEntry, error) {
 	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".grove", "labs", strings.Replace(repoPath, "/", "_", -1), "labs.json"))
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("failed to read labs file: %w", err)
 	}
 	var entries []map[string]interface{}
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("failed to parse labs file: %w", err)
 	}
 	labs := make([]domain.LabEntry, 0, len(entries))
 	for _, e := range entries {
@@ -763,6 +763,8 @@ type Model struct {
 	sessions []domain.Session
 	// labs holds LabEntry records for the current repository.
 	labs []domain.LabEntry
+	// labFilter controls which entries are shown in the Lab view.
+	labFilter domain.LabFilter
 
 	// latestVersion holds the latest release version discovered on startup (empty if check failed).
 	latestVersion string
@@ -1195,7 +1197,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Append new entry to labs list and refresh worktrees to update display
 			m.labs = append(m.labs, msg.Entry)
 			m.activeModal = nil
+			// Reload from file to ensure persistence is reflected
+			labs, err := loadLabsFromJSON(m.RepoPath)
+			if err != nil {
+				m.statusErr = fmt.Sprintf("Error reloading labs: %v", err)
+			} else {
+				m.labs = labs
+			}
 			return m, m.refreshWorktreesCmd()
+		case modal.EntrySavedErrMsg:
+			m.statusErr = msg.Error.Error()
+			m.activeModal = nil
+			return m, nil
 		case modal.SettingsSavedMsg:
 			m.Config = msg.Config
 			// Update themeIdx to match the saved theme.
@@ -1839,7 +1852,7 @@ func (m *Model) renderView() string {
 	if actionIdx >= len(actions) {
 		actionIdx = max(0, len(actions)-1)
 	}
-	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, m.labs, func() *domain.ExternalIntegration {
+	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, m.labs, m.labFilter, func() *domain.ExternalIntegration {
 		if m.herdrSnapshot != nil {
 			return &m.herdrSnapshot.Integration
 		}
