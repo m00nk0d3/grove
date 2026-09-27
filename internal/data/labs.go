@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/m00nk0d3/grove/internal/domain"
 )
 
 const (
@@ -22,21 +24,21 @@ func LabsPath(repoPath string) string {
 }
 
 // LoadLabs loads Lab entries from the repository-specific labs.json file.
-func LoadLabs(repoPath string) ([]interface{}, error) {
+func LoadLabs(repoPath string) ([]domain.LabEntry, error) {
 	path := LabsPath(repoPath)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var labs []interface{}
-	if err := json.Unmarshal(data, &labs); err != nil {
+	var labEntries []domain.LabEntry
+	if err := json.Unmarshal(data, &labEntries); err != nil {
 		return nil, err
 	}
-	return labs, nil
+	return labEntries, nil
 }
 
 // SaveLabs saves Lab entries to the repository-specific labs.json file.
-func SaveLabs(repoPath string, labs []interface{}) error {
+func SaveLabs(repoPath string, labs []domain.LabEntry) error {
 	path := LabsPath(repoPath)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -1289,11 +1289,16 @@ func renderLab(labs []domain.LabEntry, selectedIdx int, filter domain.LabFilter,
 		if count > len(filtered) {
 			count = len(filtered)
 		}
-		startIdx = 0
-		if selectedIdx-startIdx >= count {
-			startIdx = max(0, selectedIdx-count+1)
+		// Guard clause: if filtered is empty, use it directly without startIdx calculation
+		if len(filtered) == 0 {
+			visible = filtered
+		} else {
+			startIdx = 0
+			if selectedIdx-startIdx >= count {
+				startIdx = max(0, selectedIdx-count+1)
+			}
+			visible = filtered[startIdx : startIdx+count]
 		}
-		visible = filtered[startIdx : startIdx+count]
 	}
 
 	entries := make([]entry, len(visible))

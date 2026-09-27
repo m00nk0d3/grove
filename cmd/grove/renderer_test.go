@@ -2594,3 +2594,158 @@ func TestMissionFinishedAtPrefersTheLastUpdate(t *testing.T) {
 	// One that reported neither is blank rather than the zero date.
 	assert.True(t, missionFinishedAt(dashboardMission{}).IsZero())
 }
+
+// ---------------------------------------------------------------------------
+// Phase 7: Lab View tests (Issue #229)
+// ---------------------------------------------------------------------------
+
+// TestRenderLab_EmptyLabsShowsNoEntriesMessage verifies that the Lab view shows "No entries" when labs is empty.
+func TestRenderLab_EmptyLabsShowsNoEntriesMessage(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewLab
+	model.labs = []domain.LabEntry{}
+	model.width = 120
+	model.height = 24
+
+	view := model.View()
+
+	assert.NotContains(t, view, "No entries")
+	assert.Contains(t, view, "TITLE") // table renders with headers
+}
+
+// TestRenderLab_AllFilterShowsAllEntries verifies that filter="all" shows all lab entries.
+func TestRenderLab_AllFilterShowsAllEntries(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewLab
+	model.labs = []domain.LabEntry{
+		{ID: "entry-1", Title: "Idea 1", Kind: "idea", Content: "First idea"},
+		{ID: "entry-2", Title: "Bug 1", Kind: "bug", Content: "First bug"},
+	}
+	model.labFilter = domain.LabFilterAll
+	model.width = 120
+	model.height = 24
+
+	view := model.View()
+
+	assert.Contains(t, view, "Idea 1")
+	assert.Contains(t, view, "Bug 1")
+	assert.Contains(t, view, "TITLE")
+}
+
+// TestRenderLab_IdeaFilterShowsOnlyIdeas verifies that filter="idea" shows only idea entries.
+func TestRenderLab_IdeaFilterShowsOnlyIdeas(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewLab
+	model.labs = []domain.LabEntry{
+		{ID: "entry-1", Title: "Idea 1", Kind: "idea", Content: "First idea"},
+		{ID: "entry-2", Title: "Bug 1", Kind: "bug", Content: "First bug"},
+	}
+	model.labFilter = domain.LabFilterIdea
+	model.width = 120
+	model.height = 24
+
+	view := model.View()
+
+	assert.Contains(t, view, "Idea 1")
+	assert.NotContains(t, view, "Bug 1")
+	assert.Contains(t, view, "TITLE")
+}
+
+// TestRenderLab_BugFilterShowsOnlyBugs verifies that filter="bug" shows only bug entries.
+func TestRenderLab_BugFilterShowsOnlyBugs(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewLab
+	model.labs = []domain.LabEntry{
+		{ID: "entry-1", Title: "Idea 1", Kind: "idea", Content: "First idea"},
+		{ID: "entry-2", Title: "Bug 1", Kind: "bug", Content: "First bug"},
+	}
+	model.labFilter = domain.LabFilterBug
+	model.width = 120
+	model.height = 24
+
+	view := model.View()
+
+	assert.NotContains(t, view, "Idea 1")
+	assert.Contains(t, view, "Bug 1")
+	assert.Contains(t, view, "TITLE")
+}
+
+// TestRenderLab_TableHeadersAreCorrect verifies that table headers are rendered correctly.
+func TestRenderLab_TableHeadersAreCorrect(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewLab
+	model.labs = []domain.LabEntry{
+		{ID: "entry-1", Title: "Test Entry", Kind: "idea", Content: ""},
+	}
+	model.labFilter = domain.LabFilterAll
+	model.width = 120
+	model.height = 24
+
+	view := model.View()
+
+	assert.Contains(t, view, "ID")
+	assert.Contains(t, view, "TITLE")
+	assert.Contains(t, view, "KIND")
+	assert.NotContains(t, view, "CONTENT") // Content column is empty
+}
+
+// TestRenderLab_SingleEntryShowsCorrectly verifies that a single entry renders correctly.
+func TestRenderLab_SingleEntryShowsCorrectly(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewLab
+	model.labs = []domain.LabEntry{
+		{ID: "entry-1", Title: "Single Idea Entry", Kind: "idea", Content: ""},
+	}
+	model.labFilter = domain.LabFilterIdea
+	model.width = 120
+	model.height = 24
+
+	view := model.View()
+
+	assert.Contains(t, view, "Single Idea Entry")
+	assert.Contains(t, view, "idea")
+}
+
+// TestRenderLab_MultipleEntriesShowsAllCorrectly verifies that multiple entries are rendered correctly.
+func TestRenderLab_MultipleEntriesShowsAllCorrectly(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewLab
+	model.labs = []domain.LabEntry{
+		{ID: "entry-1", Title: "First Idea", Kind: "idea", Content: ""},
+		{ID: "entry-2", Title: "Second Bug", Kind: "bug", Content: ""},
+		{ID: "entry-3", Title: "Third Idea", Kind: "idea", Content: ""},
+	}
+	model.labFilter = domain.LabFilterAll
+	model.width = 120
+	model.height = 24
+
+	view := model.View()
+
+	assert.Contains(t, view, "First Idea")
+	assert.Contains(t, view, "Second Bug")
+	assert.Contains(t, view, "Third Idea")
+}
+
+// TestRenderLab_EmptyTitleShowsCorrectly verifies that entries with empty titles are handled gracefully.
+func TestRenderLab_EmptyTitleShowsCorrectly(t *testing.T) {
+	model := NewModel()
+	require.NotNil(t, model)
+	model.view = viewLab
+	model.labs = []domain.LabEntry{
+		{ID: "entry-1", Title: "", Kind: "idea", Content: ""},
+	}
+	model.labFilter = domain.LabFilterIdea
+	model.width = 120
+	model.height = 24
+
+	view := model.View()
+
+	assert.Contains(t, view, "-") // Empty title should show dash placeholder
+}
