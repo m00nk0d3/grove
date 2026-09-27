@@ -340,6 +340,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A profile draft is no longer refused for a field describing a run it never
+  had.** A setup command carried `verified` and `evidence`, which nothing reads —
+  only a test command's `verified` decides whether a profile command may displace
+  a built-in one — while the required work tells the agent to run *test* commands
+  and says nothing about the setup one. Grove's first profile therefore came back
+  with both fields absent from every setup command, and the validator's refusal
+  of the blank stopped the whole workflow with
+  `Profile project '' setup command needs verified to say whether the command was
+  run`, then repeated on every later run, since a refused draft is never written.
+  The setup command is now the executable, its arguments and `skipWhenPresent`,
+  the same call the earlier surface cleanup made for fields nothing consumed; a
+  profile written against the old shape still validates, with the extra keys read
+  past. A test command that says nothing about whether it was run now reads as
+  unverified, which is the one reading that cannot act wrongly — the built-in
+  command that works today still wins — while a value of the wrong shape, a
+  missing `evidence` and a command that is not a single executable are still
+  refused.
+- **A surface the profile left out is given the project that owns it.** The
+  validator refused a detected surface the prompt engineer did not describe, so a
+  model that filled `surfaces` with `null` — the shape a JSON template with every
+  key present reaches for, and what Grove's first profile returned while a real
+  `internal/data/migrations` sat behind it — left no profile at all and no way to
+  start a workflow on that repository. The omission is now answered rather than
+  refused: a surface inside a project is covered by that project's tests, and is
+  recorded with that project as its `validatedBy`. A surface no project owns is
+  left unowned, which validates every project as it did before, and the run says
+  so by name with the `--refresh-profile` that fixes it. A surface the detector
+  never found, and an owner that is not a project in this repository, are still
+  refused. Related: a surface validated by the repository root was read as
+  unowned, because the root is spelled as the empty string and the field was
+  tested for truth rather than for having been written.
 - **A blank optional field no longer re-runs the prompt engineer for ever.** The
   profile validator read `augments`, `validatedBy`, `setup` and `skipWhenPresent`
   with `!== undefined`, so an explicit `null` was refused as a wrong value rather

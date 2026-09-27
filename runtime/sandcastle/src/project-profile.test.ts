@@ -382,51 +382,193 @@ test("an optional field the prompt engineer left null is read as absent", () => 
   }
 });
 
-test("a surface the detector found and the profile left out is refused", () => {
+test("a surface the profile left out is given the project that owns it", () => {
   const root = scratch(".profile-surfaces-");
   const draftPath = path.join(root, "draft.json");
+  // Grove's own shape: a manifest at the root, one in a subdirectory, and a SQL
+  // directory that belongs to the root project.
   const detected: StackProject[] = [
+    { stack: "GO", root: "", marker: "go.mod" },
     { stack: "UNKNOWN", root: "backend", marker: "backend/Cargo.toml", label: "RUST" },
   ];
-  const surfaces = [{ root: "migrations", label: "SQL" }];
+  const base = (): {
+    repoSummary: string;
+    projects: Record<string, unknown>[];
+    surfaces: unknown;
+    concerns: unknown[];
+  } => ({
+    repoSummary: "A CLI with a service beside it.",
+    projects: [
+      {
+        root: "",
+        marker: "go.mod",
+        label: "GO",
+        ecosystem: "A CLI over a SQLite store.",
+        frameworks: [],
+        personas: personas("Go"),
+        test: command("go", ["test", "./..."], false),
+      },
+      {
+        root: "backend",
+        marker: "backend/Cargo.toml",
+        label: "RUST",
+        ecosystem: "A Rust service.",
+        frameworks: [],
+        personas: personas("Rust"),
+        test: command("cargo", ["test"]),
+      },
+    ],
+    surfaces: [],
+    concerns: [],
+  });
   const write = (value: unknown) => fs.writeFileSync(draftPath, JSON.stringify(value));
   try {
-    // The omission this guard exists for: the prompt listed the surface as
-    // context and its output shape had no 'surfaces' key, so the agent returned
-    // none and every migration change validated every project in the repository.
-    write(draft());
-    assert.throws(
-      () => readProfileDraft(draftPath, detected, surfaces),
-      /missing an entry for the SQL surface at 'migrations'/,
+    // The omission this replaces a refusal for. `"surfaces": null` is what the
+    // prompt engineer wrote for Grove, with a real surface behind it: the draft
+    // was never written, so the profile stayed absent and no workflow could
+    // start. A surface inside a project is covered by that project's tests, so
+    // the owner is derived rather than asked for twice.
+    write({ ...base(), surfaces: null });
+    assert.deepEqual(
+      readProfileDraft(draftPath, detected, [{ root: "internal/data/migrations", label: "SQL" }])
+        .surfaces,
+      [{ root: "internal/data/migrations", validatedBy: "" }],
+    );
+    assert.deepEqual(
+      readProfileDraft(draftPath, detected, [{ root: "backend/db", label: "SQL" }]).surfaces,
+      [{ root: "backend/db", validatedBy: "backend" }],
     );
 
-    const described = draft({ surfaces: [{ root: "migrations", validatedBy: "backend" }] });
-    write(described);
-    const read = readProfileDraft(draftPath, detected, surfaces);
+    // A surface no project owns is left unowned rather than given a guess: that
+    // is the case where the conservative answer, validating every project, is
+    // all the runtime has, and the orchestrator says so in the log. The manifest
+    // at the root is dropped here, so nothing owns a top-level directory.
+    write({ ...base(), projects: [base().projects[1]], surfaces: [] });
+    assert.deepEqual(
+      readProfileDraft(draftPath, [detected[1]], [{ root: "migrations", label: "SQL" }])
+        .surfaces,
+      [{ root: "migrations" }],
+    );
+
+    // An owner the prompt engineer named is kept: a surface can be covered by a
+    // suite other than the project's containing it.
+    write({
+      ...base(),
+      surfaces: [{ root: "database", validatedBy: "backend" }],
+    });
+    const read = readProfileDraft(draftPath, detected, [{ root: "database", label: "SQL" }]);
     assert.equal(read.surfaces[0].validatedBy, "backend");
-    // Only what verification reads survives; the rest of the older shape is
-    // read past rather than refused, so a stale profile is not a broken one.
+    // Only what verification reads survives; the rest of the older shape is read
+    // past rather than refused, so a stale profile is not a broken one.
     assert.equal((read.surfaces[0] as unknown as Record<string, unknown>).personas, undefined);
 
-    // A surface the detector never found is as wrong as a project it never
-    // found, and just as likely to be a guess than a reading.
-    write(draft({ surfaces: [{ root: "styles", validatedBy: "backend" }] }));
+    // What is still refused is a claim that cannot be acted on: a surface the
+    // detector never found, and an owner that is not a project in this repository.
+    write({ ...base(), surfaces: [{ root: "styles", validatedBy: "backend" }] });
     assert.throws(
       () => readProfileDraft(draftPath, detected, []),
       /'styles', which is not a surface in this repository/,
     );
 
-    // And a surface validated by a project that does not exist falls back to
-    // validating everything, which is the cost the field removes.
-    write(draft({ surfaces: [{ root: "migrations", validatedBy: "frontend" }] }));
+    write({ ...base(), surfaces: [{ root: "database", validatedBy: "frontend" }] });
     assert.throws(
-      () => readProfileDraft(draftPath, detected, surfaces),
+      () => readProfileDraft(draftPath, detected, [{ root: "database", label: "SQL" }]),
       /validated by 'frontend'/,
     );
 
-    // Nothing to describe means nothing to check.
-    write(draft());
+    // Nothing to describe means nothing to add.
+    write(base());
     assert.equal(readProfileDraft(draftPath, detected, []).surfaces.length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a command is read without a claim about a run that never happened", () => {
+  const root = scratch(".profile-commands-");
+  const draftPath = path.join(root, "draft.json");
+  const detected: StackProject[] = [
+    { stack: "GO", root: "", marker: "go.mod" },
+    { stack: "TYPESCRIPT", root: "runtime/sandcastle", marker: "runtime/sandcastle/package.json" },
+  ];
+  // What Grove's prompt engineer actually wrote: 'verified' and 'evidence' on
+  // the test commands it was told to run, and neither on the setup commands it
+  // was not. The validator refused the first setup command it reached, and a
+  // refused draft is never written, so the rejection repeated on every workflow.
+  const base = (): {
+    repoSummary: string;
+    projects: Record<string, unknown>[];
+    surfaces: unknown[];
+    concerns: unknown[];
+  } => ({
+    repoSummary: "A Go CLI with a TypeScript runtime.",
+    projects: [
+      {
+        root: "",
+        marker: "go.mod",
+        label: "GO",
+        ecosystem: "A CLI over a SQLite store.",
+        frameworks: [],
+        personas: personas("Go"),
+        test: { command: "go", args: ["test", "./..."], verified: false, evidence: "Makefile:25" },
+        setup: { command: "npm", args: ["install"], skipWhenPresent: "runtime/sandcastle/node_modules" },
+      },
+      {
+        root: "runtime/sandcastle",
+        marker: "runtime/sandcastle/package.json",
+        label: "TYPESCRIPT",
+        ecosystem: "The workflow runtime.",
+        frameworks: [],
+        personas: personas("TypeScript"),
+        test: { command: "npm", args: ["test"], verified: false, evidence: "package.json:23" },
+        setup: { command: "npm", args: ["ci"], skipWhenPresent: "node_modules" },
+      },
+    ],
+    surfaces: [],
+    concerns: [],
+  });
+  const write = (value: unknown) => fs.writeFileSync(draftPath, JSON.stringify(value));
+  try {
+    write(base());
+    const read = readProfileDraft(draftPath, detected, []);
+    assert.deepEqual(read.projects[0].setup, {
+      command: "npm",
+      args: ["install"],
+      skipWhenPresent: "runtime/sandcastle/node_modules",
+    });
+    // The older shape's 'verified' and 'evidence' are read past, not carried: a
+    // setup command nobody ran cannot be certified as one that works.
+    assert.equal((read.projects[0].setup as unknown as Record<string, unknown>).verified, undefined);
+    assert.equal(read.projects[1].setup?.command, "npm");
+
+    // A test command with no 'verified' is not a missing answer but an
+    // unverified one, which is the reading that cannot act wrongly: the
+    // built-in that works today wins.
+    const unverified = base();
+    delete (unverified.projects[0].test as Record<string, unknown>).verified;
+    write(unverified);
+    assert.equal(readProfileDraft(draftPath, detected, []).projects[0].test.verified, false);
+
+    // A value that is present but the wrong shape is still refused, and so is a
+    // test command with nothing to say about what running it did.
+    const wrongVerified = base();
+    (wrongVerified.projects[0].test as Record<string, unknown>).verified = "true";
+    write(wrongVerified);
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, []),
+      /needs verified to say whether the command was run/,
+    );
+
+    const noEvidence = base();
+    delete (noEvidence.projects[0].test as Record<string, unknown>).evidence;
+    write(noEvidence);
+    assert.throws(() => readProfileDraft(draftPath, detected, []), /needs evidence/);
+
+    // The setup command is still held to the rules that keep a command runnable.
+    const shelled = base();
+    shelled.projects[0].setup = { command: "npm ci && npm run build", args: [] };
+    write(shelled);
+    assert.throws(() => readProfileDraft(draftPath, detected, []), /not a single executable/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -574,8 +716,11 @@ test("an older profile is used now, not refused for what it could not have known
     assert.ok(older.profile, "a persona set the old schema did write is still usable");
     assert.equal(older.profile!.projects[0].personas.implementation.length > 0, true);
 
-    // The same omission in a current-version profile is a real defect, and the
-    // caller has already been told the profile is fine to use.
+    // The same omission in a current-version profile is no longer a defect: the
+    // surface is given the project that owns it, so the profile is usable and
+    // the repository stops re-profiling on every workflow. Here nothing owns it —
+    // the manifests are all in subdirectories — so it stays unowned and validates
+    // every project, which the orchestrator reports by name.
     fs.writeFileSync(
       profilePath,
       JSON.stringify({
@@ -586,8 +731,8 @@ test("an older profile is used now, not refused for what it could not have known
       }),
     );
     const current = loadProfile(profilePath, root, projects, surfaces);
-    assert.equal(current.status, "invalid");
-    assert.match(current.reason, /missing an entry for the SQL surface/);
+    assert.equal(current.status, "fresh");
+    assert.deepEqual(current.profile!.surfaces, [{ root: "migrations" }]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

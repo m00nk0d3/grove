@@ -1144,6 +1144,26 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             }
           }
         }
+        // Surfaces decide what a change confined to a migration directory or a
+        // stylesheet tree is validated against, and a surface the prompt engineer
+        // did not describe is given the project that owns it. An owner it could
+        // not derive is the case where that answer is the whole repository, which
+        // is slow rather than wrong — worth one line at the moment the profile is
+        // adopted, since nothing later in the run would say it.
+        for (const surface of profile.surfaces) {
+          const label =
+            surfaces.find((detected) => detected.root === surface.root)?.label ??
+            "unclassified";
+          if (surface.validatedBy === undefined) {
+            console.log(
+              `\x1b[33m[Prompt Engineer]\x1b[0m ${label} surface '${surface.root}' is owned by no project, so a change confined there validates every project in the repository. Rerun with --refresh-profile to have the prompt engineer name the one whose tests cover it.`,
+            );
+            continue;
+          }
+          console.log(
+            `\x1b[36m[Prompt Engineer]\x1b[0m ${label} surface '${surface.root}' is validated by ${surface.validatedBy || "the repository root"}.`,
+          );
+        }
       }
     }
 
