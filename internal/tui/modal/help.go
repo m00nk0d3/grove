@@ -76,6 +76,7 @@ var keybindingGroups = []bindingGroup{
 			{"2", "Filter: Ideas only"},
 			{"3", "Filter: Bugs only"},
 			{"d / D", "Delete selected entry"},
+			{"s", "Shape bug into GitHub issue (bug entries only)"},
 		},
 	},
 	{

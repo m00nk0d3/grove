@@ -11,6 +11,8 @@ updates this document in the same change.
 - Reading side: `internal/sandcastle/client.go`
 - Background: [ADR-0001](./ADR-0001-grove-mission-control-herdr-sandcastle.md)
 
+> Note: The shape workflow (issue #231) is a Grove-only operation and does not involve the Sandcastle runtime. It transforms Lab entries into GitHub issues as a controlled write boundary distinct from Sandcastle's workflow execution responsibilities.
+
 ## Rules
 
 1. **Grove never runs coding agents directly.** It asks the runtime to start a
