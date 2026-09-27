@@ -155,3 +155,8 @@ type CleanupConfirmedMsg struct {
 	Worktrees []string
 	Branches  []string
 }
+
+// EntrySavedMsg carries a newly composed LabEntry to refresh the lab list.
+type EntrySavedMsg struct {
+	Entry domain.LabEntry
+}

@@ -619,6 +619,45 @@ func saveDismissedWorkflows(dismissed map[string]bool) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// loadLabsFromJSON loads Lab entries from a repository-specific labs.json file.
+func loadLabsFromJSON(repoPath string) ([]domain.LabEntry, error) {
+	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".grove", "labs", strings.Replace(repoPath, "/", "_", -1), "labs.json"))
+	if err != nil {
+		return nil, nil
+	}
+	var entries []map[string]interface{}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, nil
+	}
+	labs := make([]domain.LabEntry, 0, len(entries))
+	for _, e := range entries {
+		var lab domain.LabEntry
+		if id, ok := e["id"].(string); ok {
+			lab.ID = id
+		} else {
+			lab.ID = ""
+		}
+		if title, ok := e["title"].(string); ok {
+			lab.Title = title
+		}
+		if kind, ok := e["kind"].(string); ok {
+			lab.Kind = kind
+		}
+		if content, ok := e["content"].(string); ok {
+			lab.Content = content
+		}
+		if created, ok := e["created"].(string); ok {
+			lab.Created = created
+		}
+		if len(lab.ID) == 0 {
+			// Generate ID from title if not provided
+			lab.ID = fmt.Sprintf("%d-%s", time.Now().Unix(), domain.Slugify(lab.Title))
+		}
+		labs = append(labs, lab)
+	}
+	return labs, nil
+}
+
 // debouncedRenderCmd schedules a debouncedRenderMsg after delay.
 func debouncedRenderCmd(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(t time.Time) tea.Msg {
@@ -654,6 +693,7 @@ const (
 	viewWorktrees                   // Shows the worktree list (default)
 	viewIssues                      // Shows the GitHub issues list
 	viewPRs                         // Shows the GitHub pull requests list
+	viewLab                         // Shows the Lab view for ideas/bugs
 )
 
 type dashboardTab int
@@ -703,6 +743,7 @@ type Model struct {
 	syncTickInterval   time.Duration        // Interval of the pending periodic sync tick; 0 when none is pending
 	selectedIssueIdx   int                  // Currently selected issue index
 	selectedPRIdx      int                  // Currently selected PR index
+	selectedLabIdx     int                  // Currently selected lab entry index
 	selectedMissionIdx int                  // Selected workflow/mission on the dashboard
 	dashboardTab       dashboardTab         // Active or completed dashboard workflows
 	focused            focusedPanel         // Which panel currently has keyboard focus
@@ -720,6 +761,8 @@ type Model struct {
 
 	// sessions holds the last-known list of active terminal sessions.
 	sessions []domain.Session
+	// labs holds LabEntry records for the current repository.
+	labs []domain.LabEntry
 
 	// latestVersion holds the latest release version discovered on startup (empty if check failed).
 	latestVersion string
@@ -794,9 +837,10 @@ func NewModel() *Model {
 		dismissedWorkflows: loadDismissedWorkflows(),
 		fuzzyInput: func() textinput.Model {
 			ti := textinput.New()
-			ti.Placeholder = "Search worktrees, issues, PRs, files..."
+			ti.Placeholder = "Search worktrees, issues, PRs, files…"
 			return ti
 		}(),
+		labs:               []domain.LabEntry{}, // Will be loaded via refreshWorktreesCmd handler
 	}
 }
 
@@ -1147,6 +1191,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modal.ModalCancelledMsg:
 			m.activeModal = nil
 			return m, nil
+		case modal.EntrySavedMsg:
+			// Append new entry to labs list and refresh worktrees to update display
+			m.labs = append(m.labs, msg.Entry)
+			m.activeModal = nil
+			return m, m.refreshWorktreesCmd()
 		case modal.SettingsSavedMsg:
 			m.Config = msg.Config
 			// Update themeIdx to match the saved theme.
@@ -1362,6 +1411,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, cmds
+			case "l", "L":
+				if len(m.labs) == 0 {
+					m.activeModal = modal.NewComposeModal(
+						modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
+						false, // isEditMode
+					)
+				} else if _, ok := m.selectedLab(); ok {
+					// Open view lab with pre-selected entry
+					m.view = viewLab
+					m.clampSelectedLabIdx()
+				} else {
+					m.activeModal = modal.NewComposeModal(
+						modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
+						false, // isEditMode
+					)
+				}
 			case "n":
 				m.nextPage()
 				return m, nil
@@ -1422,6 +1487,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
 			m.Worktrees = msg.worktrees
+			m.labs = msg.labs
 			m.clampSelectedIdx()
 			// Always use the main worktree (first entry) as the canonical repo path
 			// so the header shows the repo name rather than the current worktree dir.
@@ -1773,7 +1839,7 @@ func (m *Model) renderView() string {
 	if actionIdx >= len(actions) {
 		actionIdx = max(0, len(actions)-1)
 	}
-	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, func() *domain.ExternalIntegration {
+	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, m.labs, func() *domain.ExternalIntegration {
 		if m.herdrSnapshot != nil {
 			return &m.herdrSnapshot.Integration
 		}
@@ -2808,16 +2874,21 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 
 type worktreesRefreshedMsg struct {
 	worktrees []domain.Worktree
+	labs      []domain.LabEntry
 	err       error
 }
 
-// refreshWorktreesCmd returns a Cmd that reloads the worktree list from git.
+// refreshWorktreesCmd returns a Cmd that reloads the worktree list from git and labs.
 func (m *Model) refreshWorktreesCmd() tea.Cmd {
 	repoPath := m.RepoPath
 	return func() tea.Msg {
 		cmd := internalexec.NewGitCommand(repoPath)
 		worktrees, err := cmd.ListWorktrees()
-		return worktreesRefreshedMsg{worktrees: worktrees, err: err}
+		var labs []domain.LabEntry
+		if err == nil {
+			labs, _ = loadLabsFromJSON(repoPath)
+		}
+		return worktreesRefreshedMsg{worktrees: worktrees, err: err, labs: labs}
 	}
 }
 
@@ -3070,7 +3141,28 @@ func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 			return m, m.openHerdrWorktreeCmd(selected.Path)
 		}
 		return m, m.spawnSessionCmd(selected.Path)
+	case viewLab:
+		selected, ok := m.selectedLab()
+		if !ok {
+			m.activeModal = modal.NewComposeModal(
+				modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
+				false, // isEditMode
+			)
+		} else if selected.Kind == "" {
+			// Empty entry - open compose modal
+			m.activeModal = modal.NewComposeModal(
+				modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
+				false, // isEditMode
+			)
+		}
+		return m, nil
 	}
+}
+
+func (m *Model) openViewLabCmd() (tea.Model, tea.Cmd) {
+	m.view = viewLab
+	m.clampSelectedLabIdx()
+	return m, nil
 }
 
 func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
@@ -3356,6 +3448,26 @@ func (m *Model) clampPRIdx() {
 	}
 	if m.selectedPRIdx >= len(m.prs) {
 		m.selectedPRIdx = len(m.prs) - 1
+	}
+}
+
+func (m *Model) selectedLab() (*domain.LabEntry, bool) {
+	if len(m.labs) == 0 {
+		return nil, false
+	}
+	if m.selectedLabIdx < 0 || m.selectedLabIdx >= len(m.labs) {
+		m.selectedLabIdx = 0
+	}
+	return &m.labs[m.selectedLabIdx], true
+}
+
+func (m *Model) clampSelectedLabIdx() {
+	if len(m.labs) == 0 {
+		m.selectedLabIdx = 0
+		return
+	}
+	if m.selectedLabIdx >= len(m.labs) {
+		m.selectedLabIdx = len(m.labs) - 1
 	}
 }
 

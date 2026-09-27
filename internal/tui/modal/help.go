@@ -60,6 +60,7 @@ var keybindingGroups = []bindingGroup{
 			{"w / W", "Worktrees view"},
 			{"i / I", "Issues view"},
 			{"p / P", "PRs view"},
+			{"l / L", "Lab view (ideas/bugs)"},
 			{"v / V", "Inspect selected dashboard workflow"},
 			{"x / X", "Stop/remove selected workflow"},
 			{"t", "Open settings"},
