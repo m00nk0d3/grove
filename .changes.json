@@ -1,0 +1,50 @@
+{
+  "type": "fix",
+  "issue": 230,
+  "blockers_fixed": [
+    {
+      "id": 1,
+      "description": "Contract documentation missing 'grilling' workflow kind at lines 68 and 133",
+      "file": "docs/SANDCASTLE_JSON_CONTRACT.md",
+      "changes": [
+        "Line 68: Updated --kind flag documentation from '<imp|review|address|ci|resolve|clean>' to '<imp|review|address|ci|resolve|clean|grilling>'",
+        "Line 133: Updated kind field note from 'imp, review, address, ci, resolve, or clean' to 'imp, review, address, ci, resolve, clean, or grilling'"
+      ]
+    },
+    {
+      "id": 2,
+      "description": "cmd/grove/app.go line 3344 uses modal.WorkflowKindImplement instead of modal.WorkflowKindGrilling",
+      "file": "cmd/grove/app.go",
+      "changes": [
+        "Line 3344: Changed Kind field from modal.WorkflowKindImplement to modal.WorkflowKindGrilling in WorkflowLaunchMsg for grilling sessions"
+      ]
+    },
+    {
+      "id": 3,
+      "description": "Modal package missing WorkflowKindGrilling constant",
+      "file": "internal/tui/modal/messages.go",
+      "changes": [
+        "Line 108: Added WorkflowKindGrilling = \"grilling\" constant between WorkflowKindImplement and WorkflowKindReview"
+      ]
+    },
+    {
+      "id": 4,
+      "description": "Test coverage for handleContextAction with ContextActionGrill",
+      "file": "cmd/grove/app_test.go",
+      "changes": [
+        "Added TestModel_ContextActionGrill function covering successful grilling workflow launch and error cases"
+      ]
+    }
+  ],
+  "validation_results": {
+    "go_build": "clean - no errors",
+    "go_vet": "no issues",
+    "unit_tests": "all pass (including new TestModel_ContextActionGrill)",
+    "sandcastle_tests": "all pass including grilling workflow tests"
+  },
+  "changes_summary": {
+    "files_modified": 4,
+    "lines_added": "~35",
+    "lines_removed": "~0"
+  }
+}

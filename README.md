@@ -29,7 +29,7 @@ Modern software development means juggling several things at once: features in f
 
 ## Features
 
-- **Mission control dashboard** — live cards for worktrees, agents, workflows, and open pull requests, an operational pulse, and a workflow list split into *Active / Attention* and *Completed*
+- **Mission control dashboard** — live cards for worktrees, agents, workflows, ideas and bugs, and open pull requests, an operational pulse, and a workflow list split into *Active / Attention* and *Completed*
 - **Sandcastle workflows** — implement an issue (`imp`), review a pull request (`review`), act on review feedback on your own pull request (`address`), repair failing CI (`ci`), resolve merge conflicts (`resolve`), and clean up merged work (`clean`), each started from a context-aware Actions panel and run in a Herdr pane
 - **Mission inspector** — press `v` on a workflow for its overview, steps, metrics, agent activity, and the **reports** it wrote, such as the implementation report and review verdict, rendered in the terminal
 - **Worktree management** — create a worktree from an issue or pull request, open it, open a separate shell, close a session, delete it with its local branch, and clean up merged work
@@ -42,6 +42,36 @@ Modern software development means juggling several things at once: features in f
 - **Mouse support** — click the navigation rail, rows, tabs, and actions; scroll with the wheel
 - **Self-update** — Grove checks for a new release on startup and can replace its own binary
 - **Local persistence** — configuration in `~/.grove/config.toml`, a SQLite cache so Grove starts fast
+- **Lab view** — `'l'` opens the Lab, which holds ideas and bugs discovered during work. Each entry is stored per repository under `~/.grove/labs/`. Select an entry and press `Enter` to edit it. Press `/` to search entries as you type. Keys `1`, `2`, and `3` cycle between *All*, *Idea*, and *Bug* filters.
+
+---
+
+## The Lab
+
+The Lab is a persistent collection of ideas, bugs, and tasks discovered during your work. Every repository has its own lab stored under `~/.grove/labs/<repo-path>/labs.json`.
+
+### Adding an Entry
+
+1. Press `'l'` to open the Lab
+2. Select an empty row (or press `Enter` when no entry is selected)
+3. Press `Enter` to activate editing
+4. Fill in the fields:
+   - **Kind** — `idea` or `bug`
+   - **Title** — a short descriptive name
+   - **Content** — details, steps to reproduce, or context
+
+### Editing Entries
+
+- In the Lab view, select an entry and press `Enter` to enter edit mode
+- Changes save automatically when you leave edit mode or quit Grove
+
+### Deleting Entries
+
+To remove an entry: delete its file directly from `~/.grove/labs/<repo-path>/labs.json`, or use your preferred editor.
+
+### Grilling a Lab Entry
+
+Select a Lab entry and press `Enter` to open the Actions panel, then choose *Grill entry*. This starts an agent workflow with a grilling session for the entry, using its title as the work item. The workflow runs in Herdr and can be inspected like any other mission.
 
 ---
 
@@ -84,7 +114,7 @@ missing, and adds the directory to your user `PATH`. Restart your terminal
 afterwards.
 
 Both installers install the workflow commands `grove-sandcastle`, `imp`
-(alias `agent-flow`), `review`, `address`, `ci`, `resolve`, and `clean`.
+(alias `agent-flow`), `review`, `address`, `ci`, `resolve`, `clean`, and `grill`.
 
 ### go install
 
@@ -461,11 +491,8 @@ The Herdr integration is active only when Grove runs inside a Herdr pane.
 | `~/.grove/config.toml` | Configuration |
 | `~/.grove/grove.db` | SQLite cache of GitHub data and sessions |
 | `~/.grove/logs/grove.log` | Log file |
-| `<repo>/.git/grove-workflows/` | One record per workflow run |
-| `<repo>/.git/agent-flow/` | Workflow checkpoints, reports, and the project profile |
-
-`<repo>/.git` is the repository's shared git directory, which every worktree of
-the repository uses.
+| `~/.grove/labs/<repo>/labs.json` | Ideas and bugs (one JSON array per repository) |
+| `<repo>/.git` | The repository's shared git directory, which every worktree of the repository uses |
 
 ---
 
@@ -476,10 +503,8 @@ replaces the `grove` binary in place; when it lives somewhere you cannot write
 to, the new binary is staged and Grove shows the command that installs it.
 The update replaces only `grove` — re-run the platform installer to update the
 Sandcastle runtime as well.
-
 `grove --version` prints the installed version.
 
----
 
 ## Troubleshooting
 

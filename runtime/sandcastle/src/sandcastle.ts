@@ -80,7 +80,7 @@ export function resolveWorkflowCommand(
   issue: string | undefined,
   pullRequest: string | undefined,
 ): { kind: WorkflowKind; targetArgs: string[] } {
-  const kinds: WorkflowKind[] = ["imp", "review", "resolve", "ci", "clean", "address"];
+  const kinds: WorkflowKind[] = ["imp", "review", "resolve", "ci", "clean", "address", "grilling"];
   if (!kinds.includes(requestedKind as WorkflowKind)) {
     throw new Error(`unsupported workflow kind "${requestedKind}"`);
   }

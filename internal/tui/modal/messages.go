@@ -104,12 +104,13 @@ type ParentWorktreeRequiredMsg struct {
 type UpdateConfirmedMsg struct{}
 
 const (
-	WorkflowKindImplement = "imp"
-	WorkflowKindReview    = "review"
-	WorkflowKindResolve   = "resolve"
-	WorkflowKindCI        = "ci"
-	WorkflowKindAddress   = "address"
-	WorkflowKindClean     = "clean"
+	WorkflowKindImplement  = "imp"
+	WorkflowKindGrilling   = "grilling"
+	WorkflowKindReview     = "review"
+	WorkflowKindResolve    = "resolve"
+	WorkflowKindCI         = "ci"
+	WorkflowKindAddress    = "address"
+	WorkflowKindClean      = "clean"
 )
 
 // WorkflowLaunchMsg requests a Grove-owned Sandcastle workflow.
@@ -164,4 +165,14 @@ type EntrySavedMsg struct {
 // EntrySavedErrMsg is returned when an entry fails to save.
 type EntrySavedErrMsg struct {
 	Error error // Error message
+}
+
+
+// ContextActionGrill is the string constant for the grilling context action.
+const ContextActionGrill = "grill"
+
+// GrillingSessionStartedMsg is dispatched when a grilling workflow starts successfully.
+type GrillingSessionStartedMsg struct {
+	Workflow domain.WorkflowRunRef // The workflow run for the griller
+	EntryID  string                // ID of the Lab entry being grilled
 }

@@ -65,7 +65,7 @@ runtime reads the runs of the repository containing that directory.
 
 ```bash
 grove-sandcastle workflow start --json \
-  --kind <imp|review|address|ci|resolve|clean> \
+  --kind <imp|review|address|ci|resolve|clean|grilling> \
   --repo <repository path> \
   --worktree <worktree path> \
   --agent <opencode|pi|claude> \
@@ -130,7 +130,7 @@ The record the runtime writes for each run, and the entry shape of `status`,
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id` | string | `run_<uuid>`; stable for the run's lifetime and the record's file name |
-| `kind` | string | `imp`, `review`, `address`, `ci`, `resolve`, or `clean` |
+| `kind` | string | `imp`, `review`, `address`, `ci`, `resolve`, clean, or grilling |
 | `title` | string | For example `Implement issue #42`, `Review pull request #17`, `Clean merged worktrees` |
 | `status` | string | See [Status vocabulary](#status-vocabulary) |
 | `repo` | string | The repository's top-level directory |

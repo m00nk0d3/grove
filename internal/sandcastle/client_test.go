@@ -642,3 +642,66 @@ func TestSnapshot_UnknownStatusPassthrough(t *testing.T) {
 	require.Len(t, snap.Agents, 1)
 	assert.Equal(t, "custom_agent_state", snap.Agents[0].Status)
 }
+
+// Grilling workflow tests for issue #230
+
+func TestStartWorkflow_GrillingWithPiAgent(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow":{"id":"run_griller_1","status":"queued","default_agent":"opencode"}}`),
+	}
+
+	client := newTestClient(runner)
+
+	run, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/worktrees/grilling-1",
+		AgentKind:    "pi",
+		Source:       "grove",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "run_griller_1", run.WorkflowID)
+	assert.Equal(t, "queued", run.Status)
+}
+
+func TestStartWorkflow_GrillingDefaultsToImpKind(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow":{"id":"run_griller_1","status":"queued","kind":"imp"}}`),
+	}
+
+	client := newTestClient(runner)
+
+	req := StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/worktrees/grilling-1",
+		AgentKind:    "pi",
+		Source:       "grove",
+	}
+
+	run, err := client.StartWorkflow(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, "imp", run.Kind) // Defaults to imp when not specified
+}
+
+func TestStartWorkflow_GrillingWithIssueNumber(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow":{"id":"run_griller_2","status":"queued","github":{"issue":230}}}`),
+	}
+
+	client := newTestClient(runner)
+
+	run, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		RepoPath:     "/repo",
+		WorktreePath: "/worktrees/grilling-1",
+		IssueNumber:  intPtr(230),
+		AgentKind:    "pi",
+		Source:       "grove",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 230, *run.IssueNumber)
+}
