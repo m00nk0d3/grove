@@ -351,3 +351,22 @@ Secondary seams are only needed where external process boundaries exist:
 - The major design risk is split-brain ownership between Grove, Herdr, Sandcastle, and GitHub. The explicit ownership model in this ADR is intended to prevent that.
 - The second major risk is overbuilding the first release. Stop/pause/retry and GitHub mutation actions are valuable, but they should follow after the mission-control model and visual dashboard are stable.
 - The third major risk is rendering external system output directly. Sandcastle must provide structured state, and Grove must render it as native TUI components.
+
+### Amendments by Issue #231
+
+This record amends its Phase 1 scope to include one controlled GitHub write operation: the shape workflow that creates a bug issue from a Lab entry. This is Grove's first sanctioned GitHub mutation beyond read-only sync, and it is documented here as a deliberate boundary extension rather than an accidental leakage of state mutation into phase-1 controls.
+
+**New Write Boundary:**
+- **Operation:** Create GitHub issue with `bug` label and optional `Backlog` project placement
+- **Trigger:** User approval of shaped bug report in Lab view (`s` key)
+- **Safety:** Requires explicit user confirmation (approval modal)
+- **Target:** Currently active repository (first worktree)
+- **Limitation:** No assignment, comment, or other mutation controls in phase 1
+
+This write operation is scoped to:
+- Single-issue creation (no bulk operations)
+- Read-only label selection (only `bug` label)
+- Optional project placement (`Backlog`)
+- No PR link creation (phase 2 consideration)
+
+The shape workflow complements Sandcastle's read-only workflow status display and does not overlap with Herdr's terminal runtime responsibilities. It remains a Grove-owned operation that respects GitHub API rate limits through exponential backoff retry logic.

@@ -176,3 +176,24 @@ type GrillingSessionStartedMsg struct {
 	Workflow domain.WorkflowRunRef // The workflow run for the griller
 	EntryID  string                // ID of the Lab entry being grilled
 }
+
+// ShapeIssueInitMsg is dispatched when a bug entry is selected for shaping.
+type ShapeIssueInitMsg struct {
+	Entry    domain.LabEntry
+	RepoPath string
+}
+
+// ShapeIssueConfirmedMsg carries the result of approving the shaped issue.
+type ShapeIssueConfirmedMsg struct {
+	IssueNumber int  // GitHub issue number created
+	URL         string  // Full issue URL
+	Entry       *domain.LabEntry  // Updated entry with linked issue
+}
+
+// ShapeIssueCancelledMsg is dispatched when user rejects shaping.
+type ShapeIssueCancelledMsg struct{}
+
+// ShapeIssueCreationFailedMsg indicates issue creation failed with error.
+type ShapeIssueCreationFailedMsg struct {
+	Err error
+}

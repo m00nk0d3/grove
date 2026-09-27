@@ -845,21 +845,21 @@ func NewModel() *Model {
 		}
 	}
 
-		return &Model{
-			Config:             cfg,
-			themeIdx:           themeIdx,
-			statusErr:          configErr,
-			focused:            panelList,
-			insideHerdr:        os.Getenv("HERDR_ENV") != "",
-			dismissedWorkflows: loadDismissedWorkflows(),
-			fuzzyInput: func() textinput.Model {
-				ti := textinput.New()
-				ti.Placeholder = "Search worktrees, issues, PRs, files…"
-				return ti
-			}(),
-			labs:               []domain.LabEntry{}, // Will be loaded via refreshWorktreesCmd handler
-			labFilter:          domain.LabFilterAll,
-		}
+	return &Model{
+		Config:             cfg,
+		themeIdx:           themeIdx,
+		statusErr:          configErr,
+		focused:            panelList,
+		insideHerdr:        os.Getenv("HERDR_ENV") != "",
+		dismissedWorkflows: loadDismissedWorkflows(),
+		fuzzyInput: func() textinput.Model {
+			ti := textinput.New()
+			ti.Placeholder = "Search worktrees, issues, PRs, files…"
+			return ti
+		}(),
+		labs:      []domain.LabEntry{}, // Will be loaded via refreshWorktreesCmd handler
+		labFilter: domain.LabFilterAll,
+	}
 }
 
 // Init initializes the model and triggers an initial worktree list load and GitHub sync.
@@ -1225,6 +1225,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusErr = msg.Error.Error()
 			m.activeModal = nil
 			return m, nil
+		case modal.ShapeIssueConfirmedMsg:
+			// Update entry with issue link
+			if msg.Entry.LinkedIssue != nil {
+				m.labs = append(m.labs, *msg.Entry)
+			}
+			m.activeModal = nil
+			m.statusMsg = fmt.Sprintf("Created issue #%d", msg.IssueNumber)
+			return m, m.refreshWorktreesCmd()
+		case modal.ShapeIssueCancelledMsg:
+			m.activeModal = nil
+			// Don't show error - cancellation is normal
 		case modal.SettingsSavedMsg:
 			m.Config = msg.Config
 			// Update themeIdx to match the saved theme.
@@ -1507,6 +1518,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.activeModal = modal.NewComposeModal(
 							modal.ComposeInitMsg{Kind: string(domain.LabFilterIdea), RepoPath: m.RepoPath},
 							true, // isEditMode
+						)
+					}
+				}
+			// Shape handler for viewLab (only when in viewLab and not already handled by dashboard switch)
+			case "s":
+				if m.view == viewLab && m.activeModal == nil {
+					// Open shape modal for selected lab entry
+					selected, ok := m.selectedLab()
+					if ok && selected.Kind == "bug" && len(selected.Content) > 0 {
+						m.activeModal = modal.NewShapeIssueModal(modal.ShapeIssueInitMsg{
+							Entry:    *selected,
+							RepoPath: m.RepoPath,
+						})
+					} else if ok && selected.Kind == "" {
+						// Empty content - open compose first (can't shape empty entry)
+						m.activeModal = modal.NewComposeModal(
+							modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
+							false, // isEditMode
 						)
 					}
 				}
@@ -2725,7 +2754,6 @@ func (m *Model) removeWorkflowCmd(runID string, stop bool) tea.Cmd {
 	}
 }
 
-
 // startGrillingWorkflowCmd starts a grilling session workflow for a Lab entry.
 func (m *Model) startGrillingWorkflowCmd(msg modal.WorkflowLaunchMsg, worktreePath string, entryID string) tea.Cmd {
 	starter := m.workflowStarter
@@ -2755,6 +2783,7 @@ func (m *Model) startGrillingWorkflowCmd(msg modal.WorkflowLaunchMsg, worktreePa
 		return sandcastleWorkflowStartedMsg{workflow: workflow, kind: msg.Kind, err: err}
 	}
 }
+
 // defaultHealthChecker is the production sessionHealthChecker backed by real
 // herdr and sandcastle clients.
 type defaultHealthChecker struct {
@@ -3341,7 +3370,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 
 		request := modal.WorkflowLaunchMsg{
-			Kind:     modal.WorkflowKindGrilling,
+			Kind:      modal.WorkflowKindGrilling,
 			AgentKind: "pi",
 		}
 

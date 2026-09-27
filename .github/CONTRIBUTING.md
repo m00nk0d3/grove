@@ -21,7 +21,7 @@ To try a change end to end, install the runtime and run Grove from inside a
 Git repository, preferably in a Herdr pane so workflows can start:
 
 ```bash
-make install-runtime   # grove-sandcastle, imp, review, address, ci, resolve, clean
+make install-runtime   # grove-sandcastle, imp, review, address, ci, resolve, clean, grill
 go run ./cmd/grove
 ```
 
@@ -30,7 +30,7 @@ go run ./cmd/grove
 | Path | Contents |
 |---|---|
 | `cmd/grove/` | The TUI application: the Bubble Tea model (`app.go`), the screen renderer (`renderer.go`), and how workflow runs, reports, and integrations are wired in |
-| `internal/domain/` | Shared types: configuration, worktrees, issues, pull requests, sessions, mission control state |
+| `internal/domain/` | Shared types: configuration, worktrees, issues, pull requests, sessions, labs, mission control state |
 | `internal/data/` | Loading and saving `config.toml`, the SQLite cache, sessions |
 | `internal/exec/` | Wrappers around `git` and `gh` |
 | `internal/herdr/` | The Herdr client and detection of a Herdr pane |
@@ -96,6 +96,19 @@ Run `make test` before opening a pull request. CI runs `make test` and
 - Open the pull request against `main`. Its description says what changed,
   why, and how it was tested; the PR check rejects an empty or very short
   description.
+
+## Build/Test/Lint Conventions
+
+### Running Tests
+
+- **Go tests:** Run `make test` for both Go and TypeScript runtime tests.
+- **Lab view features:** Test new Lab entries with `'l'`, ensure filtering (1/2/3) works, and verify shape workflow (`s`) creates GitHub issues correctly.
+- **Workflow kinds:** All workflows (`imp|review|address|ci|resolve|clean|grilling`) should pass validation in their respective runtime tests.
+
+### Linting
+
+- Run `make lint` (golangci-lint) on Go code before committing.
+- Run `npm run lint` or equivalent in `runtime/sandcastle/` for TypeScript.
 
 ## Releases
 
