@@ -621,7 +621,7 @@ func saveDismissedWorkflows(dismissed map[string]bool) error {
 
 // loadLabsFromJSON loads Lab entries from a repository-specific labs.json file.
 func loadLabsFromJSON(repoPath string) ([]domain.LabEntry, error) {
-	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".grove", "labs", strings.Replace(repoPath, "/", "_", -1), "labs.json"))
+	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".grove", "labs", repoPath, "labs.json"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read labs file: %w", err)
 	}
@@ -656,6 +656,21 @@ func loadLabsFromJSON(repoPath string) ([]domain.LabEntry, error) {
 		labs = append(labs, lab)
 	}
 	return labs, nil
+}
+
+// cycleLabFilterToAll sets the lab filter to show all entries.
+func (m *Model) cycleLabFilterToAll() {
+	m.labFilter = domain.LabFilterAll
+}
+
+// cycleLabFilterToIdea sets the lab filter to show only idea entries.
+func (m *Model) cycleLabFilterToIdea() {
+	m.labFilter = domain.LabFilterIdea
+}
+
+// cycleLabFilterToBug sets the lab filter to show only bug entries.
+func (m *Model) cycleLabFilterToBug() {
+	m.labFilter = domain.LabFilterBug
 }
 
 // debouncedRenderCmd schedules a debouncedRenderMsg after delay.
@@ -1476,11 +1491,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.view == viewLab {
 					switch msg.String() {
 					case "1", "1\r":
-						m.labFilter = domain.LabFilterAll
+						m.cycleLabFilterToAll()
 					case "2", "2\r":
-						m.labFilter = domain.LabFilterIdea
+						m.cycleLabFilterToIdea()
 					case "3", "3\r":
-						m.labFilter = domain.LabFilterBug
+						m.cycleLabFilterToBug()
 					}
 				}
 			// Edit handler for viewLab (only when in viewLab and not already handled by dashboard switch)

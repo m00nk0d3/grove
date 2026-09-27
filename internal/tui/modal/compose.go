@@ -27,6 +27,7 @@ type ComposeModal struct {
 	step       composeStep     // current step: kind | content | confirm
 	kindIdx    int             // selected kind index
 	textInput  textinput.Model // multi-line text input for content editing
+	contentVal string           // captured value from textInput for saving
 }
 
 type composeStep int
@@ -245,10 +246,12 @@ func (m *ComposeModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Update textinput when focused on content step
+		// Update textinput when focused on content step and capture its value
 		if m.step == composeContent {
 			var inputCmd tea.Cmd
 			m.textInput, inputCmd = m.textInput.Update(msg)
+			// Capture the current text input value for saving
+			m.contentVal = strings.TrimSpace(m.textInput.Value())
 			return m, inputCmd
 		}
 
@@ -265,11 +268,11 @@ func (m *ComposeModal) EntrySaveCmd() tea.Cmd {
 		ts := fmt.Sprintf("%d", domain.CurrentTimestamp())
 		slug := fmt.Sprintf("%s-%s", ts, domain.Slugify(m.initMsg.Title))
 		entry := domain.LabEntry{
-			ID:       slug,
-			Title:    m.initMsg.Title,
-			Kind:     m.initMsg.Kind,
-			Content:  m.content,
-			Created:  time.Now().UTC().Format(time.RFC3339),
+			ID:      slug,
+			Title:   m.initMsg.Title,
+			Kind:    m.initMsg.Kind,
+			Content: m.contentVal,
+			Created: m.initMsg.Created,
 		}
 
 		// Save to disk using the repository path from init message
