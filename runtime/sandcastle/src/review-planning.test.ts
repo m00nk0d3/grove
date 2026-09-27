@@ -201,6 +201,32 @@ test("a change confined to a surface validates the project that covers it", () =
     "python -m pytest (in backend)",
     "npm test (in frontend)",
   ]);
+
+  // The repository root is a real owner and is spelled as the empty string, so
+  // the delegation is read as a written field rather than as a true one. Grove
+  // has a manifest at its root and a migrations directory it owns, and the
+  // profile that says so validates a migration with the root project's suite
+  // alone rather than declaring the surface unowned.
+  const go = { stack: "GO" as const, root: "", marker: "go.mod" };
+  const withRootProject = [...projects, go];
+  const ownedByRoot = {
+    ...withSurface,
+    surfaces: [{ root: "internal/data/migrations", validatedBy: "" }],
+  } as unknown as RepoProfile;
+  assert.deepEqual(
+    planVerification(withRootProject, ["internal/data/migrations/001.sql"], ownedByRoot).map(
+      (task) => task.label,
+    ),
+    ["go test ./..."],
+  );
+  // Without the surface, that file is a root-project file already, so the answer
+  // is the same suite: the field narrows a monorepo and costs nothing here.
+  assert.deepEqual(
+    planVerification(withRootProject, ["internal/data/migrations/001.sql"], null).map(
+      (task) => task.label,
+    ),
+    ["go test ./..."],
+  );
 });
 
 test("each concern gets its own reviewer, ranked by how much of the diff it matches", () => {
@@ -772,6 +798,35 @@ test("the prompt engineer is told frameworks belong in the structured field", as
   assert.match(prompt, /must have it here/);
   // The schema shows a filled example rather than an empty placeholder.
   assert.match(prompt, /"frameworks": \[\s*\{ "name": "React"/);
+});
+
+test("the prompt engineer is not asked to certify a command it never runs", async () => {
+  const { SPECIALISTS } = await import("./specialists.js");
+  const prompt = SPECIALISTS.PROMPT_ENGINEER(
+    "owner/repo",
+    ".agent/issue-1/draft.json",
+    [{ root: "", marker: "go.mod", label: "GO", dependencies: [] }],
+    [{ root: "internal/data/migrations", label: "SQL", evidence: "9 of 9 files are .sql" }],
+  );
+
+  // The setup command carries no 'verified' and no 'evidence': nothing reads them,
+  // and asking for them asked the agent to certify a run it was never asked to
+  // make. The first profile written for Grove came back with both absent from
+  // every setup command, and the validator refused the draft over it.
+  assert.match(prompt, /"setup": \{ "command": "\.\.\.", "args": \["\.\.\."\], "skipWhenPresent"/);
+  assert.doesNotMatch(prompt, /"setup": \{[^}]*"verified"/);
+  assert.match(prompt, /The setup command is not run, so it carries no 'verified'/);
+  // The test command still has both, and the rule is stated as a decision rather
+  // than left to a template: a blank now reads as unverified, which is the half
+  // that cannot run a command as though it were trustworthy.
+  assert.match(prompt, /"test": \{ "command": "\.\.\.", "args": \["\.\.\."\], "verified": true, "evidence"/);
+  assert.match(prompt, /Leaving 'verified' out is read as false/);
+
+  // And the surface it is asked about is one it can answer without guessing: a
+  // surface inside a project is that project's, so only the exception is asked
+  // for. The refusal this replaces is what stopped every workflow on Grove.
+  assert.match(prompt, /Name the owner where it is not the project the directory sits in/);
+  assert.match(prompt, /One you\n\s+leave out is given the project that owns it/);
 });
 
 test("the prompt engineer is shown the literal root value, not a gloss on it", async () => {

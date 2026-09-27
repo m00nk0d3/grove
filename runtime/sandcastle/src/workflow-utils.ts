@@ -512,7 +512,11 @@ export function planVerification(
     const surface = deepestSurfaceFor(profile, normalized);
     if (!surface) continue;
     sawSurfaceFile = true;
-    if (surface.validatedBy) delegated.add(surface.validatedBy);
+    // The repository root is a real owner and is spelled as the empty string, so
+    // this asks whether the field was written rather than whether it is true.
+    // Reading it as a boolean left a surface covered by the root project's tests
+    // looking unowned, which is the delegation surfaces exist to provide.
+    if (surface.validatedBy !== undefined) delegated.add(surface.validatedBy);
   }
 
   const scoped = projectsInScope(projects, changedFiles);

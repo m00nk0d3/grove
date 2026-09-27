@@ -37,7 +37,18 @@ export interface ProfileCommand {
   evidence: string;
 }
 
-export interface ProfileSetupCommand extends ProfileCommand {
+// The command that prepares a fresh checkout carries no 'verified' and no
+// 'evidence', and this is not tidiness. Both are read of a test command alone:
+// `resolveVerificationTask` lets a test command that is known to work displace a
+// built-in one, and logs the evidence of one that did not run. A setup command
+// is asked of nobody — the profiler is told to run the test command once, not the
+// setup command — so asking it to certify the setup command asked for a claim
+// about a run that never happened, and Grove's first profile came back with both
+// fields absent from every setup command, which the validator then refused.
+export interface ProfileSetupCommand {
+  /** One executable. Never a shell line: these are spawned without a shell. */
+  command: string;
+  args: string[];
   /**
    * Relative to the project root. When this path exists the setup command is
    * skipped, so an ordinary run pays nothing: node_modules, vendor, .venv.
@@ -328,15 +339,58 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
-function readCommand(
+function readCommand(value: unknown, where: string): ProfileCommand {
+  const { command, args } = readExecutable(value, where);
+  const candidate = value as Partial<ProfileCommand>;
+  // A command nobody claimed to have run is not a missing answer, it is an
+  // answer: it reads as unverified, which is the one reading that cannot act
+  // wrongly. `resolveVerificationTask` gives an unverified test command to the
+  // built-in that works today, and falls back to the profile's own only where
+  // nothing is known — so forgiving the blank cannot run a command as though it
+  // were trustworthy. Refusing it could: a draft is only written once it
+  // validates, so a refusal leaves the profile stale and the next workflow
+  // summons the prompt engineer to draw the same rejection.
+  const verified = isAbsent(candidate.verified) ? false : candidate.verified;
+  if (typeof verified !== "boolean") {
+    fail(`${where} needs verified to say whether the command was run.`);
+  }
+  if (typeof candidate.evidence !== "string" || !candidate.evidence.trim()) {
+    fail(`${where} needs evidence describing what happened when it was run.`);
+  }
+  return { command, args, verified, evidence: candidate.evidence };
+}
+
+// The setup command is the same executable and the same no-shell rule, without
+// the two fields that describe a run. Keys the prompt engineer wrote for the
+// older shape are read past: `command` and `args` are copied and the rest is
+// dropped, so a profile written against the last schema still validates and is
+// still usable.
+function readSetupCommand(value: unknown, where: string): ProfileSetupCommand {
+  const { command, args } = readExecutable(value, where);
+  const { skipWhenPresent } = value as Partial<ProfileSetupCommand>;
+  if (isAbsent(skipWhenPresent)) {
+    return { command, args };
+  }
+  if (
+    typeof skipWhenPresent !== "string" ||
+    path.isAbsolute(skipWhenPresent) ||
+    skipWhenPresent.includes("..")
+  ) {
+    fail(`${where} has an invalid skipWhenPresent path.`);
+  }
+  return { command, args, skipWhenPresent };
+}
+
+// One executable and its arguments, checked for both. Shared by the test and
+// setup commands, which differ only in what they say about having been run.
+function readExecutable(
   value: unknown,
   where: string,
-  { setup = false }: { setup?: boolean } = {},
-): ProfileCommand {
+): { command: string; args: string[] } {
   if (!value || typeof value !== "object") {
     fail(`${where} is missing.`);
   }
-  const candidate = value as Partial<ProfileSetupCommand>;
+  const candidate = value as Partial<ProfileCommand>;
   if (typeof candidate.command !== "string" || !candidate.command.trim()) {
     fail(`${where} has no command.`);
   }
@@ -352,29 +406,7 @@ function readCommand(
   ) {
     fail(`${where} needs args to be an array of strings.`);
   }
-  if (typeof candidate.verified !== "boolean") {
-    fail(`${where} needs verified to say whether the command was run.`);
-  }
-  if (typeof candidate.evidence !== "string" || !candidate.evidence.trim()) {
-    fail(`${where} needs evidence describing what happened when it was run.`);
-  }
-  const command: ProfileSetupCommand = {
-    command: candidate.command,
-    args: candidate.args as string[],
-    verified: candidate.verified,
-    evidence: candidate.evidence,
-  };
-  if (setup && !isAbsent(candidate.skipWhenPresent)) {
-    if (
-      typeof candidate.skipWhenPresent !== "string" ||
-      path.isAbsolute(candidate.skipWhenPresent) ||
-      candidate.skipWhenPresent.includes("..")
-    ) {
-      fail(`${where} has an invalid skipWhenPresent path.`);
-    }
-    command.skipWhenPresent = candidate.skipWhenPresent;
-  }
-  return command;
+  return { command: candidate.command, args: candidate.args as string[] };
 }
 
 // Every reader below rebuilds its result field by field, so a key the prompt
@@ -497,11 +529,10 @@ function readProject(value: unknown, index: number): ProfileProject {
     test: readCommand(candidate.test, `Profile project '${root}' test command`),
   };
   if (!isAbsent(candidate.setup)) {
-    project.setup = readCommand(
+    project.setup = readSetupCommand(
       candidate.setup,
       `Profile project '${root}' setup command`,
-      { setup: true },
-    ) as ProfileSetupCommand;
+    );
   }
   return project;
 }
@@ -670,27 +701,37 @@ export function readProfileDraft(
       );
     }
   }
-  // A surface the detector found and the profile left out is a surface with no
-  // owner, so a change confined to it validates every project in the repository —
-  // the cost surfaces exist to remove, paid in full and in silence. The same
-  // check projects get, because the same silence is what hid this: the prompt
-  // listed the surfaces as context, asked for no 'surfaces' key in its output
-  // shape, and said nothing about reporting them, so the agent returned none and
-  // there was nowhere for that to be noticed.
+  // A surface the detector found and the profile left out is given the project
+  // that owns it, and the answer is derived rather than refused. Refusing it
+  // looked strict and was the opposite: a draft is only written once it
+  // validates, so a refusal left the profile unwritten, the next workflow
+  // summoned the prompt engineer, and it drew the same rejection — no workflow
+  // on that repository could start at all. The first profile written for Grove
+  // came back with `"surfaces": null` and one real surface,
+  // `internal/data/migrations`, waiting behind it.
+  //
+  // The derived owner is also the right one far more often than it is a guess: a
+  // surface inside a project is covered by that project's tests, since the
+  // detector will not report a directory a project owns. The prompt engineer is
+  // asked to name the owner because the exception is real — a top-level
+  // `migrations/` directory whose coverage comes from a service's suite — and its
+  // answer overrides this. A surface no project owns is left with no owner, which
+  // validates every project: conservative, never wrong, and named in the log.
   const detectedSurfaceRoots = new Set(detectedSurfaces.map((surface) => surface.root));
-  for (const detectedSurface of detectedSurfaces) {
-    if (!surfaceRoots.has(detectedSurface.root)) {
-      throw new Error(
-        `The project profile is missing an entry for the ${detectedSurface.label} surface at '${detectedSurface.root}'.`,
-      );
-    }
-  }
   for (const surface of surfaces) {
     if (!detectedSurfaceRoots.has(surface.root)) {
       throw new Error(
         `The project profile describes a surface at '${surface.root}', which is not a surface in this repository.`,
       );
     }
+  }
+  for (const detectedSurface of detectedSurfaces) {
+    if (surfaceRoots.has(detectedSurface.root)) continue;
+    const owner = deepestProjectFor(detected, detectedSurface.root);
+    const surface: ProfileSurface = { root: detectedSurface.root };
+    if (owner) surface.validatedBy = owner.root;
+    surfaces.push(surface);
+    surfaceRoots.add(surface.root);
   }
 
   if (Array.isArray(candidate.concerns) && candidate.concerns.length > MAX_CONCERNS) {
@@ -817,6 +858,25 @@ export function profileProjectFor(
   return profile?.projects.find((project) => project.root === root);
 }
 
+// The project a repository-relative path belongs to: the deepest root that
+// contains it, so a subdirectory is never attributed to the project above it. A
+// path outside every project belongs to none, which is a different answer from
+// the repository root and the only case where nothing owns a path at all.
+function deepestProjectFor(
+  projects: StackProject[],
+  relativePath: string,
+): StackProject | undefined {
+  const normalized = relativePath.replace(/\\/g, "/");
+  let owner: StackProject | undefined;
+  for (const project of projects) {
+    const matches = project.root === "" || normalized.startsWith(`${project.root}/`);
+    if (matches && (!owner || project.root.length > owner.root.length)) {
+      owner = project;
+    }
+  }
+  return owner;
+}
+
 // projectsInScope narrows a repository's projects to the ones a step is about to
 // touch, by the same rule verification already uses to decide what to test: the
 // deepest project root owning a file wins, and nothing attributable means every
@@ -826,21 +886,9 @@ export function projectsInScope(
   scopeFiles: string[],
 ): StackProject[] {
   if (projects.length === 0) return [];
-  const ownerOf = (file: string): StackProject | undefined => {
-    const normalized = file.replace(/\\/g, "/");
-    let owner: StackProject | undefined;
-    for (const project of projects) {
-      const matches =
-        project.root === "" || normalized.startsWith(`${project.root}/`);
-      if (matches && (!owner || project.root.length > owner.root.length)) {
-        owner = project;
-      }
-    }
-    return owner;
-  };
   const affected = new Set<StackProject>();
   for (const file of scopeFiles) {
-    const owner = ownerOf(file);
+    const owner = deepestProjectFor(projects, file);
     if (owner) affected.add(owner);
   }
   return affected.size > 0

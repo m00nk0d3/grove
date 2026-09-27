@@ -297,12 +297,20 @@ ${IMPLEMENTATION_PROMPTS.CSHARP}
      will be read as part of the program's name and will fail.
    - Report the command this repository already uses. Prefer what its CI or its
      manifest scripts run over anything you would choose yourself.
+   - The setup command is not run, so it carries no 'verified' and no 'evidence'.
+     Those two fields belong to the test command alone; writing them on a command
+     you were not asked to run is a claim about a run that never happened, and
+     nothing reads them.
 5. Run each test command once, in its own project directory, and record what
    happened in 'evidence'. A test suite that fails for reasons that predate your
    work still proves the command is the right one, so set 'verified' true. If a
    command would need network access, containers, credentials, or more than a
    few minutes, do not run it: set 'verified' false and say so in 'evidence'.
    An unverified command is used only when nothing else is known.
+   - Leaving 'verified' out is read as false, which is the safe half of that
+     answer: an unverified command never displaces a built-in one that works
+     today. It is worth setting it deliberately, because a project the runtime
+     has no built-in command for is validated by this one or by nothing.
 ${
   surfaces.length > 0
     ? `6. For each surface listed above, say which project's tests cover it, in
@@ -312,6 +320,12 @@ ${
    exactly as listed above, the repository root included.
    - A surface with no 'validatedBy' is not an answer. It falls back to running
      every project in the repository, which is the cost this field removes.
+   - Name the owner where it is not the project the directory sits in. A surface
+     inside a project is covered by that project's own tests, and one you leave
+     out is given that project; the exception worth writing down is a directory
+     outside every project, such as a top-level 'migrations/' whose coverage
+     comes from a service's suite, which no project owns and which therefore has
+     to be named to be validated by anything less than the whole repository.
    - Only the 'root' and 'validatedBy' fields are read. Do not write a label, a
      purpose or personas for a surface: nothing downstream reads them, and text
      that is never acted on is a maintenance claim nobody made.
@@ -352,7 +366,7 @@ Completion criteria:
           "verification": "...", "review": "...", "documentation": "..."
         },
         "test": { "command": "...", "args": ["..."], "verified": true, "evidence": "..." },
-        "setup": { "command": "...", "args": ["..."], "verified": true, "evidence": "...", "skipWhenPresent": "node_modules" }
+        "setup": { "command": "...", "args": ["..."], "skipWhenPresent": "node_modules" }
       }
     ],
     "concerns": [
@@ -379,7 +393,9 @@ Completion criteria:
 - Report every project listed above, and no project that is not listed.${
   surfaces.length > 0
     ? `
-- Report every surface listed above, and no surface that is not listed.
+- Report every surface listed above, and no surface that is not listed. One you
+  leave out is given the project that owns it, so the omission costs a wrong
+  answer only where the coverage comes from somewhere else — write it down.
 - A surface's 'root' and 'validatedBy' are both project-style roots: copy them
   from the listing above. A project listed as 'root ""' is the empty string, so
   the repository root is named as "validatedBy": "".`
