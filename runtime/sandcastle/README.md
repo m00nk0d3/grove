@@ -11,7 +11,7 @@ Grove's workflow runtime. It provides the workflow commands and
 | `ci <pr>` | Repair a pull request's failing checks; `--continue` resumes a stopped run |
 | `resolve <pr>` | Resolve a pull request's merge conflicts |
 | `clean` | Remove merged worktrees and branches |
-| `grove-sandcastle` | `status`, `workflow start`, `workflow remove`, `workflow list`, `workflow get` |
+| `grilling` | Grilling workflow: reads transcript from completed session, generates context document and specification artifact, writes both to working tree. Used by Grove Lab (issue #232) for approving grilled specs into the working tree |
 
 `imp` and `review` also accept `<owner/repo>` before the number. The workflows
 run inside Herdr panes and drive the agent backend chosen by

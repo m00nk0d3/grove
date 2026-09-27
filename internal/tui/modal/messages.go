@@ -5,6 +5,14 @@ import (
 	"github.com/m00nk0d3/grove/internal/domain"
 )
 
+// GrillingArtifacts holds the context and spec documents produced by grilling.
+type GrillingArtifacts struct {
+	Context   string
+	Spec      string
+	RepoPath  string
+	OutputPath string // Optional custom output path (empty uses default repo root)
+}
+
 // Modal extends tea.Model with a Title for themed overlay rendering.
 type Modal interface {
 	tea.Model
@@ -196,4 +204,24 @@ type ShapeIssueCancelledMsg struct{}
 // ShapeIssueCreationFailedMsg indicates issue creation failed with error.
 type ShapeIssueCreationFailedMsg struct {
 	Err error
+}
+
+
+// GrillingArtifactsRequestedMsg is dispatched when grilling workflow completes
+// and artifacts are ready for review.
+type GrillingArtifactsRequestedMsg struct {
+	Artifacts GrillingArtifacts
+}
+
+// GrillingArtifactsApprovedMsg is dispatched when approved artifacts are written to working tree.
+type GrillingArtifactsApprovedMsg struct{}
+
+// GrillingArtifactsCommitErr is returned when artifact write fails.
+type GrillingArtifactsCommitErr struct {
+	Error error
+}
+
+// GrillingRejectedMsg is dispatched when user rejects artifacts, triggering grilling retry.
+type GrillingRejectedMsg struct {
+	Kind string // "grilling" - used to re-trigger workflow on reject
 }

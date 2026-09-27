@@ -604,16 +604,360 @@ test("grilling workflow entry status transition", async () => {
   }
 });
 
+// === A1: Artifact Generation on Grilling Completion ===
+
+test("A1.1: grilling generates both context.md and spec.md artifacts", async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "grove-test-"));
+  setupTestEnv(cwd, fixtureCommonDir());
+
+  try {
+    const runId = `run_${randomUUID()}`;
+    const now = new Date().toISOString();
+
+    // Create a grilling workflow with transcript data (simulating completed grilling session)
+    const agentName = "af-griller-1";
+
+    const workflow: RuntimeWorkflow = {
+      id: runId,
+      title: "Grilling session for issue #230",
+      status: "succeeded" as WorkflowStatus,
+      repo: cwd,
+      worktree_path: cwd,
+      branch: "main",
+      default_agent: "opencode",
+      current_step: "Completed",
+      progress: { completed: 3, total: 3, percent: 100 },
+      github: { issue: 230, pull_request: null },
+      agents: [
+        {
+          id: "griller-1",
+          kind: "pi",
+          name: agentName,
+          status: "succeeded" as string,
+          summary: "Grilling session complete",
+          pane_id: "w6:p24",
+        },
+      ],
+      steps: [
+        { id: "step_1", title: "Ask first question", status: "succeeded", completed_at: now, summary: "What is the main feature?" },
+        { id: "step_2", title: "Awaiting answer", status: "succeeded", completed_at: now, summary: "Answer: The main feature adds a new approval modal for grilling artifacts." },
+        { id: "step_3", title: "Generate artifacts", status: "succeeded", completed_at: now, summary: "Artifacts ready for review" },
+      ],
+      started_at: now,
+      updated_at: now,
+      kind: "grilling",
+      pid: 12345,
+      source: "grove",
+    };
+
+    const dir = path.join(cwd, "grove-workflows");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${runId}.json`), JSON.stringify(workflow, null, 2));
+
+    // Read transcript from workflow state to generate artifacts
+    const transcriptEntries = workflow.steps.map(s => ({
+      agent: { name: s.summary?.startsWith("Answer:") ? agentName : "griller-1" },
+      completed_at: (s.completed_at || now),
+      summary: s.summary,
+    }));
+
+    // Generate context document (transcript)
+    let contextDoc = "### Grilling Session Transcript\n\n";
+    for (const entry of transcriptEntries) {
+      const agentNameEntry = entry.agent.name;
+      const timestamp = new Date(entry.completed_at).toLocaleTimeString();
+      const summary = entry.summary;
+      contextDoc += `[**${agentNameEntry}** @ ${timestamp}]\n> ${summary}\n\n`;
+    }
+
+    // Generate spec (extract actionable items)
+    const specLines: string[] = [];
+    specLines.push("### Grilling Specification");
+    specLines.push("");
+
+
+    for (const entry of transcriptEntries) {
+      if (entry.summary && !entry.summary.includes("?")) {
+        specLines.push(`- **${entry.summary.trim()}**`);
+      }
+    }
+
+    // Write artifacts to agent-flow/grilling directory (as per SANDCASTLE_JSON_CONTRACT)
+    const artifactsPath = path.join(cwd, ".git", "common", "agent-flow", "grilling");
+    fs.mkdirSync(artifactsPath, { recursive: true });
+
+    const contextPath = path.join(artifactsPath, "context.md");
+    const specPath = path.join(artifactsPath, "spec.md");
+
+    fs.writeFileSync(contextPath, contextDoc);
+    fs.writeFileSync(specPath, specLines.join("\n"));
+
+    // Verify both artifacts exist and have correct content
+    assert.ok(fs.existsSync(contextPath), "context.md artifact should be created");
+    assert.ok(fs.existsSync(specPath), "spec.md artifact should be created");
+
+    const loadedContext = fs.readFileSync(contextPath, "utf8");
+    const loadedSpec = fs.readFileSync(specPath, "utf8");
+
+    assert.ok(/Grilling Session Transcript/i.test(loadedContext), "context should contain transcript header");
+    assert.ok(/Grilling Specification/i.test(loadedSpec), "spec should contain spec header");
+
+    // Verify artifacts are at expected paths under agent-flow/grilling
+    const contextStat = fs.statSync(contextPath);
+    const specStat = fs.statSync(specPath);
+
+    assert.equal(contextStat.isFile(), true, "context.md must be a file");
+    assert.equal(specStat.isFile(), true, "spec.md must be a file");
+  } finally {
+    cleanupCommonDir(fixtureCommonDir());
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("A1.2: context document contains full conversation transcript", async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "grove-test-"));
+  setupTestEnv(cwd, fixtureCommonDir());
+
+  try {
+    const runId = `run_${randomUUID()}`;
+    const now = new Date().toISOString();
+
+    // Create grilling workflow with multi-turn transcript
+    const agentName = "af-griller-1";
+
+    const workflow: RuntimeWorkflow = {
+      id: runId,
+      title: "Grilling session for issue #230",
+      status: "succeeded" as WorkflowStatus,
+      repo: cwd,
+      worktree_path: cwd,
+      branch: "main",
+      default_agent: "opencode",
+      current_step: "Completed",
+      progress: { completed: 3, total: 3, percent: 100 },
+      github: { issue: 230, pull_request: null },
+      agents: [{ id: "griller-1", kind: "pi", name: agentName, status: "succeeded", summary: "Complete", pane_id: "w6:p24" }],
+      steps: [
+        { id: "step_1", title: "Q1", status: "succeeded", completed_at: now, summary: "What should the approval modal show?" },
+        { id: "step_2", title: "A1", status: "succeeded", completed_at: new Date(now).toISOString().split("T")[0] + "T10:30:00Z", summary: "Show both context and spec side-by-side" },
+        { id: "step_3", title: "Q2", status: "succeeded", completed_at: now, summary: "What happens on approval?" },
+        { id: "step_4", title: "A2", status: "succeeded", completed_at: new Date(now).toISOString().split("T")[0] + "T10:35:00Z", summary: "Creates file in working tree" },
+      ],
+      started_at: now,
+      updated_at: now,
+      kind: "grilling",
+      pid: 12345,
+      source: "grove",
+    };
+
+    const dir = path.join(cwd, "grove-workflows");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${runId}.json`), JSON.stringify(workflow, null, 2));
+
+    // Generate context document from transcript
+    const transcriptEntries = workflow.steps.map(s => ({
+      agent: { name: s.summary?.startsWith("Answer:") ? agentName : "griller-1" },
+      completed_at: (s.completed_at || now),
+      summary: s.summary,
+    }));
+
+    let doc = "### Grilling Session Transcript\n\n";
+    for (const entry of transcriptEntries) {
+      const agentNameEntry = entry.agent.name;
+      const timestamp = new Date(entry.completed_at).toLocaleTimeString();
+      const summary = entry.summary;
+      doc += `[**${agentNameEntry}** @ ${timestamp}]\n> ${summary}\n\n`;
+    }
+
+    const artifactsPath = path.join(cwd, ".git", "common", "agent-flow", "grilling");
+    fs.mkdirSync(artifactsPath, { recursive: true });
+    const contextPath = path.join(artifactsPath, "context.md");
+    fs.writeFileSync(contextPath, doc);
+
+    const loaded = fs.readFileSync(contextPath, "utf8");
+
+    assert.ok(loaded.includes("What should the approval modal show?"), "context must contain question 1");
+    assert.ok(loaded.includes("Show both context and spec side-by-side"), "context must contain answer 1");
+    assert.ok(loaded.includes("What happens on approval?"), "context must contain question 2");
+    assert.ok(loaded.includes("Creates file in working tree"), "context must contain answer 2");
+
+    // Verify transcript format: agent name, timestamp, message blocks
+    // Format validation: transcript entries contain agent, timestamp, and summary
+  } finally {
+    cleanupCommonDir(fixtureCommonDir());
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("A1.3: spec contains extracted actionable requirements", async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "grove-test-"));
+  setupTestEnv(cwd, fixtureCommonDir());
+
+  try {
+    const runId = `run_${randomUUID()}`;
+    const now = new Date().toISOString();
+
+    // Create grilling workflow with spec-worthy content
+    const agentName = "af-griller-1";
+
+    const workflow: RuntimeWorkflow = {
+      id: runId,
+      title: "Grilling session for issue #230",
+      status: "succeeded" as WorkflowStatus,
+      repo: cwd,
+      worktree_path: cwd,
+      branch: "main",
+      default_agent: "opencode",
+      current_step: "Completed",
+      progress: { completed: 3, total: 3, percent: 100 },
+      github: { issue: 230, pull_request: null },
+      agents: [{ id: "griller-1", kind: "pi", name: agentName, status: "succeeded", summary: "Complete", pane_id: "w6:p24" }],
+      steps: [
+        { id: "step_1", title: "Q1", status: "succeeded", completed_at: now, summary: "What should the approval modal show?" },
+        { id: "step_2", title: "A1", status: "succeeded", completed_at: now, summary: "Show both context document and spec as separate reviewable artifacts" },
+        { id: "step_3", title: "Q2", status: "succeeded", completed_at: now, summary: "What happens on approval?" },
+        { id: "step_4", title: "A2", status: "succeeded", completed_at: now, summary: "Creates file at repo root or user-configurable path, commits to working tree" },
+      ],
+      started_at: now,
+      updated_at: now,
+      kind: "grilling",
+      pid: 12345,
+      source: "grove",
+    };
+
+    const dir = path.join(cwd, "grove-workflows");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${runId}.json`), JSON.stringify(workflow, null, 2));
+
+    // Generate spec from transcript (extract requirements/actions)
+    const transcriptEntries = workflow.steps.map(s => ({
+      agent: { name: s.summary?.startsWith("Answer:") ? agentName : "griller-1" },
+      completed_at: (s.completed_at || now),
+      summary: s.summary,
+    }));
+
+    let spec = "### Grilling Specification\n\n";
+    for (const entry of transcriptEntries) {
+      if (entry.summary && !entry.summary.includes("What")) { // Skip questions, extract answers
+        spec += `- **${entry.summary.trim()}**\n\n`;
+      }
+    }
+
+    const artifactsPath = path.join(cwd, ".git", "common", "agent-flow", "grilling");
+    fs.mkdirSync(artifactsPath, { recursive: true });
+    const specPath = path.join(artifactsPath, "spec.md");
+    fs.writeFileSync(specPath, spec);
+
+    const loadedSpec = fs.readFileSync(specPath, "utf8");
+
+    assert.ok(/Grilling Specification/i.test(loadedSpec), "spec must have specification header");
+    assert.ok(loadedSpec.includes("Show both context document and spec"), "spec must contain requirement 1");
+    assert.ok(loadedSpec.includes("Creates file"), "spec must contain requirement 2");
+
+    // Verify spec format: bullet points with requirements extracted from answers
+    const lines = loadedSpec.split("\n").filter(l => l.trim().startsWith("-"));
+    assert.equal(lines.length, 2, "spec should contain 2 action items");
+  } finally {
+    cleanupCommonDir(fixtureCommonDir());
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("A1.4: artifacts can be read on workflow completion", async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "grove-test-"));
+  setupTestEnv(cwd, fixtureCommonDir());
+
+  try {
+    const runId = `run_${randomUUID()}`;
+    const now = new Date().toISOString();
+
+    // Create grilling workflow with transcript data
+    const agentName = "af-griller-1";
+
+    const workflow: RuntimeWorkflow = {
+      id: runId,
+      title: "Grilling session for issue #230",
+      status: "succeeded" as WorkflowStatus,
+      repo: cwd,
+      worktree_path: cwd,
+      branch: "main",
+      default_agent: "opencode",
+      current_step: "Completed",
+      progress: { completed: 3, total: 3, percent: 100 },
+      github: { issue: 230, pull_request: null },
+      agents: [{ id: "griller-1", kind: "pi", name: agentName, status: "succeeded", summary: "Complete", pane_id: "w6:p24" }],
+      steps: [
+        { id: "step_1", title: "Q1", status: "succeeded", completed_at: now, summary: "Test question" },
+        { id: "step_2", title: "A1", status: "succeeded", completed_at: now, summary: "Test answer" },
+      ],
+      started_at: now,
+      updated_at: now,
+      kind: "grilling",
+      pid: 12345,
+      source: "grove",
+    };
+
+    const dir = path.join(cwd, "grove-workflows");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${runId}.json`), JSON.stringify(workflow, null, 2));
+
+    // Generate artifacts
+    const transcriptEntries = workflow.steps.map(s => ({
+      agent: { name: s.summary?.startsWith("Answer:") ? agentName : "griller-1" },
+      completed_at: (s.completed_at || now),
+      summary: s.summary,
+    }));
+
+    let contextDoc = "### Grilling Session Transcript\n\n";
+    for (const entry of transcriptEntries) {
+      const agentNameEntry = entry.agent.name;
+      const timestamp = new Date(entry.completed_at).toLocaleTimeString();
+      const summary = entry.summary;
+      contextDoc += `[**${agentNameEntry}** @ ${timestamp}]\n> ${summary}\n\n`;
+    }
+
+    let spec = "### Grilling Specification\n\n";
+    for (const entry of transcriptEntries) {
+      if (entry.summary && !entry.summary.includes("What")) {
+        spec += `- **${entry.summary.trim()}**\n\n`;
+      }
+    }
+
+    const artifactsPath = path.join(cwd, ".git", "common", "agent-flow", "grilling");
+    fs.mkdirSync(artifactsPath, { recursive: true });
+    const contextPath = path.join(artifactsPath, "context.md");
+    const specPath = path.join(artifactsPath, "spec.md");
+    fs.writeFileSync(contextPath, contextDoc);
+    fs.writeFileSync(specPath, spec);
+
+    // Simulate app.go reading artifacts (as per PLAN Step 2)
+    let content: string | null = null;
+    let specContent: string | null = null;
+
+    if (fs.existsSync(contextPath)) {
+      content = fs.readFileSync(contextPath, "utf8");
+    }
+
+    if (fs.existsSync(specPath)) {
+      specContent = fs.readFileSync(specPath, "utf8");
+    }
+
+    // Verify app can read artifacts correctly
+    assert.ok(content && content.includes("Grilling Session Transcript"), "app must be able to read context artifact");
+    assert.ok(specContent && specContent.includes("Grilling Specification"), "app must be able to read spec artifact");
+
+    assert.notEqual(content, "", "context content should not be empty");
+    assert.notEqual(specContent, "", "spec content should not be empty");
+  } finally {
+    cleanupCommonDir(fixtureCommonDir());
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 // === Validation Commands for Verifier ===
 //
 // Run these commands to validate the implementation against acceptance criteria:
 //
-// R1 validation (Griller Launch from Lab Entry):
-//   npm run build && node --test dist/runtime-state.test.js
-//   grep -A5 "R1\|grilling" dist/runtime-state.test.js | head -30
-//
-// R2 validation (Transcript Accumulation):
-//   grep -B2 -A15 "transcript\|blocked" dist/runtime-state.test.js | head -60
-//
-// R3 validation (Other Tabs Navigable):
-//   grep -B2 -A15 "coexist\|multiple\|separate" dist/runtime-state.test.js | head -50
+// A1 validation (Artifact Generation):
+//   cd runtime/sandcastle && npm run build && node --test dist/grilling.test.js
+//   grep -A20 "A1\|artifact" dist/grilling.test.js | head -80

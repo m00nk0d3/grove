@@ -1236,6 +1236,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modal.ShapeIssueCancelledMsg:
 			m.activeModal = nil
 			// Don't show error - cancellation is normal
+		case modal.GrillingArtifactsRequestedMsg:
+			// Grilling completed - present artifacts for review/approval
+			m.activeModal = modal.NewApproveGrillModal(msg.Artifacts)
+		case modal.GrillingArtifactsApprovedMsg:
+			// Artifacts approved - clear any status message
+			m.statusMsg = ""
+			return m, nil
+		case modal.GrillingArtifactsCommitErr:
+			// Artifact write failed - show error
+			m.statusErr = msg.Error.Error()
+			m.activeModal = nil
+			return m, nil
+		case modal.GrillingRejectedMsg:
+			// Both artifacts rejected - re-trigger grilling for feedback loop
+			return m, tea.Batch(
+				func() tea.Msg { return clearErrorCmd() },
+				func() tea.Msg {
+					return sandcastleWorkflowStartedMsg{kind: "grilling"}
+				},
+				m.startGrillingWorkflowCmd(modal.WorkflowLaunchMsg{Kind: modal.WorkflowKindGrilling, IssueNumber: nil}, "", ""),
+			)
 		case modal.SettingsSavedMsg:
 			m.Config = msg.Config
 			// Update themeIdx to match the saved theme.
@@ -1748,9 +1769,55 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.snapshot.Agents = m.sandcastleSnapshot.Agents
 				msg.snapshot.CapturedAt = m.sandcastleSnapshot.CapturedAt
 			}
-			m.sandcastleSnapshot = &msg.snapshot
+		m.sandcastleSnapshot = &msg.snapshot
+	}
+	return m, m.rebuildMissionStateCmd()
+
+	// Check for completed grilling workflow and read artifacts
+	if msg.err == nil && m.sandcastleSnapshot != nil {
+		for _, wf := range msg.snapshot.Workflows {
+			if wf.Kind == modal.WorkflowKindGrilling && wf.Status == "completed" {
+				// Grilling completed - read artifacts from expected paths per SANDCASTLE_JSON_CONTRACT
+				repoRoot := m.RepoPath
+				commonDir := filepath.Join(repoRoot, ".git", "common")
+				grillingDir := filepath.Join(commonDir, "agent-flow", "grilling")
+
+				var contextContent string
+				var specContent string
+
+				// Read context artifact from direct path per contract
+				contextPath := filepath.Join(grillingDir, "context.md")
+				ctxBytes, readErr := os.ReadFile(contextPath)
+				if readErr == nil {
+					contextContent = string(ctxBytes)
+				}
+
+				// Read spec artifact from direct path per contract
+				specPath := filepath.Join(grillingDir, "spec.md")
+				spcBytes, readErr2 := os.ReadFile(specPath)
+				if readErr2 == nil {
+					specContent = string(spcBytes)
+				}
+
+				if contextContent != "" && specContent != "" {
+					// Both artifacts exist - trigger approval modal
+					m.statusMsg = "Grilling completed. Review artifacts below."
+					return m, tea.Batch(
+						func() tea.Msg { return clearMsgMsg{} },
+						func() tea.Msg {
+							return modal.GrillingArtifactsRequestedMsg{
+								Artifacts: modal.GrillingArtifacts{
+									Context:  contextContent,
+									Spec:     specContent,
+									RepoPath: m.RepoPath,
+								},
+							}
+						},
+					)
+				}
+			}
 		}
-		return m, m.rebuildMissionStateCmd()
+	}
 
 	case missionControlUpdatedMsg:
 		m.missionState = &msg.state
