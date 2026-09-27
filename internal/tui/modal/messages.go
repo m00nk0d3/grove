@@ -155,3 +155,13 @@ type CleanupConfirmedMsg struct {
 	Worktrees []string
 	Branches  []string
 }
+
+// EntrySavedMsg carries a newly composed LabEntry to refresh the lab list.
+type EntrySavedMsg struct {
+	Entry domain.LabEntry
+}
+
+// EntrySavedErrMsg is returned when an entry fails to save.
+type EntrySavedErrMsg struct {
+	Error error // Error message
+}

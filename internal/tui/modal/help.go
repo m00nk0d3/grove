@@ -60,9 +60,22 @@ var keybindingGroups = []bindingGroup{
 			{"w / W", "Worktrees view"},
 			{"i / I", "Issues view"},
 			{"p / P", "PRs view"},
+			{"l / L", "Lab view (ideas/bugs)"},
 			{"v / V", "Inspect selected dashboard workflow"},
 			{"x / X", "Stop/remove selected workflow"},
 			{"t", "Open settings"},
+		},
+	},
+	{
+		title: "LAB VIEW",
+		bindings: [][2]string{
+			{"↑/↓  j/k", "Navigate entries"},
+			{"a / A", "Create new entry"},
+			{"e / E", "Edit selected entry (removes it first)"},
+			{"1", "Filter: All entries"},
+			{"2", "Filter: Ideas only"},
+			{"3", "Filter: Bugs only"},
+			{"d / D", "Delete selected entry"},
 		},
 	},
 	{
