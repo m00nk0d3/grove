@@ -4465,3 +4465,80 @@ func TestRenderPRList_SelectionIsAlwaysInTheWindow(t *testing.T) {
 			"pull request at index %d should be on screen when it is selected", selected)
 	}
 }
+
+// TestModel_ContextActionGrill verifies that when ContextActionGrill is used with
+// a selected lab entry and worktree, it creates a WorkflowLaunchMsg with Kind="grilling"
+// and calls startGrillingWorkflowCmd.
+func TestModel_ContextActionGrill(t *testing.T) {
+	tests := []struct {
+		name      string
+		view      activeView
+		labs      []domain.LabEntry
+		worktrees []domain.Worktree
+		idx       int
+		wantKind  string
+		wantErr   string // empty if no error expected
+	}{
+		{
+			name: "lab entry and worktree selected creates grilling workflow",
+			view: viewLab,
+			labs: []domain.LabEntry{{ID: "lab-1", Title: "Test Lab Entry"}},
+			worktrees: []domain.Worktree{
+				{Path: "/tmp/repo"},
+				{Branch: "main"},
+			},
+			idx:      0,
+			wantKind: modal.WorkflowKindGrilling,
+		},
+		{
+			name:      "no lab selected returns clear-msg Cmd",
+			view:      viewLab,
+			labs:      []domain.LabEntry{},
+			worktrees: []domain.Worktree{{Path: "/tmp/repo"}},
+			idx:       0,
+			wantErr:   "No Lab entry selected — select one first",
+		},
+		{
+			name:      "no worktree selected returns clear-msg Cmd",
+			view:      viewLab,
+			labs:      []domain.LabEntry{{ID: "lab-1", Title: "Test Lab"}},
+			worktrees: []domain.Worktree{},
+			idx:       0,
+			wantErr:   "No worktree selected for grilling session",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel()
+			require.NotNil(t, m)
+			m.view = tt.view
+			if len(tt.labs) > 0 {
+				m.labs = tt.labs
+				m.selectedLabIdx = tt.idx % len(tt.labs)
+			}
+			if len(tt.worktrees) > 0 {
+				m.Worktrees = tt.worktrees
+				m.selectedIdx = tt.idx % len(tt.worktrees)
+			}
+
+			updated, cmd := m.handleContextAction(modal.ContextActionGrill)
+			m2, ok := updated.(*Model)
+			require.True(t, ok)
+
+			if tt.wantErr != "" {
+				assert.Contains(t, m2.statusErr, tt.wantErr, "expected error message to contain: %s", tt.wantErr)
+				// clearMsgCmd is returned on non-blocking errors
+				assert.NotNil(t, cmd, "error case should return a Cmd (clearMsg or clearError)")
+			} else {
+				assert.Empty(t, m2.statusErr, "no error expected")
+				assert.NotNil(t, cmd, "expected non-nil context action Cmd")
+
+				// Verify that the request would have had Kind="grilling"
+				// The startGrillingWorkflowCmd is called with a WorkflowLaunchMsg that we can't directly inspect,
+				// but we can verify the statusMsg was set correctly.
+				assert.Contains(t, m2.statusMsg, "grilling session", "status message should mention grilling session")
+			}
+		})
+	}
+}

@@ -3341,7 +3341,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 
 		request := modal.WorkflowLaunchMsg{
-			Kind:    modal.WorkflowKindImplement,
+			Kind:     modal.WorkflowKindGrilling,
 			AgentKind: "pi",
 		}
 
