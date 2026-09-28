@@ -42,36 +42,38 @@ Modern software development means juggling several things at once: features in f
 - **Mouse support** — click the navigation rail, rows, tabs, and actions; scroll with the wheel
 - **Self-update** — Grove checks for a new release on startup and can replace its own binary
 - **Local persistence** — configuration in `~/.grove/config.toml`, a SQLite cache so Grove starts fast
-- **Lab view** — `'l'` opens the Lab, which holds ideas and bugs discovered during work. Each entry is stored per repository under `~/.grove/labs/`. Select an entry and press `Enter` to edit it. Press `/` to search entries as you type. Keys `1`, `2`, and `3` cycle between *All*, *Idea*, and *Bug* filters.
+- **Lab** — `l` opens the Lab, where ideas and bugs live before they become issues. Entries are stored per repository in its git directory, shared by every worktree and never committed.
 
 ---
 
 ## The Lab
 
-The Lab is a persistent collection of ideas, bugs, and tasks discovered during your work. Every repository has its own lab stored under `~/.grove/labs/<repo-path>/labs.json`.
+The Lab is where work lives before it becomes a GitHub issue. Each repository
+keeps its Lab in `<git-common-dir>/grove-lab/`, so every worktree of the
+repository shares it and git never tracks it. The full design, including the
+grilling and publishing flows still being built, is in
+[docs/LAB_DESIGN.md](docs/LAB_DESIGN.md).
 
-### Adding an Entry
+The list has four tabs, switched with `[` and `]`: *Active / Attention*,
+*Drafts*, *Published*, and *Archived*. Keys `1`, `2`, and `3` show all entries,
+ideas only, or bugs only within the current tab.
 
-1. Press `'l'` to open the Lab
-2. Select an empty row (or press `Enter` when no entry is selected)
-3. Press `Enter` to activate editing
-4. Fill in the fields:
-   - **Kind** — `idea` or `bug`
-   - **Title** — a short descriptive name
-   - **Content** — details, steps to reproduce, or context
+| Key | Action |
+|---|---|
+| `c` | Capture a new idea or bug |
+| `Enter` | The selected entry's next step; for a draft, edit it |
+| `a` | Actions for the selected entry: edit, archive, restore, delete |
 
-### Editing Entries
+### Capturing an entry
 
-- In the Lab view, select an entry and press `Enter` to enter edit mode
-- Changes save automatically when you leave edit mode or quit Grove
+Press `c`, choose the kind with `Tab`, and write the entry. The first line is
+its title; anything below is the detail. `Ctrl+S` saves and `Esc` cancels.
 
-### Deleting Entries
+### Archiving and deleting
 
-To remove an entry: delete its file directly from `~/.grove/labs/<repo-path>/labs.json`, or use your preferred editor.
-
-### Grilling a Lab Entry
-
-Select a Lab entry and press `Enter` to open the Actions panel, then choose *Grill entry*. This starts an agent workflow with a grilling session for the entry, using its title as the work item. The workflow runs in Herdr and can be inspected like any other mission.
+Archiving moves an entry to the *Archived* tab from any state, and restoring
+returns it unchanged. Drafts and archived entries can be deleted; deleting
+removes the entry and anything drafted for it, after a confirmation.
 
 ---
 
@@ -114,7 +116,7 @@ missing, and adds the directory to your user `PATH`. Restart your terminal
 afterwards.
 
 Both installers install the workflow commands `grove-sandcastle`, `imp`
-(alias `agent-flow`), `review`, `address`, `ci`, `resolve`, `clean`, and `grill`.
+(alias `agent-flow`), `review`, `address`, `ci`, `resolve`, and `clean`.
 
 ### go install
 
@@ -491,8 +493,8 @@ The Herdr integration is active only when Grove runs inside a Herdr pane.
 | `~/.grove/config.toml` | Configuration |
 | `~/.grove/grove.db` | SQLite cache of GitHub data and sessions |
 | `~/.grove/logs/grove.log` | Log file |
-| `~/.grove/labs/<repo>/labs.json` | Ideas and bugs (one JSON array per repository) |
 | `<repo>/.git` | The repository's shared git directory, which every worktree of the repository uses |
+| `<repo>/.git/grove-lab/` | The repository's Lab: ideas, bugs, and their drafted artifacts |
 
 ---
 

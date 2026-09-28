@@ -9,8 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Lab view** — `'l'` opens the Lab, a persistent collection of ideas and bugs discovered during work. Each repository stores its lab under `~/.grove/labs/<repo-path>/labs.json`. Entries have a kind (`idea` or `bug`), title, and content. Select an entry and press `Enter` to edit it. Press `/` to search entries as you type. Keys `1`, `2`, and `3` cycle between *All*, *Idea*, and *Bug* filters.
-- **Grill entry** — select a Lab entry and press `Enter` to open the Actions panel, then choose *Grill entry*. This starts an agent workflow with a grilling session for the entry, using its title as the work item. The workflow runs in Herdr and can be inspected like any other mission.
+- **Lab** — a navigation rail tab (`l`) for ideas and bugs before they become
+  issues, rebuilt to the design in `docs/LAB_DESIGN.md`. Entries are stored in
+  `<git-common-dir>/grove-lab/`, shared by every worktree and never committed,
+  and written atomically so concurrent Grove instances do not overwrite each
+  other. `c` captures an entry in a multi-line editor whose first line is the
+  title; `Enter` edits a draft; the Actions panel archives, restores, and
+  deletes. The list has *Active / Attention*, *Drafts*, *Published*, and
+  *Archived* tabs, switched with `[` and `]`, and `1`, `2`, and `3` filter by
+  kind. Grilling, shaping, and publishing follow in later changes.
 
 - **A live demo on the website** — the site plays a walk through Grove, from
   mission control to starting a workflow, following it in the inspector,

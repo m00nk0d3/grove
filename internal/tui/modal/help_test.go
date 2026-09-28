@@ -266,85 +266,27 @@ func TestHelpModal_NonKeyMsg_DoesNothing(t *testing.T) {
 	assert.Nil(t, cmd)
 }
 
-// ---------------------------------------------------------------------------
-// Phase 4: LAB view documentation tests (Issue #229)
-// ---------------------------------------------------------------------------
 
-// TestHelpModal_View_KeybindingsTab_ShowsLabDocumentation verifies that the Keybindings tab
-// includes the Lab view section with keys l/L, ↑/↓, a/A, e/E, 1, 2, 3, d/D.
-func TestHelpModal_View_KeybindingsTab_ShowsLabDocumentation(t *testing.T) {
+// The Lab section documents only keys the Lab actually binds.
+func TestHelpModal_View_KeybindingsTab_ShowsLabKeys(t *testing.T) {
 	m := NewHelpModal()
 	m.activeTab = tabKeybindings
 	view := m.View()
 
-	// LAB section header
 	assert.Contains(t, view, "LAB VIEW")
-
-	// Lab binding keys (with spaces as in the actual rendered output)
-	assert.Contains(t, view, "↑/↓  j/k")
-	assert.Contains(t, view, "a / A")
-	assert.Contains(t, view, "e / E")
-	assert.Contains(t, view, "1")
-	assert.Contains(t, view, "2")
-	assert.Contains(t, view, "3")
-	assert.Contains(t, view, "d / D")
-
-	// Description text for each binding
-	assert.Contains(t, view, "Create new entry")
-	assert.Contains(t, view, "Edit selected entry")
-	assert.Contains(t, view, "Delete selected entry")
-}
-
-// TestHelpModal_View_KeybindingsTab_LabSectionHasCorrectKeys verifies that the LAB section has the correct keys.
-func TestHelpModal_View_KeybindingsTab_LabSectionHasCorrectKeys(t *testing.T) {
-	m := NewHelpModal()
-	m.activeTab = tabKeybindings
-	view := m.View()
-
-	// Verify LAB is documented with proper key format (should contain l/L pattern)
 	assert.Contains(t, view, "l / L")
-
-	// The section should document navigation between kind options
-	assert.Contains(t, view, "Navigate entries")
-}
-
-// TestHelpModal_View_KeybindingsTab_LabDeleteBindingPresent verifies that the delete binding is documented.
-func TestHelpModal_View_KeybindingsTab_LabDeleteBindingPresent(t *testing.T) {
-	m := NewHelpModal()
-	m.activeTab = tabKeybindings
-	view := m.View()
-
-	assert.Contains(t, view, "d / D")
-	assert.Contains(t, view, "Delete selected entry")
-}
-
-// TestHelpModal_View_KeybindingsTab_LabAddIdeaBindingPresent verifies that the add idea binding is documented.
-func TestHelpModal_View_KeybindingsTab_LabAddIdeaBindingPresent(t *testing.T) {
-	m := NewHelpModal()
-	m.activeTab = tabKeybindings
-	view := m.View()
-
-	assert.Contains(t, view, "a / A")
-	assert.Contains(t, view, "Create new entry")
-}
-
-// TestHelpModal_View_KeybindingsTab_LabAddBugBindingPresent verifies that the add bug binding is documented.
-func TestHelpModal_View_KeybindingsTab_LabAddBugBindingPresent(t *testing.T) {
-	m := NewHelpModal()
-	m.activeTab = tabKeybindings
-	view := m.View()
-
-	assert.Contains(t, view, "e / E")
-	assert.Contains(t, view, "Edit selected entry")
-}
-
-// TestHelpModal_View_KeybindingsTab_LabFilterByKindBindingPresent verifies that the filter binding is documented.
-func TestHelpModal_View_KeybindingsTab_LabFilterByKindBindingPresent(t *testing.T) {
-	m := NewHelpModal()
-	m.activeTab = tabKeybindings
-	view := m.View()
-
-	assert.Contains(t, view, "1")
-	assert.Contains(t, view, "2")
-	assert.Contains(t, view, "3")
+	for _, text := range []string{
+		"Navigate entries",
+		"Capture a new idea or bug",
+		"Next step for the selected entry",
+		"Actions: edit, archive, restore, delete",
+		"Switch tab: active, drafts, published, archived",
+		"Filter: All entries",
+		"Filter: Ideas only",
+		"Filter: Bugs only",
+	} {
+		assert.Contains(t, view, text)
+	}
+	assert.NotContains(t, view, "Shape bug into GitHub issue", "shaping is started from the Actions panel")
+	assert.NotContains(t, view, "Delete selected entry", "d switches to the dashboard everywhere")
 }
