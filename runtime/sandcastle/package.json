@@ -11,6 +11,7 @@
     "resolve": "dist/conflict-resolver.js",
     "ci": "dist/ci-fix.js",
     "grove-sandcastle": "dist/sandcastle.js",
+    "grove-lab": "dist/lab-session.js",
     "address": "dist/address-review.js"
   },
   "files": [
@@ -18,7 +19,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && node -e \"for (const file of ['dist/orchestrator.js', 'dist/pr-review.js', 'dist/cleanup.js', 'dist/conflict-resolver.js', 'dist/ci-fix.js', 'dist/sandcastle.js']) require('node:fs').chmodSync(file, 0o755)\"",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && node -e \"for (const file of ['dist/orchestrator.js', 'dist/pr-review.js', 'dist/cleanup.js', 'dist/conflict-resolver.js', 'dist/ci-fix.js', 'dist/sandcastle.js', 'dist/lab-session.js']) require('node:fs').chmodSync(file, 0o755)\"",
     "start": "tsx src/orchestrator.ts",
     "test": "npm run build && node --test dist/*.test.js",
     "typecheck": "tsc --noEmit",

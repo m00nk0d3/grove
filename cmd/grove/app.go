@@ -1483,6 +1483,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case labsLoadedMsg:
 		return m.handleLabsLoaded(msg)
 
+	case labSessionStartedMsg:
+		return m.handleLabSessionStarted(msg)
+
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
 			m.Worktrees = msg.worktrees
@@ -3209,7 +3212,8 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
-	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabEdit, modal.ContextActionLabArchive,
+	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabEnd,
+		modal.ContextActionLabEdit, modal.ContextActionLabArchive,
 		modal.ContextActionLabRestore, modal.ContextActionLabDelete:
 		return m.handleLabAction(action)
 	default:
@@ -3296,7 +3300,7 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 		)
 
 	case viewLab:
-		return labContextActions(lab.selected())
+		return labContextActions(lab)
 	default:
 		actions := []contextActionOption{
 			{icon: "◎", label: "Inspect workflow", action: modal.ContextActionInspect},

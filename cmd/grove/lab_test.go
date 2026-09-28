@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
+	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
 	"github.com/stretchr/testify/assert"
@@ -278,23 +281,6 @@ func TestLab_DeleteRefusedWhileInProgress(t *testing.T) {
 	m = updated.(*Model)
 	assert.Nil(t, m.activeModal)
 	assert.Contains(t, m.statusErr, "archive it first")
-}
-
-func TestLabContextActions_DependOnState(t *testing.T) {
-	labels := func(actions []contextActionOption) []string {
-		var out []string
-		for _, a := range actions {
-			out = append(out, a.label)
-		}
-		return out
-	}
-	assert.Equal(t, []string{"Capture new entry"}, labels(labContextActions(domain.LabEntry{}, false)))
-	assert.Equal(t, []string{"Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
-		labels(labContextActions(domain.LabEntry{Status: domain.LabStatusDraft}, true)))
-	assert.Equal(t, []string{"Inspect", "Archive", "Capture new entry"},
-		labels(labContextActions(domain.LabEntry{Status: domain.LabStatusGrilling}, true)))
-	assert.Equal(t, []string{"Inspect", "Restore", "Delete", "Capture new entry"},
-		labels(labContextActions(domain.LabEntry{Status: domain.LabStatusPublished, Archived: true}, true)))
 }
 
 func TestLab_BracketsSwitchTabs(t *testing.T) {
@@ -595,4 +581,150 @@ func TestRenderLab_RowsFitAndBadgesAlign(t *testing.T) {
 		return -1
 	}
 	assert.Equal(t, column("Offline mode for the dashboard", "WAITING ON YOU"), column("Sync stalls", "SHAPING"))
+}
+
+func TestLabContextActions_DependOnStateAndSession(t *testing.T) {
+	labels := func(v labView) []string {
+		var out []string
+		for _, a := range labContextActions(v) {
+			out = append(out, a.label)
+		}
+		return out
+	}
+	viewOf := func(e domain.LabEntry, runs map[string]string) labView {
+		v := newLabView()
+		v.entries = []domain.LabEntry{e}
+		v.setMission(labMissionState(runs))
+		v.setTab(labTabOf(e))
+		return v
+	}
+	now := time.Now()
+
+	assert.Equal(t, []string{"Capture new entry"}, labels(newLabView()))
+	assert.Equal(t, []string{"Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
+		labels(viewOf(entryAt(now, "i", domain.LabKindIdea, domain.LabStatusDraft, "Idea"), nil)))
+	assert.Equal(t, []string{"Shape into an issue", "Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
+		labels(viewOf(entryAt(now, "b", domain.LabKindBug, domain.LabStatusDraft, "Bug"), nil)), "a bug draft can be shaped")
+
+	shaping := entryAt(now, "s", domain.LabKindBug, domain.LabStatusShaping, "Bug")
+	shaping.Runs = []string{"run-1"}
+	assert.Equal(t, []string{"Inspect", "End session", "Archive", "Capture new entry"},
+		labels(viewOf(shaping, map[string]string{"run-1": domain.WorkflowBlocked})), "a live session is ended, not restarted")
+	assert.Equal(t, []string{"Resume shaping", "Inspect", "Archive", "Capture new entry"},
+		labels(viewOf(shaping, map[string]string{"run-1": domain.WorkflowSucceeded})), "an ended session can be resumed")
+
+	archived := entryAt(now, "a", domain.LabKindBug, domain.LabStatusDraft, "Bug")
+	archived.Archived = true
+	assert.Equal(t, []string{"Inspect", "Restore", "Delete", "Capture new entry"}, labels(viewOf(archived, nil)))
+}
+
+// fakeLabStarter records the sessions Grove starts.
+type fakeLabStarter struct {
+	requests []sandcastle.StartWorkflowRequest
+	err      error
+}
+
+func (f *fakeLabStarter) StartWorkflow(_ context.Context, req sandcastle.StartWorkflowRequest) (domain.WorkflowRunRef, error) {
+	f.requests = append(f.requests, req)
+	if f.err != nil {
+		return domain.WorkflowRunRef{}, f.err
+	}
+	return domain.WorkflowRunRef{RunID: "run-shape-1", Kind: req.Kind, Status: domain.WorkflowQueued}, nil
+}
+
+func (f *fakeLabStarter) RemoveWorkflow(context.Context, string, string, bool) error { return nil }
+
+func shapeModel(t *testing.T) (*Model, *data.LabStore, *fakeLabStarter, domain.LabEntry) {
+	t.Helper()
+	commonDir := withLabCommonDir(t)
+	store := data.NewLabStore(commonDir)
+	e := domain.NewLabEntry(domain.LabKindBug, "Sync stalls when the gh token expires", time.Now())
+	require.NoError(t, store.Put(e))
+
+	starter := &fakeLabStarter{}
+	m := newLabModel(t)
+	m.workflowStarter = starter
+	m.Config.Sandcastle.Enabled = true
+	m.Config.Sandcastle.DefaultAgent = "claude"
+	m.lab.entries, _ = store.Load()
+	m.lab.setTab(labTabDrafts)
+	return m, store, starter, e
+}
+
+func TestLab_EnterOnBugDraftStartsShapingSession(t *testing.T) {
+	m, store, starter, e := shapeModel(t)
+
+	m, cmd := press(t, m, "enter")
+	require.NotNil(t, cmd)
+	updated, _ := m.Update(cmd())
+	m = updated.(*Model)
+
+	require.Len(t, starter.requests, 1)
+	req := starter.requests[0]
+	assert.Equal(t, "shape", req.Kind)
+	assert.Equal(t, e.ID, req.EntryID)
+	assert.Equal(t, "claude", req.AgentKind, "the configured default agent is used")
+	assert.Equal(t, m.RepoPath, req.RepoPath)
+
+	stored, err := store.Load()
+	require.NoError(t, err)
+	assert.Equal(t, domain.LabStatusShaping, stored[0].Status)
+	assert.Equal(t, domain.LabModeShape, stored[0].Mode)
+	assert.Equal(t, []string{"run-shape-1"}, stored[0].Runs)
+	assert.Equal(t, labTabActive, m.lab.tab, "the list follows the entry into Active")
+	assert.NoFileExists(t, filepath.Join(store.EntryDir(e.ID), "session.lock"), "the lock is released after the start")
+	assert.Contains(t, m.statusMsg, "answer the agent in its Herdr pane")
+}
+
+func TestLab_ShapeRefusedWhileAnotherGroveHoldsTheEntry(t *testing.T) {
+	m, store, starter, e := shapeModel(t)
+	require.NoError(t, os.MkdirAll(store.EntryDir(e.ID), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.lock"),
+		[]byte(`{"pid":1,"host":"another-machine","since":"2026-09-28T08:00:00Z"}`), 0o644))
+
+	updated, cmd := m.startLabShape(e)
+	m = updated.(*Model)
+	updated, _ = m.Update(cmd())
+	m = updated.(*Model)
+
+	assert.Empty(t, starter.requests, "no second session is started")
+	assert.Equal(t, "Entry is in use by Grove on another-machine (pid 1)", m.statusErr)
+	stored, _ := store.Load()
+	assert.Equal(t, domain.LabStatusDraft, stored[0].Status)
+}
+
+func TestLab_ShapeStartFailureLeavesDraft(t *testing.T) {
+	m, store, starter, e := shapeModel(t)
+	starter.err = fmt.Errorf("herdr is not running")
+
+	updated, cmd := m.startLabShape(e)
+	updated, _ = updated.(*Model).Update(cmd())
+	m = updated.(*Model)
+
+	assert.Contains(t, m.statusErr, "herdr is not running")
+	stored, _ := store.Load()
+	assert.Equal(t, domain.LabStatusDraft, stored[0].Status)
+	assert.Empty(t, stored[0].Runs)
+}
+
+func TestLab_ShapeRequiresSandcastle(t *testing.T) {
+	m, _, starter, e := shapeModel(t)
+	m.Config.Sandcastle.Enabled = false
+	updated, _ := m.startLabShape(e)
+	assert.Contains(t, updated.(*Model).statusErr, "Sandcastle is disabled")
+	assert.Empty(t, starter.requests, "nothing is started")
+}
+
+func TestLab_EndSessionWritesCloseMarker(t *testing.T) {
+	m, store, _, e := shapeModel(t)
+	e.Status = domain.LabStatusShaping
+	e.Runs = []string{"run-1"}
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowBlocked}))
+	m.lab.setTab(labTabActive)
+
+	updated, cmd := m.handleLabAction(modal.ContextActionLabEnd)
+	m = runCmd(t, updated.(*Model), cmd)
+	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "session.close"))
+	assert.Contains(t, m.statusMsg, "Ending the session")
 }

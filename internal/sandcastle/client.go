@@ -37,8 +37,10 @@ type StartWorkflowRequest struct {
 	Branch       string
 	IssueNumber  *int
 	PRNumber     *int
-	AgentKind    string
-	Source       string
+	// EntryID is the Lab entry a shape or grill session works on.
+	EntryID   string
+	AgentKind string
+	Source    string
 }
 
 type sandcastleClient struct {
@@ -180,6 +182,9 @@ func (c *sandcastleClient) StartWorkflow(ctx context.Context, req StartWorkflowR
 	}
 	if req.PRNumber != nil {
 		args = append(args, "--pr", fmt.Sprintf("%d", *req.PRNumber))
+	}
+	if req.EntryID != "" {
+		args = append(args, "--entry", req.EntryID)
 	}
 
 	stdout, stderr, err := c.runCommand(ctx, args...)

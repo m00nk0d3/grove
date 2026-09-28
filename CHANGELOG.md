@@ -21,8 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   is marked *Waiting on you* and sorted first, and each row shows the step
   reached and the session's Herdr pane, which `Enter` opens. `v` opens an
   inspector with *Overview*, *Steps*, *Artifacts*, and *Capture* tabs; drafted
-  artifacts are rendered as Markdown. Grilling, shaping, and publishing follow
-  in later changes.
+  artifacts are rendered as Markdown. *Shape into an issue* starts a shaping
+  session: a new `shape` Sandcastle workflow opens the configured agent in a
+  Herdr pane with a bug-report brief, the user answers its questions there, and
+  the draft `issue.md` appears in the inspector. The session reports each
+  question and the finished draft as *Waiting on you* and stays open for
+  revisions until it is ended from Grove. Starting a session holds the entry's
+  lock, so a second Grove instance cannot start another for the same entry.
+  Grilling and publishing follow in later changes.
 
 - **A live demo on the website** — the site plays a walk through Grove, from
   mission control to starting a workflow, following it in the inspector,

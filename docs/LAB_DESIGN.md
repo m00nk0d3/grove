@@ -92,8 +92,23 @@ pane.
 
 The agent is `[sandcastle].default_agent`. It runs in the base checkout, may
 read the repository freely, and writes only to the entry's `artifacts/`
-directory. It reports its stage (`interview`, `spec`, `tickets`, `done`) to a
-state file that the runtime turns into step telemetry. It never publishes.
+directory. It never publishes.
+
+A session is the `grove-lab <shape|grill> <entry-id>` command, which
+`grove-sandcastle workflow start --kind <shape|grill> --entry <id>` runs in the
+run's Herdr tab. It opens the agent in a pane beside it, delivers the brief, and
+then watches the agent until Grove ends the session:
+
+- The agent overwrites `<entry-id>/stage` with one word as it progresses:
+  `shape` or `interview`, `spec`, `tickets`, and finally `drafted`. The runtime
+  turns it into step telemetry.
+- A turn that ends before `drafted` is a question for the user; a turn that
+  ends at `drafted` is a draft waiting for review. Both make the run `blocked`.
+  A Herdr `blocked` state is a permission prompt, reported the same way.
+- The session stays open after drafting, so the user can ask for changes in the
+  pane. Grove ends it by writing `<entry-id>/session.close`, after publishing or
+  when the user chooses *End session*; the runtime then closes the pane and
+  finishes the run.
 
 Conversations with the agent happen only in its Herdr pane. Grove does not read
 from or type into the pane; it links to it.
@@ -146,8 +161,10 @@ and ADRs never block it. Grove never commits.
 
 ## Publishing
 
-Publishing is performed by the run's Publish step in code, through `gh` and the
-user's `gh` authentication, never by the agent:
+Publishing is performed by Grove in code, through `gh` and the user's `gh`
+authentication, never by the agent. Grove owns the entry index, the preview,
+and the configuration, so publishing there needs no request protocol between
+Grove and the runtime; the run's *Publish* step shows the draft waiting for it.
 
 1. A preview lists the epic, each ticket, the blocked-by edges, labels, and the
    board. Nothing is written until the user confirms.

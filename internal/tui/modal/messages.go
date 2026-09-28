@@ -135,6 +135,8 @@ const (
 	ContextActionSyncGitHub = "sync-github"
 	ContextActionLabCapture = "lab-capture"
 	ContextActionLabInspect = "lab-inspect"
+	ContextActionLabShape   = "lab-shape"
+	ContextActionLabEnd     = "lab-end-session"
 	ContextActionLabEdit    = "lab-edit"
 	ContextActionLabArchive = "lab-archive"
 	ContextActionLabRestore = "lab-restore"

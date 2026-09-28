@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -704,4 +705,24 @@ func TestStartWorkflow_GrillingWithIssueNumber(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 230, *run.IssueNumber)
+}
+
+func TestStartWorkflow_LabSessionPassesEntry(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow":{"id":"run_shape_1","status":"queued","kind":"shape"}}`),
+	}
+	client := newTestClient(runner)
+
+	run, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		Kind:     "shape",
+		RepoPath: "/repo",
+		EntryID:  "20260928-081530-abcdef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "run_shape_1", run.RunID)
+
+	args := runner.lastCall()
+	assert.Contains(t, strings.Join(args, " "), "--kind shape")
+	assert.Contains(t, strings.Join(args, " "), "--entry 20260928-081530-abcdef")
 }

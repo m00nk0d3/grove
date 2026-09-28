@@ -277,9 +277,9 @@ func TestHelpModal_View_KeybindingsTab_ShowsLabKeys(t *testing.T) {
 	for _, text := range []string{
 		"Navigate entries",
 		"Capture a new idea or bug",
-		"Next step: edit a draft, open a live session's pane",
+		"Next step: shape a bug, edit an idea, open a live session",
 		"Inspect: overview, steps, artifacts, capture",
-		"Actions: edit, archive, restore, delete",
+		"Actions: shape, end session, edit, archive, restore, delete",
 		"Switch tab: active, drafts, published, archived",
 		"Filter: All entries",
 		"Filter: Ideas only",

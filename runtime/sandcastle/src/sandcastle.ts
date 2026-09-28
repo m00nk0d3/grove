@@ -79,12 +79,19 @@ export function resolveWorkflowCommand(
   requestedKind: string,
   issue: string | undefined,
   pullRequest: string | undefined,
-): { kind: WorkflowKind; targetArgs: string[] } {
-  const kinds: WorkflowKind[] = ["imp", "review", "resolve", "ci", "clean", "address", "grilling"];
+  entry?: string,
+): { kind: WorkflowKind; command: string; targetArgs: string[] } {
+  const kinds: WorkflowKind[] = ["imp", "review", "resolve", "ci", "clean", "address", "shape", "grill"];
   if (!kinds.includes(requestedKind as WorkflowKind)) {
     throw new Error(`unsupported workflow kind "${requestedKind}"`);
   }
   const kind = requestedKind as WorkflowKind;
+  if (kind === "shape" || kind === "grill") {
+    if (!entry || !/^[A-Za-z0-9_-]+$/.test(entry)) {
+      throw new Error(`${kind} workflow requires --entry <lab-entry-id>`);
+    }
+    return { kind, command: "grove-lab", targetArgs: [kind, entry] };
+  }
   if (kind === "imp" && (!issue || !/^[1-9][0-9]*$/.test(issue))) {
     throw new Error("imp workflow requires --issue <number>");
   }
@@ -96,6 +103,7 @@ export function resolveWorkflowCommand(
   }
   return {
     kind,
+    command: kind,
     targetArgs:
       kind === "imp" ? [issue!] : pullRequest === undefined ? [] : [pullRequest],
   };
@@ -112,10 +120,11 @@ function workflowStart(cwd: string, args: string[]): void {
   const repo = flag(args, "--repo") ?? cwd;
   const source = flag(args, "--source") ?? "grove";
   const agent = flag(args, "--agent") ?? "opencode";
-  const { kind, targetArgs } = resolveWorkflowCommand(
+  const { kind, command, targetArgs } = resolveWorkflowCommand(
     requestedKind,
     issue,
     pullRequest,
+    flag(args, "--entry"),
   );
   if (!isAgentBackend(agent)) {
     throw new Error(
@@ -170,7 +179,7 @@ function workflowStart(cwd: string, args: string[]): void {
   const paneID = findHerdrID(JSON.parse(tab.stdout), "pane_id");
   if (!paneID) throw new Error("Herdr returned no pane ID");
 
-  const started = spawnSync("herdr", ["pane", "run", paneID, kind, ...targetArgs], {
+  const started = spawnSync("herdr", ["pane", "run", paneID, command, ...targetArgs], {
     encoding: "utf8",
   });
   if (started.status !== 0) {
@@ -200,7 +209,7 @@ function main(args = process.argv.slice(2)): void {
     return workflowStart(cwd, args.slice(2));
   }
   throw new Error(
-    "Usage: grove-sandcastle status|workflow list|workflow get <id>|workflow remove <id> [--stop]|workflow start --kind <imp|review|resolve|ci|clean|address> [--issue <number>|--pr <number>]",
+    "Usage: grove-sandcastle status|workflow list|workflow get <id>|workflow remove <id> [--stop]|workflow start --kind <imp|review|resolve|ci|clean|address|shape|grill> [--issue <number>|--pr <number>|--entry <lab-entry-id>]",
   );
 }
 

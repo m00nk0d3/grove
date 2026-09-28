@@ -61,13 +61,25 @@ ideas only, or bugs only within the current tab.
 | Key | Action |
 |---|---|
 | `c` | Capture a new idea or bug |
-| `Enter` | The selected entry's next step: edit a draft, or open the pane of its live session |
+| `Enter` | The selected entry's next step: shape a bug draft, edit an idea draft, or open the pane of a live session |
 | `v` | Inspect the selected entry |
 | `a` | Actions for the selected entry: inspect, edit, archive, restore, delete |
 
 An entry whose agent is waiting for an answer is marked **WAITING ON YOU** and
 listed first under *Active / Attention*. Each row shows the step the entry has
 reached, such as *Interview 1/4*, and the Herdr pane of its live session.
+
+### Shaping a bug
+
+*Shape into an issue* (or `Enter` on a bug draft) starts a shaping session: an
+agent — `sandcastle.default_agent` — opens in a Herdr pane beside the workflow
+and turns the captured text into a structured bug report. It asks you for
+anything the report needs that the text does not say, and you answer it in
+that pane. The entry shows **WAITING ON YOU** whenever the agent is waiting for
+an answer, and again when the draft is ready. The draft, `issue.md`, appears in
+the inspector's *Artifacts* tab; asking the agent for changes in its pane
+revises it. *End session* closes the agent's pane; *Resume shaping* starts a
+new session that continues from the existing draft.
 
 ### Inspecting an entry
 

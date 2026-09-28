@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { resolveAgentBackend } from "./workflow-utils.js";
 
-export type WorkflowKind = "imp" | "review" | "resolve" | "ci" | "clean" | "address" | "grilling";
+export type WorkflowKind = "imp" | "review" | "resolve" | "ci" | "clean" | "address" | "grilling" | "shape" | "grill";
 export type WorkflowStatus = "queued" | "running" | "blocked" | "succeeded" | "failed";
 
 export interface RuntimeStep {
@@ -85,6 +85,10 @@ function titleFor(kind: WorkflowKind, target: number | null): string {
       return "Clean merged worktrees";
     case "grilling":
       return "Grilling session";
+    case "shape":
+      return "Shape bug";
+    case "grill":
+      return "Grill idea";
   }
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
+	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 )
 
@@ -337,6 +339,9 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 	if run, ok := m.lab.latestRun(e); ok && run.live() && run.paneID != "" {
 		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
 	}
+	if m.lab.canShape(e) {
+		return m.startLabShape(e)
+	}
 	if e.Editable() {
 		m.activeModal = modal.NewLabEditModal(e)
 		return m, nil
@@ -345,13 +350,25 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 }
 
 // labContextActions lists what the Actions panel offers for the selected
-// entry, which depends on its state.
-func labContextActions(e domain.LabEntry, ok bool) []contextActionOption {
+// entry, which depends on its state and its session.
+func labContextActions(v labView) []contextActionOption {
 	capture := contextActionOption{icon: "+", label: "Capture new entry", action: modal.ContextActionLabCapture}
+	e, ok := v.selected()
 	if !ok {
 		return []contextActionOption{capture}
 	}
-	actions := []contextActionOption{{icon: "◎", label: "Inspect", action: modal.ContextActionLabInspect}}
+	var actions []contextActionOption
+	if v.canShape(e) {
+		label := "Shape into an issue"
+		if e.Status == domain.LabStatusShaping {
+			label = "Resume shaping"
+		}
+		actions = append(actions, contextActionOption{icon: "◇", label: label, action: modal.ContextActionLabShape})
+	}
+	actions = append(actions, contextActionOption{icon: "◎", label: "Inspect", action: modal.ContextActionLabInspect})
+	if v.hasLiveSession(e) {
+		actions = append(actions, contextActionOption{icon: "■", label: "End session", action: modal.ContextActionLabEnd})
+	}
 	switch {
 	case e.Archived:
 		actions = append(actions,
@@ -386,6 +403,10 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 	switch action {
 	case modal.ContextActionLabInspect:
 		return m.openLabInspector()
+	case modal.ContextActionLabShape:
+		return m.startLabShape(e)
+	case modal.ContextActionLabEnd:
+		return m.endLabSession(e)
 	case modal.ContextActionLabEdit:
 		if !e.Editable() {
 			m.statusErr = "Only drafts can be edited"
@@ -487,4 +508,128 @@ func (m *Model) openLabRunPane(runID string) (tea.Model, tea.Cmd) {
 		return m, clearErrorCmd()
 	}
 	return m, m.focusPaneCmd(run.paneID, firstNonEmptyString(run.workflow.Title, "Lab session"))
+}
+
+// labSessionStartedMsg reports a shape or grill session start.
+type labSessionStartedMsg struct {
+	workflow domain.WorkflowRunRef
+	loaded   labsLoadedMsg
+}
+
+// labProcessAlive reports whether a process on this host is running, for
+// taking over a Lab entry lock its owner left behind. Tests replace it.
+var labProcessAlive = pidAlive
+
+// canShape reports whether a shape session can start for e: a bug that is a
+// draft, or one being shaped whose session has ended.
+func (v labView) canShape(e domain.LabEntry) bool {
+	if e.Archived || e.Kind != domain.LabKindBug {
+		return false
+	}
+	if e.Status == domain.LabStatusDraft {
+		return true
+	}
+	if e.Status != domain.LabStatusShaping {
+		return false
+	}
+	run, ok := v.latestRun(e)
+	return !ok || !run.live()
+}
+
+// hasLiveSession reports whether e has a session that has not finished.
+func (v labView) hasLiveSession(e domain.LabEntry) bool {
+	run, ok := v.latestRun(e)
+	return ok && run.live()
+}
+
+// startLabShape starts a shape session for e. The entry's lock is held while
+// the run starts and is recorded, so a second Grove cannot start another.
+func (m *Model) startLabShape(e domain.LabEntry) (tea.Model, tea.Cmd) {
+	if !m.lab.canShape(e) {
+		m.statusErr = "Only a bug draft, or a bug whose shaping session has ended, can be shaped"
+		return m, clearErrorCmd()
+	}
+	if !m.Config.Sandcastle.Enabled {
+		m.statusErr = "Sandcastle is disabled; enable it in settings to shape entries"
+		return m, clearErrorCmd()
+	}
+	starter := m.workflowStarter
+	repoPath := m.RepoPath
+	agent := m.Config.Sandcastle.DefaultAgent
+	m.statusMsg = fmt.Sprintf("Starting a shaping session for %q…", e.Title())
+	return m, func() tea.Msg {
+		fail := func(err error) tea.Msg { return labSessionStartedMsg{loaded: labsLoadedMsg{err: err}} }
+		if starter == nil {
+			return fail(fmt.Errorf("the Sandcastle runtime is unavailable"))
+		}
+		store, err := labStoreFor(repoPath)
+		if err != nil {
+			return fail(err)
+		}
+		release, err := store.LockEntry(e.ID, labProcessAlive)
+		if err != nil {
+			return fail(err)
+		}
+		defer release()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		workflow, err := starter.StartWorkflow(ctx, sandcastle.StartWorkflowRequest{
+			Kind:      string(domain.LabModeShape),
+			RepoPath:  repoPath,
+			EntryID:   e.ID,
+			AgentKind: agent,
+			Source:    "grove",
+		})
+		if err != nil {
+			return fail(fmt.Errorf("start the shaping session: %w", err))
+		}
+		e.Mode = domain.LabModeShape
+		e.Status = domain.LabStatusShaping
+		e.Runs = append(e.Runs, firstNonEmptyString(workflow.RunID, workflow.WorkflowID))
+		e.Updated = time.Now().UTC()
+		if err := store.Put(e); err != nil {
+			return fail(fmt.Errorf("record the shaping session: %w", err))
+		}
+		entries, err := store.Load()
+		return labSessionStartedMsg{
+			workflow: workflow,
+			loaded: labsLoadedMsg{
+				entries:  entries,
+				selectID: e.ID,
+				status:   fmt.Sprintf("Shaping %q — answer the agent in its Herdr pane", e.Title()),
+				err:      err,
+			},
+		}
+	}
+}
+
+// handleLabSessionStarted records a started session and shows it.
+func (m *Model) handleLabSessionStarted(msg labSessionStartedMsg) (tea.Model, tea.Cmd) {
+	if msg.loaded.err != nil {
+		m.statusMsg = ""
+		return m.handleLabsLoaded(msg.loaded)
+	}
+	if m.sandcastleSnapshot == nil {
+		m.sandcastleSnapshot = &sandcastle.Snapshot{
+			Integration: domain.ExternalIntegration{Name: "sandcastle", Mode: "connected", Available: true, Enabled: true},
+		}
+	}
+	m.sandcastleSnapshot.Workflows = append(m.sandcastleSnapshot.Workflows, msg.workflow)
+	_, cmd := m.handleLabsLoaded(msg.loaded)
+	cmds := []tea.Cmd{cmd, m.rebuildMissionStateCmd()}
+	if m.healthChecker != nil {
+		cmds = append(cmds, sandcastleSnapshotCmd(m.healthChecker))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// endLabSession tells e's session to close its agent pane and finish.
+func (m *Model) endLabSession(e domain.LabEntry) (tea.Model, tea.Cmd) {
+	if !m.lab.hasLiveSession(e) {
+		m.statusErr = "This entry has no live session"
+		return m, clearErrorCmd()
+	}
+	status := fmt.Sprintf("Ending the session for %q", e.Title())
+	return m, labChangeCmd(m.RepoPath, e.ID, status, func(s *data.LabStore) error { return s.CloseSession(e.ID) })
 }
