@@ -148,6 +148,76 @@ export function buildShapePrompt(entry: LabEntry, repo: string, paths: LabPaths)
   ].join("\n");
 }
 
+/**
+ * The bundled skills, copied from mattpocock/skills. They ship beside dist/ in
+ * the installed package; see skills/mattpocock/README.md.
+ */
+export function bundledSkillsDir(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "skills", "mattpocock");
+}
+
+export function buildGrillPrompt(
+  entry: LabEntry,
+  repo: string,
+  paths: LabPaths,
+  skillsDir: string,
+): string {
+  const skill = (...parts: string[]) => path.join(skillsDir, ...parts);
+  const artifact = (...parts: string[]) => path.join(paths.artifactsDir, ...parts);
+  return [
+    "You are running a Grove Lab grilling session with the user.",
+    "",
+    `Repository: ${repo}`,
+    `Entry: ${entryTitle(entry)}`,
+    "",
+    "The idea as the user captured it:",
+    "<<<",
+    entry.text,
+    ">>>",
+    "",
+    "Work through three skills, in order, as one continuous conversation with the user in this pane. When you reach each one, read its files in full and follow them, except where the Grove rules below say otherwise.",
+    "",
+    "1. Interview (grill-with-docs) — follow both:",
+    `   ${skill("grilling", "SKILL.md")}`,
+    `   ${skill("domain-modeling", "SKILL.md")}  (with CONTEXT-FORMAT.md and ADR-FORMAT.md beside it)`,
+    `2. Spec — ${skill("to-spec", "SKILL.md")}`,
+    `3. Tickets — ${skill("to-tickets", "SKILL.md")}`,
+    "",
+    "Move from one step to the next only when the user agrees the current one is done.",
+    "",
+    "GROVE RULES — these override the skills.",
+    "",
+    "Where files go:",
+    "- Never create or change a file in the repository. Read it as much as you need.",
+    `- Write every document the skills would write into the repository to the same repository-relative path under ${paths.artifactsDir}.`,
+    `  For example: CONTEXT.md goes to ${artifact("CONTEXT.md")}, and a decision record to ${artifact("docs", "adr", "0003-<slug>.md")}.`,
+    "  Grove copies each one into the repository when the user approves it.",
+    "- When the repository already has the CONTEXT.md you would write (at the root, or where CONTEXT-MAP.md points), copy it to its artifacts path first and extend it there, so the draft keeps every existing term.",
+    `- Number a new ADR after the highest number in both the repository's docs/adr/ and ${artifact("docs", "adr")}.`,
+    "",
+    "Nothing is published:",
+    "- There is no issue tracker to configure; ignore any instruction about /setup-matt-pocock-skills.",
+    "- Do not create issues, labels, or comments, and run no command that changes anything on GitHub. Grove publishes once the user approves the drafts.",
+    `- to-spec: instead of publishing, write the spec to ${artifact("spec.md")}. Its first line is "# <title of the epic>", followed by the template's sections.`,
+    `- to-tickets: once the user approves the breakdown, write it to ${artifact("tickets.json")} instead of publishing, as:`,
+    '    {"tickets": [{"key": "01", "title": "…", "body": "…", "blocked_by": []}]}',
+    '  key: "01", "02", … in dependency order, blockers first.',
+    '  body: Markdown with the issue template\'s "## What to build" and "## Acceptance criteria" sections only; Grove adds the parent and blocking links itself.',
+    "  blocked_by: the keys of the tickets that block this one.",
+    "",
+    `Progress: overwrite ${paths.stageFile} with a single word as you go —`,
+    "  interview  when the interview starts",
+    "  spec       when you start the spec",
+    "  tickets    when you start the tickets",
+    "  drafted    once spec.md and tickets.json are written",
+    "",
+    "After writing drafted, tell the user the drafts are ready to review in Grove's Lab (inspector → Artifacts), then wait.",
+    "If the user asks for changes, revise the files and write drafted again.",
+    "",
+    `If ${paths.artifactsDir} already holds drafts, this session resumes an earlier one: read them and continue from where the work stopped rather than starting over.`,
+  ].join("\n");
+}
+
 export type AgentState = "working" | "idle" | "blocked" | "done" | "unknown" | "gone";
 
 /** Finds an agent's status in `herdr agent get` output. */
@@ -319,9 +389,6 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
   const repo = process.cwd();
   const paths = labPaths(gitCommonDir(repo), entryId);
   const entry = readLabEntry(paths, entryId);
-  if (kind === "grill") {
-    throw new Error("Grilling sessions are not available yet");
-  }
   fs.mkdirSync(paths.artifactsDir, { recursive: true });
   fs.rmSync(paths.closeFile, { force: true });
   fs.rmSync(paths.stageFile, { force: true });
@@ -331,7 +398,10 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
 
   const launch = getAgentLaunchConfig();
   if (launch.backend === "claude") ensureClaudeWorkspaceTrust(repo);
-  const promptText = buildShapePrompt(entry, repo, paths);
+  const promptText =
+    kind === "shape"
+      ? buildShapePrompt(entry, repo, paths)
+      : buildGrillPrompt(entry, repo, paths, bundledSkillsDir());
   const assignmentPath = path.join(paths.entryDir, "assignment.md");
   fs.writeFileSync(assignmentPath, promptText, "utf8");
 

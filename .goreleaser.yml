@@ -24,6 +24,8 @@ archives:
         dst: runtime/sandcastle/dist
       - src: runtime/sandcastle/package.json
         dst: runtime/sandcastle/package.json
+      - src: runtime/sandcastle/skills
+        dst: runtime/sandcastle/skills
       - src: runtime/sandcastle/README.md
         dst: runtime/sandcastle/README.md
 

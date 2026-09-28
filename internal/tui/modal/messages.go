@@ -136,6 +136,7 @@ const (
 	ContextActionLabCapture = "lab-capture"
 	ContextActionLabInspect = "lab-inspect"
 	ContextActionLabShape   = "lab-shape"
+	ContextActionLabGrill   = "lab-grill"
 	ContextActionLabEnd     = "lab-end-session"
 	ContextActionLabPublish = "lab-publish"
 	ContextActionLabEdit    = "lab-edit"

@@ -144,3 +144,35 @@ test("a session fails once its agent has been gone for the grace period", async 
     /no longer running/,
   );
 });
+
+test("the grill prompt points at the bundled skills and overrides where they publish", async () => {
+  const { buildGrillPrompt, bundledSkillsDir } = await import("./lab-session.js");
+  const fs = await import("node:fs");
+  const idea: LabEntry = { ...entry, kind: "idea", text: "Offline mode\n\nCache the last sync." };
+  const paths = labPaths("/repo/.git", idea.id);
+  const skills = bundledSkillsDir();
+  const prompt = buildGrillPrompt(idea, "/repo", paths, skills);
+
+  for (const file of [
+    ["grilling", "SKILL.md"],
+    ["domain-modeling", "SKILL.md"],
+    ["to-spec", "SKILL.md"],
+    ["to-tickets", "SKILL.md"],
+  ]) {
+    const full = path.join(skills, ...file);
+    assert.ok(prompt.includes(full), `the prompt names ${file.join("/")}`);
+    assert.ok(fs.existsSync(full), `${file.join("/")} ships with the runtime`);
+  }
+  assert.ok(fs.existsSync(path.join(skills, "domain-modeling", "CONTEXT-FORMAT.md")));
+  assert.ok(fs.existsSync(path.join(skills, "LICENSE")), "the license ships with the skills");
+
+  assert.match(prompt, /Cache the last sync\./);
+  assert.ok(prompt.includes(path.join(paths.artifactsDir, "spec.md")));
+  assert.ok(prompt.includes(path.join(paths.artifactsDir, "tickets.json")));
+  assert.ok(prompt.includes(path.join(paths.artifactsDir, "docs", "adr", "0003-<slug>.md")), "repository documents mirror their paths");
+  assert.match(prompt, /Never create or change a file in the repository/);
+  assert.match(prompt, /ignore any instruction about \/setup-matt-pocock-skills/);
+  for (const stage of ["interview", "spec", "tickets", "drafted"]) {
+    assert.match(prompt, new RegExp(`^  ${stage} `, "m"), stage);
+  }
+});

@@ -344,7 +344,10 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
 	}
 	if m.lab.canShape(e) {
-		return m.startLabShape(e)
+		return m.startLabSession(e, domain.LabModeShape)
+	}
+	if m.lab.canGrill(e) {
+		return m.startLabSession(e, domain.LabModeGrill)
 	}
 	if e.Editable() {
 		m.activeModal = modal.NewLabEditModal(e)
@@ -371,6 +374,13 @@ func labContextActions(v labView) []contextActionOption {
 			label = "Resume shaping"
 		}
 		actions = append(actions, contextActionOption{icon: "◇", label: label, action: modal.ContextActionLabShape})
+	}
+	if v.canGrill(e) {
+		label := "Grill"
+		if e.Status != domain.LabStatusDraft {
+			label = "Resume grilling"
+		}
+		actions = append(actions, contextActionOption{icon: "✦", label: label, action: modal.ContextActionLabGrill})
 	}
 	actions = append(actions, contextActionOption{icon: "◎", label: "Inspect", action: modal.ContextActionLabInspect})
 	if v.hasLiveSession(e) {
@@ -411,7 +421,9 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 	case modal.ContextActionLabInspect:
 		return m.openLabInspector()
 	case modal.ContextActionLabShape:
-		return m.startLabShape(e)
+		return m.startLabSession(e, domain.LabModeShape)
+	case modal.ContextActionLabGrill:
+		return m.startLabSession(e, domain.LabModeGrill)
 	case modal.ContextActionLabPublish:
 		return m.prepareLabPublish(e)
 	case modal.ContextActionLabEnd:
@@ -533,40 +545,60 @@ var labProcessAlive = pidAlive
 // canShape reports whether a shape session can start for e: a bug that is a
 // draft, or one being shaped whose session has ended.
 func (v labView) canShape(e domain.LabEntry) bool {
-	if e.Archived || e.Kind != domain.LabKindBug {
+	if e.Archived || e.Kind != domain.LabKindBug || e.Mode == domain.LabModeGrill {
 		return false
 	}
-	if e.Status == domain.LabStatusDraft {
+	switch e.Status {
+	case domain.LabStatusDraft:
 		return true
+	case domain.LabStatusShaping:
+		return !v.hasLiveSession(e)
 	}
-	if e.Status != domain.LabStatusShaping {
+	return false
+}
+
+// canGrill reports whether a grill session can start for e: an idea that is a
+// draft, or one being grilled whose session has ended.
+func (v labView) canGrill(e domain.LabEntry) bool {
+	if e.Archived {
 		return false
 	}
-	run, ok := v.latestRun(e)
-	return !ok || !run.live()
+	if e.Kind != domain.LabKindIdea && e.Mode != domain.LabModeGrill {
+		return false
+	}
+	switch e.Status {
+	case domain.LabStatusDraft:
+		return true
+	case domain.LabStatusGrilling, domain.LabStatusSpecced, domain.LabStatusTicketed:
+		return !v.hasLiveSession(e)
+	}
+	return false
 }
 
-// hasLiveSession reports whether e has a session that has not finished.
-func (v labView) hasLiveSession(e domain.LabEntry) bool {
-	run, ok := v.latestRun(e)
-	return ok && run.live()
+// labSessionVerbs names a session mode in messages.
+var labSessionVerbs = map[domain.LabMode]string{
+	domain.LabModeShape: "shaping",
+	domain.LabModeGrill: "grilling",
 }
 
-// startLabShape starts a shape session for e. The entry's lock is held while
-// the run starts and is recorded, so a second Grove cannot start another.
-func (m *Model) startLabShape(e domain.LabEntry) (tea.Model, tea.Cmd) {
-	if !m.lab.canShape(e) {
-		m.statusErr = "Only a bug draft, or a bug whose shaping session has ended, can be shaped"
+// startLabSession starts a shape or grill session for e. The entry's lock is
+// held while the run starts and is recorded, so a second Grove cannot start
+// another.
+func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Model, tea.Cmd) {
+	verb := labSessionVerbs[mode]
+	allowed := (mode == domain.LabModeShape && m.lab.canShape(e)) || (mode == domain.LabModeGrill && m.lab.canGrill(e))
+	if !allowed {
+		m.statusErr = fmt.Sprintf("A %s session cannot start for this entry now", verb)
 		return m, clearErrorCmd()
 	}
 	if !m.Config.Sandcastle.Enabled {
-		m.statusErr = "Sandcastle is disabled; enable it in settings to shape entries"
+		m.statusErr = "Sandcastle is disabled; enable it in settings to start Lab sessions"
 		return m, clearErrorCmd()
 	}
 	starter := m.workflowStarter
 	repoPath := m.RepoPath
 	agent := m.Config.Sandcastle.DefaultAgent
-	m.statusMsg = fmt.Sprintf("Starting a shaping session for %q…", e.Title())
+	m.statusMsg = fmt.Sprintf("Starting a %s session for %q…", verb, e.Title())
 	return m, func() tea.Msg {
 		fail := func(err error) tea.Msg { return labSessionStartedMsg{loaded: labsLoadedMsg{err: err}} }
 		if starter == nil {
@@ -585,21 +617,26 @@ func (m *Model) startLabShape(e domain.LabEntry) (tea.Model, tea.Cmd) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		workflow, err := starter.StartWorkflow(ctx, sandcastle.StartWorkflowRequest{
-			Kind:      string(domain.LabModeShape),
+			Kind:      string(mode),
 			RepoPath:  repoPath,
 			EntryID:   e.ID,
 			AgentKind: agent,
 			Source:    "grove",
 		})
 		if err != nil {
-			return fail(fmt.Errorf("start the shaping session: %w", err))
+			return fail(fmt.Errorf("start the %s session: %w", verb, err))
 		}
-		e.Mode = domain.LabModeShape
-		e.Status = domain.LabStatusShaping
+		e.Mode = mode
+		switch {
+		case mode == domain.LabModeShape:
+			e.Status = domain.LabStatusShaping
+		case e.Status == domain.LabStatusDraft || e.Status == domain.LabStatusShaping:
+			e.Status = domain.LabStatusGrilling
+		}
 		e.Runs = append(e.Runs, firstNonEmptyString(workflow.RunID, workflow.WorkflowID))
 		e.Updated = time.Now().UTC()
 		if err := store.Put(e); err != nil {
-			return fail(fmt.Errorf("record the shaping session: %w", err))
+			return fail(fmt.Errorf("record the %s session: %w", verb, err))
 		}
 		entries, err := store.Load()
 		return labSessionStartedMsg{
@@ -607,7 +644,7 @@ func (m *Model) startLabShape(e domain.LabEntry) (tea.Model, tea.Cmd) {
 			loaded: labsLoadedMsg{
 				entries:  entries,
 				selectID: e.ID,
-				status:   fmt.Sprintf("Shaping %q — answer the agent in its Herdr pane", e.Title()),
+				status:   fmt.Sprintf("%s %q — answer the agent in its Herdr pane", strings.ToUpper(verb[:1])+verb[1:], e.Title()),
 				err:      err,
 			},
 		}
@@ -662,4 +699,68 @@ func (m *Model) openLabInspectorOnArtifacts() (tea.Model, tea.Cmd) {
 		inspector.ShowArtifacts()
 	}
 	return updated, cmd
+}
+
+// hasLiveSession reports whether e has a session that has not finished.
+func (v labView) hasLiveSession(e domain.LabEntry) bool {
+	run, ok := v.latestRun(e)
+	return ok && run.live()
+}
+
+// grillStepStatus is the entry status a grill session has reached at each of
+// its run's steps.
+var grillStepStatus = map[string]domain.LabStatus{
+	"Interview": domain.LabStatusGrilling,
+	"Spec":      domain.LabStatusSpecced,
+	"Tickets":   domain.LabStatusTicketed,
+	"Publish":   domain.LabStatusTicketed,
+}
+
+var labStatusRank = map[domain.LabStatus]int{
+	domain.LabStatusDraft:     0,
+	domain.LabStatusGrilling:  1,
+	domain.LabStatusSpecced:   2,
+	domain.LabStatusTicketed:  3,
+	domain.LabStatusPublished: 4,
+}
+
+// statusAdvances returns the grilled entries whose run has reached a later
+// stage than the entry records, with their status moved forward. A status
+// never moves back, so a resumed session that revisits an earlier step keeps
+// what was reached.
+func (v labView) statusAdvances() []domain.LabEntry {
+	var out []domain.LabEntry
+	for _, e := range v.entries {
+		if e.Mode != domain.LabModeGrill || e.Archived || e.Status == domain.LabStatusPublished {
+			continue
+		}
+		run, ok := v.latestRun(e)
+		if !ok {
+			continue
+		}
+		next, ok := grillStepStatus[run.workflow.CurrentStep]
+		if !ok || labStatusRank[next] <= labStatusRank[e.Status] {
+			continue
+		}
+		e.Status = next
+		e.Updated = time.Now().UTC()
+		out = append(out, e)
+	}
+	return out
+}
+
+// syncLabStatusesCmd records the stages grill sessions have reached.
+func (m *Model) syncLabStatusesCmd() tea.Cmd {
+	advances := m.lab.statusAdvances()
+	if len(advances) == 0 {
+		return nil
+	}
+	return labChangeCmd(m.RepoPath, "", "", func(s *data.LabStore) error {
+		for _, e := range advances {
+			if err := s.Put(e); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

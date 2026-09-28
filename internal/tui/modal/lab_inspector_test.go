@@ -269,3 +269,32 @@ func TestLabInspector_PublishNeedsEveryRequiredApproval(t *testing.T) {
 	assert.Nil(t, cmd)
 	assert.Contains(t, m.View(), "◌ issue.md")
 }
+
+func TestLabInspector_TicketsRenderInPublishOrder(t *testing.T) {
+	m := newTestLabInspector(draftState())
+	m.SetArtifacts(LabArtifactsLoadedMsg{EntryID: "e1", Artifacts: []domain.LabArtifact{{Path: "tickets.json", Body: `{"tickets":[
+		{"key":"02","title":"Show data age","body":"## What to build\nAge.","blocked_by":["01"]},
+		{"key":"01","title":"Cache the last sync","body":"## What to build\nCache."}]}`}}})
+	m.ShowArtifacts()
+	view := m.View()
+	assert.Contains(t, view, "2 tickets, in the order they are published")
+	assert.Less(t, strings.Index(view, "Cache the last sync"), strings.Index(view, "Show data age"), "blockers come first")
+	assert.Contains(t, view, "Blocked by 01")
+	assert.Contains(t, view, "Can start immediately")
+}
+
+func TestLabInspector_UnpublishableTicketsSayWhy(t *testing.T) {
+	m := newTestLabInspector(draftState())
+	m.SetArtifacts(LabArtifactsLoadedMsg{EntryID: "e1", Artifacts: []domain.LabArtifact{{Path: "tickets.json",
+		Body: `{"tickets":[{"key":"01","title":"a","blocked_by":["09"]}]}`}}})
+	m.ShowArtifacts()
+	assert.Contains(t, m.View(), "This draft cannot be published")
+	assert.Contains(t, m.View(), "blocked by 09, which is not a ticket")
+}
+
+func TestLabInspector_RepositoryDocumentSaysWhereApprovalWrites(t *testing.T) {
+	m := newTestLabInspector(draftState())
+	m.SetArtifacts(LabArtifactsLoadedMsg{EntryID: "e1", Artifacts: []domain.LabArtifact{{Path: "docs/adr/0003-cache.md", Body: "# Cache"}}})
+	m.ShowArtifacts()
+	assert.Contains(t, m.View(), "approving writes docs/adr/0003-cache.md to the checkout, uncommitted")
+}

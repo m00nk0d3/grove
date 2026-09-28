@@ -307,7 +307,10 @@ func (m *LabInspectorModal) documentLines() []string {
 		}
 		a := m.artifacts[m.selected]
 		body := a.Body
-		if !strings.HasSuffix(a.Path, ".md") {
+		switch {
+		case a.Path == domain.LabTicketsArtifact:
+			body = labTicketsDocument(a.Body)
+		case !strings.HasSuffix(a.Path, ".md"):
 			body = "```\n" + strings.TrimRight(body, "\n") + "\n```"
 		}
 		return strings.Split(markdown.Render(body, width, theme), "\n")
@@ -606,6 +609,9 @@ func (m *LabInspectorModal) renderArtifacts() string {
 		reviewStyle = m.accentStyle()
 	}
 	b.WriteString(reviewStyle.Render("  " + strings.ToUpper(string(review))))
+	if domain.IsLabRepositoryDocument(a.Path) {
+		b.WriteString(m.mutedStyle().Render("  •  approving writes " + a.Path + " to the checkout, uncommitted"))
+	}
 	b.WriteString(m.mutedStyle().Render(fmt.Sprintf("  •  written %s  •  %d lines", formatTimestamp(a.ModTime), strings.Count(a.Body, "\n")+1)))
 	b.WriteString("\n")
 	b.WriteString(m.mutedStyle().Render(strings.Repeat("─", m.contentWidth())))
@@ -656,4 +662,27 @@ func (m *LabInspectorModal) canPublish() bool {
 		}
 	}
 	return true
+}
+
+// labTicketsDocument renders drafted tickets as they will be published: in
+// dependency order, each with its blockers. A draft that cannot be published
+// says why, above the raw file.
+func labTicketsDocument(raw string) string {
+	tickets, err := domain.ParseLabTickets(raw)
+	if err != nil {
+		return fmt.Sprintf("> **This draft cannot be published:** %s.\n> Ask the agent to fix tickets.json.\n\n```\n%s\n```", err, strings.TrimRight(raw, "\n"))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %d tickets, in the order they are published\n", len(tickets))
+	for _, t := range tickets {
+		fmt.Fprintf(&b, "\n## %s · %s\n\n", t.Key, t.Title)
+		if len(t.BlockedBy) > 0 {
+			fmt.Fprintf(&b, "_Blocked by %s_\n\n", strings.Join(t.BlockedBy, ", "))
+		} else {
+			b.WriteString("_Can start immediately_\n\n")
+		}
+		b.WriteString(strings.TrimSpace(t.Body))
+		b.WriteString("\n")
+	}
+	return b.String()
 }

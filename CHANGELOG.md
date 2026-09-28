@@ -36,7 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   repository's linked board, or one chosen and remembered. The issue number is
   recorded the moment it exists, so a failed board placement is retried
   without creating a duplicate. This is Grove's first GitHub write; ADR-0001
-  records it. Grilling follows in a later change.
+  records it. *Grill* starts a grilling session on an idea: the runtime now
+  ships pinned copies of the grill-with-docs, to-spec, and to-tickets skills
+  from mattpocock/skills (MIT), and the agent interviews the user, drafts
+  `CONTEXT.md` and decision records at their repository paths, then writes the
+  spec and tickets for review. The entry's status follows the session through
+  *specced* and *ticketed*. Approving a `CONTEXT.md` or decision record copies
+  it into the checkout, uncommitted, and refuses a draft that would drop lines
+  from an existing file. Drafted tickets are validated and shown in publish
+  order.
 
 - **A live demo on the website** — the site plays a walk through Grove, from
   mission control to starting a workflow, following it in the inspector,

@@ -1696,6 +1696,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				inspector.SetWorkflow(workflow, agentsForWorkflow(m.missionState, inspector.RunID()))
 			}
 		}
+		return m, m.syncLabStatusesCmd()
 
 	case sessionFocusedMsg:
 		// Focus is best-effort; show a friendly toast regardless of outcome.
@@ -3240,7 +3241,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
-	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabEnd,
+	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEnd,
 		modal.ContextActionLabPublish,
 		modal.ContextActionLabEdit, modal.ContextActionLabArchive,
 		modal.ContextActionLabRestore, modal.ContextActionLabDelete:

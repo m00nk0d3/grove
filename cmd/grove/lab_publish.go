@@ -356,13 +356,23 @@ func (m *Model) handleLabArtifactReview(msg modal.LabArtifactReviewMsg) (tea.Mod
 				if domain.LabContentHash(a.Body) != msg.Hash {
 					return labsLoadedMsg{err: fmt.Errorf("%s changed while you were reading it; review it again", msg.Path)}
 				}
+				status := fmt.Sprintf("%s %s", verb, msg.Path)
+				// An approved repository document goes into the checkout,
+				// uncommitted; the approval stands only once it is there.
+				if state == domain.LabReviewApproved && domain.IsLabRepositoryDocument(a.Path) {
+					target, err := data.WriteLabDocument(repoPath, a)
+					if err != nil {
+						return labsLoadedMsg{err: err}
+					}
+					status = fmt.Sprintf("Approved %s — written to %s, uncommitted", msg.Path, target)
+				}
 				e.SetReview(a, state)
 				e.Updated = time.Now().UTC()
 				if err := store.Put(e); err != nil {
 					return labsLoadedMsg{err: err}
 				}
 				entries, err := store.Load()
-				return labsLoadedMsg{entries: entries, selectID: e.ID, status: fmt.Sprintf("%s %s", verb, msg.Path), err: err}
+				return labsLoadedMsg{entries: entries, selectID: e.ID, status: status, err: err}
 			}
 			return labsLoadedMsg{err: fmt.Errorf("%s no longer exists", msg.Path)}
 		}

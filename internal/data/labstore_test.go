@@ -159,13 +159,13 @@ func TestLabStore_ArtifactsInReviewOrder(t *testing.T) {
 	s := newTestLabStore(t)
 	dir := s.ArtifactsDir("e1")
 	files := map[string]string{
-		"spec.md":           "# Spec\r\nbody",
-		"notes.txt":         "extra",
-		"adr/0002-cache.md": "cache",
-		"adr/0001-scope.md": "scope",
-		"tickets.json":      "[]",
-		"CONTEXT.md":        "# Context",
-		".scratch":          "hidden",
+		"spec.md":                "# Spec\r\nbody",
+		"notes.txt":              "extra",
+		"docs/adr/0002-cache.md": "cache",
+		"docs/adr/0001-scope.md": "scope",
+		"tickets.json":           "[]",
+		"CONTEXT.md":             "# Context",
+		".scratch":               "hidden",
 	}
 	for name, body := range files {
 		path := filepath.Join(dir, filepath.FromSlash(name))
@@ -179,7 +179,7 @@ func TestLabStore_ArtifactsInReviewOrder(t *testing.T) {
 	for _, a := range artifacts {
 		paths = append(paths, a.Path)
 	}
-	assert.Equal(t, []string{"CONTEXT.md", "adr/0001-scope.md", "adr/0002-cache.md", "spec.md", "tickets.json", "notes.txt"}, paths,
+	assert.Equal(t, []string{"CONTEXT.md", "docs/adr/0001-scope.md", "docs/adr/0002-cache.md", "spec.md", "tickets.json", "notes.txt"}, paths,
 		"hidden files are skipped")
 	assert.Equal(t, "# Spec\nbody", artifacts[3].Body, "line endings are normalised")
 	assert.False(t, artifacts[0].ModTime.IsZero())

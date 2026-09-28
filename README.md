@@ -61,7 +61,7 @@ ideas only, or bugs only within the current tab.
 | Key | Action |
 |---|---|
 | `c` | Capture a new idea or bug |
-| `Enter` | The selected entry's next step: shape a bug draft, edit an idea draft, or open the pane of a live session |
+| `Enter` | The selected entry's next step: shape a bug draft, grill an idea draft, review a finished draft, or open the pane of a live session |
 | `v` | Inspect the selected entry |
 | `a` | Actions for the selected entry: inspect, edit, archive, restore, delete |
 
@@ -80,6 +80,19 @@ an answer, and again when the draft is ready. The draft, `issue.md`, appears in
 the inspector's *Artifacts* tab; asking the agent for changes in its pane
 revises it. *End session* closes the agent's pane; *Resume shaping* starts a
 new session that continues from the existing draft.
+
+### Grilling an idea
+
+*Grill* (or `Enter` on an idea draft) starts a grilling session: the agent
+interviews you in its Herdr pane using the bundled
+[grill-with-docs](https://github.com/mattpocock/skills), then writes a spec and
+breaks it into tracer-bullet tickets, following to-spec and to-tickets. As
+terms and decisions settle it drafts `CONTEXT.md` and decision records under
+`docs/adr/`, at the paths they belong in the repository. The entry moves
+through *Interview 1/4*, *Spec 2/4*, *Tickets 3/4* as the session does.
+Approving a `CONTEXT.md` or decision record copies it into your checkout as an
+uncommitted change, and never drops a line an existing file has. *End session*
+and *Resume grilling* work as they do for shaping.
 
 ### Reviewing and publishing
 

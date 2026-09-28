@@ -71,9 +71,9 @@ var keybindingGroups = []bindingGroup{
 		bindings: [][2]string{
 			{"↑/↓  j/k", "Navigate entries"},
 			{"c", "Capture a new idea or bug"},
-			{"Enter", "Next step: shape a bug, edit an idea, open a live session"},
+			{"Enter", "Next step: shape a bug, grill an idea, open a live session"},
 			{"v / V", "Inspect: overview, steps, artifacts, capture"},
-			{"a / A", "Actions: publish, shape, end session, edit, archive, delete"},
+			{"a / A", "Actions: publish, shape, grill, end session, edit, archive"},
 			{"[ / ]", "Switch tab: active, drafts, published, archived"},
 			{"1", "Filter: All entries"},
 			{"2", "Filter: Ideas only"},

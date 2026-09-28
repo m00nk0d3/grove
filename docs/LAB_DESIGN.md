@@ -41,11 +41,13 @@ of the repository, belongs to no branch, and is never tracked or committed:
   entries.json               index of all entries
   <entry-id>/
     artifacts/               drafts written by the agent
-      CONTEXT.md
-      adr/NNNN-<slug>.md
-      spec.md
-      tickets.json
-      issue.md               shaped bug report
+      CONTEXT.md             repository documents, at their repository-relative
+      docs/adr/NNNN-<slug>.md  paths; approving one copies it there
+      spec.md                the epic
+      tickets.json           the epic's tickets
+      issue.md               a shaped bug report
+    stage                    the agent's progress marker
+    session.close            written by Grove to end the session
     session.lock             held while a run starts or publishing is in progress
 ```
 
@@ -116,10 +118,16 @@ from or type into the pane; it links to it.
 ### Skills
 
 Pinned copies of grill-with-docs (grilling and domain-modeling), to-spec, and
-to-tickets, from mattpocock/skills (MIT), ship with the Sandcastle runtime. A
-Grove prompt layer on top sets the output paths, the `tickets.json` schema, and
-the stage markers, and replaces each skill's publishing step with "stop at
-drafted". Shaping uses its own prompt with a fixed template: Summary, Steps to
+to-tickets, from mattpocock/skills (MIT), ship with the Sandcastle runtime in
+`runtime/sandcastle/skills/mattpocock/`, with their license and the commit they
+were copied from. The grill brief points the agent at those files and adds
+Grove's rules on top: repository documents are drafted at their
+repository-relative paths under `artifacts/`, the spec goes to `spec.md` and
+the tickets to `tickets.json` instead of being published, and the stage
+markers. `tickets.json` is
+`{"tickets": [{"key", "title", "body", "blocked_by"}]}`; Grove refuses to
+publish a draft with a missing key or title, a repeated key, an unknown or
+self-referencing blocker, or a cycle, and shows why in the inspector. Shaping uses its own prompt with a fixed template: Summary, Steps to
 reproduce, Expected, Actual, Environment, Notes. The shaping agent asks for
 missing information rather than inventing it.
 
@@ -151,9 +159,13 @@ with a hash of the content it was made on: when the agent revises the file, the
 decision no longer applies and the artifact is a draft again, so what is
 published is always what the user approved. In the *Artifacts* tab:
 
-- `a` **approves** it. An approved `CONTEXT.md` or ADR is written to its normal
-  path in the selected checkout, default the base checkout, as an uncommitted
-  change; an existing `CONTEXT.md` is merged, not overwritten.
+- `a` **approves** it. An approved repository document — `CONTEXT.md`, a
+  decision record, or any other file drafted at a repository-relative path — is
+  copied to that path in the base checkout as an uncommitted change. The brief
+  has the agent start from the checkout's existing file, so the draft extends
+  it; Grove replaces an existing file only when the draft keeps every one of
+  its lines, and otherwise refuses the approval, naming a line that would be
+  lost. Paths outside the checkout or inside `.git` are refused.
 - `e` **edits** it in `$VISUAL` or `$EDITOR`; it remains a draft.
 - `x` **discards** it.
 - `c` **asks for changes**: it opens the agent's pane, where the user says what

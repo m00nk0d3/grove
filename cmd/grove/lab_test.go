@@ -181,7 +181,7 @@ func TestLab_CaptureKindFollowsBugFilter(t *testing.T) {
 	assert.Equal(t, domain.LabKindBug, capture.Kind())
 }
 
-func TestLab_EnterEditsDraft(t *testing.T) {
+func TestLab_EditActionEditsDraft(t *testing.T) {
 	commonDir := withLabCommonDir(t)
 	store := data.NewLabStore(commonDir)
 	e := domain.NewLabEntry(domain.LabKindIdea, "Plugin API", time.Now())
@@ -191,14 +191,15 @@ func TestLab_EnterEditsDraft(t *testing.T) {
 	m.lab.entries, _ = store.Load()
 	m.lab.setTab(labTabDrafts)
 
-	m, _ = press(t, m, "enter")
+	updated, _ := m.handleLabAction(modal.ContextActionLabEdit)
+	m = updated.(*Model)
 	edit, ok := m.activeModal.(*modal.LabCaptureModal)
-	require.True(t, ok, "Enter on a draft opens it for editing")
+	require.True(t, ok, "Edit opens a draft for editing")
 	assert.Equal(t, "Plugin API", edit.Value())
 
 	m = typeInto(t, m, " with hooks")
 	m, cmd := press(t, m, "ctrl+s")
-	updated, cmd := m.Update(cmd())
+	updated, cmd = m.Update(cmd())
 	m = runCmd(t, updated.(*Model), cmd)
 
 	stored, err := store.Load()
@@ -537,8 +538,8 @@ func TestLab_EnterOnLiveRunFocusesItsPane(t *testing.T) {
 
 func TestLab_EnterWithoutLiveRunOpensInspector(t *testing.T) {
 	m := newLabModel(t)
-	m.lab.entries = []domain.LabEntry{entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusTicketed, "Entry")}
-	m.lab.setTab(labTabActive)
+	m.lab.entries = []domain.LabEntry{entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusPublished, "Entry")}
+	m.lab.setTab(labTabPublished)
 
 	m, _ = press(t, m, "enter")
 	assert.IsType(t, &modal.LabInspectorModal{}, m.activeModal)
@@ -601,7 +602,7 @@ func TestLabContextActions_DependOnStateAndSession(t *testing.T) {
 	now := time.Now()
 
 	assert.Equal(t, []string{"Capture new entry"}, labels(newLabView()))
-	assert.Equal(t, []string{"Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
+	assert.Equal(t, []string{"Grill", "Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
 		labels(viewOf(entryAt(now, "i", domain.LabKindIdea, domain.LabStatusDraft, "Idea"), nil)))
 	assert.Equal(t, []string{"Shape into an issue", "Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
 		labels(viewOf(entryAt(now, "b", domain.LabKindBug, domain.LabStatusDraft, "Bug"), nil)), "a bug draft can be shaped")
@@ -682,7 +683,7 @@ func TestLab_ShapeRefusedWhileAnotherGroveHoldsTheEntry(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.lock"),
 		[]byte(`{"pid":1,"host":"another-machine","since":"2026-09-28T08:00:00Z"}`), 0o644))
 
-	updated, cmd := m.startLabShape(e)
+	updated, cmd := m.startLabSession(e, domain.LabModeShape)
 	m = updated.(*Model)
 	updated, _ = m.Update(cmd())
 	m = updated.(*Model)
@@ -697,7 +698,7 @@ func TestLab_ShapeStartFailureLeavesDraft(t *testing.T) {
 	m, store, starter, e := shapeModel(t)
 	starter.err = fmt.Errorf("herdr is not running")
 
-	updated, cmd := m.startLabShape(e)
+	updated, cmd := m.startLabSession(e, domain.LabModeShape)
 	updated, _ = updated.(*Model).Update(cmd())
 	m = updated.(*Model)
 
@@ -710,7 +711,7 @@ func TestLab_ShapeStartFailureLeavesDraft(t *testing.T) {
 func TestLab_ShapeRequiresSandcastle(t *testing.T) {
 	m, _, starter, e := shapeModel(t)
 	m.Config.Sandcastle.Enabled = false
-	updated, _ := m.startLabShape(e)
+	updated, _ := m.startLabSession(e, domain.LabModeShape)
 	assert.Contains(t, updated.(*Model).statusErr, "Sandcastle is disabled")
 	assert.Empty(t, starter.requests, "nothing is started")
 }
@@ -727,4 +728,132 @@ func TestLab_EndSessionWritesCloseMarker(t *testing.T) {
 	m = runCmd(t, updated.(*Model), cmd)
 	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "session.close"))
 	assert.Contains(t, m.statusMsg, "Ending the session")
+}
+
+func TestLab_EnterOnIdeaDraftStartsGrillSession(t *testing.T) {
+	m, store, starter, _ := shapeModel(t)
+	idea := domain.NewLabEntry(domain.LabKindIdea, "Offline mode", time.Now())
+	require.NoError(t, store.Put(idea))
+	m.lab.entries, _ = store.Load()
+	m.lab.setTab(labTabDrafts)
+	m.lab.selectID(idea.ID)
+
+	m, cmd := press(t, m, "enter")
+	updated, _ := m.Update(cmd())
+	m = updated.(*Model)
+
+	require.Len(t, starter.requests, 1)
+	assert.Equal(t, "grill", starter.requests[0].Kind)
+	assert.Equal(t, idea.ID, starter.requests[0].EntryID)
+	stored, _ := store.Load()
+	for _, e := range stored {
+		if e.ID == idea.ID {
+			assert.Equal(t, domain.LabModeGrill, e.Mode)
+			assert.Equal(t, domain.LabStatusGrilling, e.Status)
+		}
+	}
+	assert.Contains(t, m.statusMsg, "Grilling")
+}
+
+func TestLab_ResumedGrillKeepsItsStage(t *testing.T) {
+	m, store, starter, _ := shapeModel(t)
+	e := domain.NewLabEntry(domain.LabKindIdea, "Offline mode", time.Now())
+	e.Mode, e.Status, e.Runs = domain.LabModeGrill, domain.LabStatusSpecced, []string{"run-old"}
+	require.NoError(t, store.Put(e))
+	m.lab.entries, _ = store.Load()
+	m.lab.setMission(labMissionState(map[string]string{"run-old": domain.WorkflowSucceeded}))
+	m.lab.selectID(e.ID)
+
+	assert.Contains(t, labelsOf(labContextActions(m.lab)), "Resume grilling")
+	updated, cmd := m.handleLabAction(modal.ContextActionLabGrill)
+	updated, _ = updated.(*Model).Update(cmd())
+
+	require.Len(t, starter.requests, 1)
+	stored, _ := store.Load()
+	for _, s := range stored {
+		if s.ID == e.ID {
+			assert.Equal(t, domain.LabStatusSpecced, s.Status, "resuming does not move the entry back")
+			assert.Equal(t, []string{"run-old", "run-shape-1"}, s.Runs)
+		}
+	}
+}
+
+func labelsOf(actions []contextActionOption) []string {
+	var out []string
+	for _, a := range actions {
+		out = append(out, a.label)
+	}
+	return out
+}
+
+func TestLabView_StatusAdvancesWithGrillRun(t *testing.T) {
+	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusGrilling, "Offline mode")
+	e.Mode, e.Runs = domain.LabModeGrill, []string{"run-1"}
+	v := newLabView()
+	v.entries = []domain.LabEntry{e}
+
+	state := labMissionState(map[string]string{"run-1": domain.WorkflowRunning})
+	state.WorkflowRuns[0].CurrentStep = "Tickets"
+	v.setMission(state)
+	advances := v.statusAdvances()
+	require.Len(t, advances, 1)
+	assert.Equal(t, domain.LabStatusTicketed, advances[0].Status)
+
+	state.WorkflowRuns[0].CurrentStep = "Interview"
+	v.entries[0].Status = domain.LabStatusTicketed
+	v.setMission(state)
+	assert.Empty(t, v.statusAdvances(), "a status never moves back")
+
+	shape := entryAt(time.Now(), "s", domain.LabKindBug, domain.LabStatusShaping, "Bug")
+	shape.Mode, shape.Runs = domain.LabModeShape, []string{"run-1"}
+	v.entries = []domain.LabEntry{shape}
+	assert.Empty(t, v.statusAdvances(), "shaping has no stages to advance")
+}
+
+func TestLabReview_ApprovingRepositoryDocumentWritesItToTheCheckout(t *testing.T) {
+	store := data.NewLabStore(withLabCommonDir(t))
+	e := domain.NewLabEntry(domain.LabKindIdea, "Offline mode", time.Now())
+	e.Mode, e.Status = domain.LabModeGrill, domain.LabStatusSpecced
+	require.NoError(t, store.Put(e))
+	context := "# Grove\n\n**Lab entry**:\nAn idea or bug.\n"
+	require.NoError(t, os.MkdirAll(store.ArtifactsDir(e.ID), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(store.ArtifactsDir(e.ID), "CONTEXT.md"), []byte(context), 0o644))
+
+	m := newLabModel(t)
+	m.lab.entries, _ = store.Load()
+	updated, cmd := m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: "CONTEXT.md", Hash: domain.LabContentHash(context), Action: modal.LabReviewApprove})
+	updated, _ = updated.(*Model).Update(cmd())
+	m = updated.(*Model)
+
+	written, err := os.ReadFile(filepath.Join(m.RepoPath, "CONTEXT.md"))
+	require.NoError(t, err)
+	assert.Equal(t, context, string(written))
+	assert.Contains(t, m.statusMsg, "written to")
+	assert.Contains(t, m.statusMsg, "uncommitted")
+	stored, _ := store.Load()
+	assert.Equal(t, domain.LabReviewApproved, stored[0].ReviewOf(domain.LabArtifact{Path: "CONTEXT.md", Body: context}))
+}
+
+func TestLabReview_ApprovalThatWouldDropContentIsRefused(t *testing.T) {
+	store := data.NewLabStore(withLabCommonDir(t))
+	e := domain.NewLabEntry(domain.LabKindIdea, "Offline mode", time.Now())
+	require.NoError(t, store.Put(e))
+	draft := "# Grove\n\n**Lab entry**:\nAn idea or bug.\n"
+	require.NoError(t, os.MkdirAll(store.ArtifactsDir(e.ID), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(store.ArtifactsDir(e.ID), "CONTEXT.md"), []byte(draft), 0o644))
+
+	m := newLabModel(t)
+	existing := "# Grove\n\n**Worktree**:\nA checkout.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(m.RepoPath, "CONTEXT.md"), []byte(existing), 0o644))
+	m.lab.entries, _ = store.Load()
+
+	updated, cmd := m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: "CONTEXT.md", Hash: domain.LabContentHash(draft), Action: modal.LabReviewApprove})
+	updated, _ = updated.(*Model).Update(cmd())
+	m = updated.(*Model)
+
+	assert.Contains(t, m.statusErr, "would drop content")
+	kept, _ := os.ReadFile(filepath.Join(m.RepoPath, "CONTEXT.md"))
+	assert.Equal(t, existing, string(kept), "the checkout's glossary is untouched")
+	stored, _ := store.Load()
+	assert.Equal(t, domain.LabReviewDraft, stored[0].ReviewOf(domain.LabArtifact{Path: "CONTEXT.md", Body: draft}), "the approval is not recorded")
 }

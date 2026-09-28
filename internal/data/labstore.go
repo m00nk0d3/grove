@@ -178,12 +178,14 @@ func (s *LabStore) Artifacts(id string) ([]domain.LabArtifact, error) {
 	return artifacts, nil
 }
 
-// artifactRank orders artifacts the way they are reviewed.
+// artifactRank orders artifacts the way they are reviewed. Repository
+// documents are drafted at their repository-relative paths, so a glossary may
+// sit in a subdirectory of a multi-context repository.
 func artifactRank(path string) int {
 	switch {
-	case path == "CONTEXT.md":
+	case path == "CONTEXT-MAP.md" || path == "CONTEXT.md" || strings.HasSuffix(path, "/CONTEXT.md"):
 		return 0
-	case strings.HasPrefix(path, "adr/"):
+	case strings.HasPrefix(path, "docs/adr/") || strings.Contains(path, "/docs/adr/"):
 		return 1
 	case path == "spec.md":
 		return 2
