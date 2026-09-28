@@ -26,26 +26,93 @@ var labEmptyMessages = [labTabCount]string{
 	"No archived entries.",
 }
 
-// labMarker is the state glyph drawn at the start of an entry's row.
-func labMarker(e domain.LabEntry) string {
-	switch {
-	case e.Archived:
-		return "▣"
-	case e.Status == domain.LabStatusDraft:
-		return "○"
-	case e.Status == domain.LabStatusPublished:
-		return "✓"
+// labTone is the color family an entry's state is drawn in.
+type labTone int
+
+const (
+	labToneMuted labTone = iota
+	labToneActive
+	labToneDone
+	labToneAttention
+)
+
+// labState is how an entry's state is drawn: its row marker, status badge,
+// and tone. A live run's state takes precedence over the stored status,
+// because the run is where session state lives.
+type labState struct {
+	marker string
+	badge  string
+	tone   labTone
+}
+
+func labStateOf(v labView, e domain.LabEntry) labState {
+	if e.Archived {
+		return labState{"▣", "ARCHIVED", labToneMuted}
+	}
+	if run, ok := v.latestRun(e); ok {
+		switch strings.ToLower(run.workflow.Status) {
+		case domain.WorkflowBlocked:
+			return labState{"◆", "WAITING ON YOU", labToneAttention}
+		case domain.WorkflowFailed:
+			return labState{"✗", "FAILED", labToneAttention}
+		case domain.WorkflowQueued, domain.WorkflowRunning:
+			return labState{"●", strings.ToUpper(string(e.Status)), labToneActive}
+		}
+	}
+	switch e.Status {
+	case domain.LabStatusDraft:
+		return labState{"○", "DRAFT", labToneMuted}
+	case domain.LabStatusPublished:
+		return labState{"✓", "PUBLISHED", labToneDone}
 	default:
-		return "●"
+		return labState{"●", strings.ToUpper(string(e.Status)), labToneActive}
 	}
 }
 
-// labBadge is the status label drawn at the end of an entry's row.
-func labBadge(e domain.LabEntry) string {
-	if e.Archived {
-		return "ARCHIVED"
+func (s labState) style(theme styles.Theme) lipgloss.Style {
+	color := theme.Muted()
+	switch s.tone {
+	case labToneActive:
+		color = theme.Accent()
+	case labToneDone:
+		color = theme.Success()
+	case labToneAttention:
+		color = theme.Warning()
 	}
-	return strings.ToUpper(string(e.Status))
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+}
+
+// labStageLabel names the step an entry is on, such as "Interview 1/4". A
+// live run's current step is preferred to the stage recorded on the entry.
+func labStageLabel(v labView, e domain.LabEntry) string {
+	stages := e.LabStages()
+	if run, ok := v.latestRun(e); ok && run.live() && run.workflow.CurrentStep != "" {
+		for i, stage := range stages {
+			if strings.EqualFold(stage, run.workflow.CurrentStep) {
+				return fmt.Sprintf("%s %d/%d", stage, i+1, len(stages))
+			}
+		}
+		return run.workflow.CurrentStep
+	}
+	stage := e.Stage()
+	if stage == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s %d/%d", stages[stage-1], stage, len(stages))
+}
+
+// labDetail is the second line of an entry's row: kind, stage, pane, and when
+// it last changed.
+func labDetail(v labView, e domain.LabEntry, now time.Time) string {
+	parts := []string{string(e.Kind)}
+	if stage := labStageLabel(v, e); stage != "" {
+		parts = append(parts, stage)
+	}
+	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
+		parts = append(parts, "Herdr "+run.paneID)
+	}
+	parts = append(parts, formatFinishedAt(e.Updated, now))
+	return strings.Join(parts, "  •  ")
 }
 
 // renderLabTabs renders the lifecycle tabs with their entry counts, falling
@@ -105,14 +172,7 @@ func renderLabFilter(v labView, theme styles.Theme) string {
 // rows per entry.
 func renderLab(v labView, theme styles.Theme, listInner, panelHeight int, focused bool) string {
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
-	stateStyle := func(e domain.LabEntry) lipgloss.Style {
-		switch {
-		case e.Archived || e.Status == domain.LabStatusDraft:
-			return muted
-		default:
-			return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success()))
-		}
-	}
+	now := time.Now()
 
 	var b strings.Builder
 	b.WriteString(renderLabTabs(v, theme, listInner))
@@ -126,25 +186,30 @@ func renderLab(v labView, theme styles.Theme, listInner, panelHeight int, focuse
 		start, count = listWindow(panelHeight-labBannerRows-labHintRows, labRowsPerItem, len(entries), v.cursor)
 	}
 	listWidth := listInner - scrollbarWidth(len(entries), count)
+	// Badges share one column, as wide as the widest one on screen. A row is
+	// cursor (2), marker (1), two gaps (2 + 2), title, and badge.
+	badgeWidth := 0
+	for i := start; i < start+count; i++ {
+		badgeWidth = max(badgeWidth, lipgloss.Width(labStateOf(v, entries[i]).badge))
+	}
+	titleWidth := max(12, listWidth-badgeWidth-7)
 	var rows strings.Builder
 	for i := start; i < start+count; i++ {
 		e := entries[i]
-		badge := labBadge(e)
-		titleWidth := max(12, listWidth-lipgloss.Width(badge)-6)
+		state := labStateOf(v, e)
 		cursor := "  "
 		if focused && i == v.cursor {
 			cursor = "> "
 		}
-		style := stateStyle(e)
+		style := state.style(theme)
 		rows.WriteString(fmt.Sprintf("%s%s  %-*s  %s\n",
 			cursor,
-			style.Render(labMarker(e)),
+			style.Render(state.marker),
 			titleWidth,
 			truncateStr(e.Title(), titleWidth),
-			style.Render(badge),
+			style.Render(state.badge),
 		))
-		detail := fmt.Sprintf("%s  •  %s", e.Kind, formatFinishedAt(e.Updated, time.Now()))
-		rows.WriteString(muted.Render("     " + truncateStr(detail, max(1, listWidth-5))))
+		rows.WriteString(muted.Render("     " + truncateStr(labDetail(v, e, now), max(1, listWidth-5))))
 		rows.WriteString("\n")
 	}
 	if count > 0 {
@@ -163,40 +228,55 @@ func renderLab(v labView, theme styles.Theme, listInner, panelHeight int, focuse
 		return theme.RenderPanel(st, strings.TrimRight(b.String(), "\n"))
 	}
 	b.WriteString("\n")
-	b.WriteString(muted.Render(truncateStr("c capture  •  ↵ next step  •  a actions  •  1/2/3 kind  •  [ / ] tab", listInner)))
+	b.WriteString(muted.Render(truncateStr("c capture  •  ↵ next step  •  v inspect  •  a actions  •  1/2/3 kind  •  [ / ] tab", listInner)))
 	content := clipContent(b.String(), 0, panelHeight)
 	st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	return theme.RenderPanel(st, content)
 }
 
+// labIssuesSummary describes an entry's published issues.
+func labIssuesSummary(e domain.LabEntry) string {
+	switch {
+	case e.Issues.Epic != nil:
+		s := fmt.Sprintf("#%d", *e.Issues.Epic)
+		if n := len(e.Issues.Tickets); n > 0 {
+			s += fmt.Sprintf(" + %d tickets", n)
+		}
+		return s
+	case e.Issues.Issue != nil:
+		return fmt.Sprintf("#%d", *e.Issues.Issue)
+	default:
+		return "—"
+	}
+}
+
 // renderLabContext renders the context panel for a Lab entry.
-func renderLabContext(e domain.LabEntry, width int, now time.Time) string {
-	status := labBadge(e)
+func renderLabContext(v labView, e domain.LabEntry, width int, now time.Time) string {
+	state := labStateOf(v, e)
+	status := state.badge
 	if e.Archived {
 		status = "ARCHIVED (" + strings.ToUpper(string(e.Status)) + ")"
 	}
-	issues := "—"
-	switch {
-	case e.Issues.Epic != nil:
-		issues = fmt.Sprintf("#%d", *e.Issues.Epic)
-		if n := len(e.Issues.Tickets); n > 0 {
-			issues += fmt.Sprintf(" + %d tickets", n)
-		}
-	case e.Issues.Issue != nil:
-		issues = fmt.Sprintf("#%d", *e.Issues.Issue)
+	var session string
+	if stage := labStageLabel(v, e); stage != "" {
+		session += "\nStage: " + stage
+	}
+	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
+		session += "\nPane: Herdr " + run.paneID + "  (Enter to open)"
 	}
 	body := e.Body()
 	if body == "" {
 		body = "(no details)"
 	}
 	return fmt.Sprintf(
-		"Context: Lab %s\n%s\n\nStatus: %s\nCaptured: %s\nUpdated: %s\nIssues: %s\n\n%s",
+		"Context: Lab %s\n%s\n\nStatus: %s%s\nCaptured: %s\nUpdated: %s\nIssues: %s\n\n%s",
 		e.Kind,
 		wrapText(e.Title(), width),
 		status,
+		session,
 		formatFinishedAt(e.Created, now),
 		formatFinishedAt(e.Updated, now),
-		issues,
+		labIssuesSummary(e),
 		wrapText(body, width),
 	)
 }

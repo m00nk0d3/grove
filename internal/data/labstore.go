@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/m00nk0d3/grove/internal/domain"
@@ -110,6 +113,87 @@ func (s *LabStore) Remove(id string) error {
 		return fmt.Errorf("remove lab entry directory: %w", err)
 	}
 	return nil
+}
+
+// ArtifactsDir returns the directory an entry's drafted artifacts are written
+// to.
+func (s *LabStore) ArtifactsDir(id string) string {
+	return filepath.Join(s.EntryDir(id), "artifacts")
+}
+
+// maxArtifactBytes caps how much of one artifact is read, so a runaway file
+// cannot exhaust memory. Artifacts are documents, well under this size.
+const maxArtifactBytes = 1 << 20
+
+// Artifacts returns the files drafted for an entry in review order: the
+// context document, decision records, spec, tickets, shaped issue, then
+// anything else alphabetically. An entry without artifacts has none.
+func (s *LabStore) Artifacts(id string) ([]domain.LabArtifact, error) {
+	root := s.ArtifactsDir(id)
+	var artifacts []domain.LabArtifact
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) && path == root {
+				return filepath.SkipDir
+			}
+			return err
+		}
+		if d.IsDir() || strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		body, err := io.ReadAll(io.LimitReader(f, maxArtifactBytes))
+		f.Close()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		artifacts = append(artifacts, domain.LabArtifact{
+			Path:    filepath.ToSlash(rel),
+			Body:    strings.ReplaceAll(string(body), "\r\n", "\n"),
+			ModTime: info.ModTime(),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read lab artifacts: %w", err)
+	}
+	sort.SliceStable(artifacts, func(i, j int) bool {
+		ri, rj := artifactRank(artifacts[i].Path), artifactRank(artifacts[j].Path)
+		if ri != rj {
+			return ri < rj
+		}
+		return artifacts[i].Path < artifacts[j].Path
+	})
+	return artifacts, nil
+}
+
+// artifactRank orders artifacts the way they are reviewed.
+func artifactRank(path string) int {
+	switch {
+	case path == "CONTEXT.md":
+		return 0
+	case strings.HasPrefix(path, "adr/"):
+		return 1
+	case path == "spec.md":
+		return 2
+	case path == "tickets.json":
+		return 3
+	case path == "issue.md":
+		return 4
+	default:
+		return 5
+	}
 }
 
 // update applies change to the current index under the index lock and writes

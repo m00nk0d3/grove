@@ -1137,6 +1137,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
+		case modal.LabArtifactsRequestedMsg:
+			return m, loadLabArtifactsCmd(m.RepoPath, msg.EntryID)
+		case modal.LabArtifactsLoadedMsg:
+			if inspector, ok := m.activeModal.(*modal.LabInspectorModal); ok {
+				inspector.SetArtifacts(msg)
+			}
+			return m, nil
+		case modal.LabOpenPaneMsg:
+			m.activeModal = nil
+			return m.openLabRunPane(msg.RunID)
 		case modal.MissionReportsRequestedMsg:
 			return m, loadMissionReportsCmd(msg, m.RepoPath)
 		case modal.MissionReportsLoadedMsg:
@@ -1338,6 +1348,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "v", "V":
 				if m.view == viewDashboard {
 					return m.openSelectedMissionInspector()
+				}
+				if m.view == viewLab {
+					return m.openLabInspector()
 				}
 			case "x", "X":
 				if m.view == viewDashboard {
@@ -1639,6 +1652,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case missionControlUpdatedMsg:
 		m.missionState = &msg.state
+		m.lab.setMission(m.missionState)
+		m.refreshLabInspector()
 		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 		if len(missions) == 0 {
 			m.selectedMissionIdx = 0
@@ -3194,7 +3209,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
-	case modal.ContextActionLabCapture, modal.ContextActionLabEdit, modal.ContextActionLabArchive,
+	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabEdit, modal.ContextActionLabArchive,
 		modal.ContextActionLabRestore, modal.ContextActionLabDelete:
 		return m.handleLabAction(action)
 	default:

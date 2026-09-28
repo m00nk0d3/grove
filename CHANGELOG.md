@@ -17,7 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   title; `Enter` edits a draft; the Actions panel archives, restores, and
   deletes. The list has *Active / Attention*, *Drafts*, *Published*, and
   *Archived* tabs, switched with `[` and `]`, and `1`, `2`, and `3` filter by
-  kind. Grilling, shaping, and publishing follow in later changes.
+  kind. Rows follow the entry's Sandcastle run: an agent waiting for an answer
+  is marked *Waiting on you* and sorted first, and each row shows the step
+  reached and the session's Herdr pane, which `Enter` opens. `v` opens an
+  inspector with *Overview*, *Steps*, *Artifacts*, and *Capture* tabs; drafted
+  artifacts are rendered as Markdown. Grilling, shaping, and publishing follow
+  in later changes.
 
 - **A live demo on the website** — the site plays a walk through Grove, from
   mission control to starting a workflow, following it in the inspector,

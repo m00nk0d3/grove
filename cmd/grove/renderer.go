@@ -1158,7 +1158,7 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 		}
 	case viewLab:
 		if e, ok := lab.selected(); ok {
-			content = renderLabContext(e, ctxInner, time.Now())
+			content = renderLabContext(lab, e, ctxInner, time.Now())
 		} else {
 			content = "No entry selected.\nPress C to capture an idea or a bug."
 		}
@@ -1264,7 +1264,6 @@ func renderContextActions(theme styles.Theme, actions []contextActionOption, act
 	}
 	return b.String()
 }
-
 
 func renderDashboardTelemetry(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, sessions []domain.Session, width int, theme styles.Theme) string {
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent())).Bold(true)

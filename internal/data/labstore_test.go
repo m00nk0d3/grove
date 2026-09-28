@@ -154,3 +154,39 @@ func TestLabStore_HeldLockTimesOut(t *testing.T) {
 	err := s.Put(domain.NewLabEntry(domain.LabKindIdea, "a", time.Now()))
 	assert.ErrorContains(t, err, "another Grove is writing the Lab")
 }
+
+func TestLabStore_ArtifactsInReviewOrder(t *testing.T) {
+	s := newTestLabStore(t)
+	dir := s.ArtifactsDir("e1")
+	files := map[string]string{
+		"spec.md":           "# Spec\r\nbody",
+		"notes.txt":         "extra",
+		"adr/0002-cache.md": "cache",
+		"adr/0001-scope.md": "scope",
+		"tickets.json":      "[]",
+		"CONTEXT.md":        "# Context",
+		".scratch":          "hidden",
+	}
+	for name, body := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	}
+
+	artifacts, err := s.Artifacts("e1")
+	require.NoError(t, err)
+	var paths []string
+	for _, a := range artifacts {
+		paths = append(paths, a.Path)
+	}
+	assert.Equal(t, []string{"CONTEXT.md", "adr/0001-scope.md", "adr/0002-cache.md", "spec.md", "tickets.json", "notes.txt"}, paths,
+		"hidden files are skipped")
+	assert.Equal(t, "# Spec\nbody", artifacts[3].Body, "line endings are normalised")
+	assert.False(t, artifacts[0].ModTime.IsZero())
+}
+
+func TestLabStore_ArtifactsOfEntryWithoutAnyAreEmpty(t *testing.T) {
+	artifacts, err := newTestLabStore(t).Artifacts("none")
+	require.NoError(t, err)
+	assert.Empty(t, artifacts)
+}

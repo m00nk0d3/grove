@@ -104,13 +104,13 @@ type ParentWorktreeRequiredMsg struct {
 type UpdateConfirmedMsg struct{}
 
 const (
-	WorkflowKindImplement  = "imp"
+	WorkflowKindImplement = "imp"
 
-	WorkflowKindReview     = "review"
-	WorkflowKindResolve    = "resolve"
-	WorkflowKindCI         = "ci"
-	WorkflowKindAddress    = "address"
-	WorkflowKindClean      = "clean"
+	WorkflowKindReview  = "review"
+	WorkflowKindResolve = "resolve"
+	WorkflowKindCI      = "ci"
+	WorkflowKindAddress = "address"
+	WorkflowKindClean   = "clean"
 )
 
 // WorkflowLaunchMsg requests a Grove-owned Sandcastle workflow.
@@ -134,6 +134,7 @@ const (
 	ContextActionRemoveRun  = "remove-workflow"
 	ContextActionSyncGitHub = "sync-github"
 	ContextActionLabCapture = "lab-capture"
+	ContextActionLabInspect = "lab-inspect"
 	ContextActionLabEdit    = "lab-edit"
 	ContextActionLabArchive = "lab-archive"
 	ContextActionLabRestore = "lab-restore"

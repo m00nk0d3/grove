@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -46,14 +47,87 @@ type labView struct {
 	tab     labTab
 	filter  domain.LabFilter
 	cursor  int
+	// runs holds the Sandcastle runs of the repository by run ID, refreshed
+	// with mission control state. An entry's session state is read from its
+	// runs here, never stored on the entry.
+	runs map[string]labRun
+}
+
+// labRun is a Sandcastle run as the Lab shows it.
+type labRun struct {
+	workflow domain.WorkflowRunRef
+	paneID   string
+}
+
+// waiting reports whether the run's agent is waiting for the user.
+func (r labRun) waiting() bool {
+	return strings.EqualFold(r.workflow.Status, domain.WorkflowBlocked)
+}
+
+// live reports whether the run has not finished.
+func (r labRun) live() bool {
+	switch strings.ToLower(r.workflow.Status) {
+	case domain.WorkflowQueued, domain.WorkflowRunning, domain.WorkflowBlocked:
+		return true
+	}
+	return false
 }
 
 func newLabView() labView {
 	return labView{filter: domain.LabFilterAll}
 }
 
-// visibleIn returns the entries in tab that match the kind filter, newest
-// first.
+// setMission records the runs and panes mission control reports.
+func (v *labView) setMission(state *domain.MissionControlState) {
+	v.runs = make(map[string]labRun)
+	if state == nil {
+		return
+	}
+	for _, workflow := range state.WorkflowRuns {
+		id := firstNonEmptyString(workflow.RunID, workflow.WorkflowID)
+		if id == "" {
+			continue
+		}
+		run := labRun{workflow: workflow}
+		for _, agent := range agentsForWorkflow(state, id) {
+			if agent.PaneID != "" {
+				run.paneID = agent.PaneID
+				break
+			}
+		}
+		v.runs[id] = run
+	}
+}
+
+// latestRun returns the entry's most recent run that mission control knows.
+func (v labView) latestRun(e domain.LabEntry) (labRun, bool) {
+	for i := len(e.Runs) - 1; i >= 0; i-- {
+		if run, ok := v.runs[e.Runs[i]]; ok {
+			return run, true
+		}
+	}
+	return labRun{}, false
+}
+
+// entryRuns returns the entry's runs that mission control knows, oldest first.
+func (v labView) entryRuns(e domain.LabEntry) []labRun {
+	var out []labRun
+	for _, id := range e.Runs {
+		if run, ok := v.runs[id]; ok {
+			out = append(out, run)
+		}
+	}
+	return out
+}
+
+// waiting reports whether the entry's agent is waiting for the user.
+func (v labView) waiting(e domain.LabEntry) bool {
+	run, ok := v.latestRun(e)
+	return ok && run.waiting()
+}
+
+// visibleIn returns the entries in tab that match the kind filter: entries
+// waiting for the user first, then newest first.
 func (v labView) visibleIn(tab labTab) []domain.LabEntry {
 	var out []domain.LabEntry
 	for _, e := range v.entries {
@@ -61,7 +135,12 @@ func (v labView) visibleIn(tab labTab) []domain.LabEntry {
 			out = append(out, e)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Created.After(out[j].Created) })
+	sort.SliceStable(out, func(i, j int) bool {
+		if wi, wj := v.waiting(out[i]), v.waiting(out[j]); wi != wj {
+			return wi
+		}
+		return out[i].Created.After(out[j].Created)
+	})
 	return out
 }
 
@@ -187,6 +266,7 @@ func (m *Model) handleLabsLoaded(msg labsLoadedMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.lab.clamp()
 	}
+	m.refreshLabInspector()
 	if msg.status == "" {
 		return m, nil
 	}
@@ -254,11 +334,14 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 		m.statusMsg = "Archived — restore it from the Actions panel to continue"
 		return m, clearMsgCmd()
 	}
+	if run, ok := m.lab.latestRun(e); ok && run.live() && run.paneID != "" {
+		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
+	}
 	if e.Editable() {
 		m.activeModal = modal.NewLabEditModal(e)
 		return m, nil
 	}
-	return m, nil
+	return m.openLabInspector()
 }
 
 // labContextActions lists what the Actions panel offers for the selected
@@ -268,7 +351,7 @@ func labContextActions(e domain.LabEntry, ok bool) []contextActionOption {
 	if !ok {
 		return []contextActionOption{capture}
 	}
-	var actions []contextActionOption
+	actions := []contextActionOption{{icon: "◎", label: "Inspect", action: modal.ContextActionLabInspect}}
 	switch {
 	case e.Archived:
 		actions = append(actions,
@@ -301,6 +384,8 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 		return m, clearErrorCmd()
 	}
 	switch action {
+	case modal.ContextActionLabInspect:
+		return m.openLabInspector()
 	case modal.ContextActionLabEdit:
 		if !e.Editable() {
 			m.statusErr = "Only drafts can be edited"
@@ -328,4 +413,78 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 	}
 	m.statusErr = fmt.Sprintf("Unknown action: %s", action)
 	return m, clearErrorCmd()
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// labInspectorState builds what the inspector shows for e.
+func (m *Model) labInspectorState(e domain.LabEntry) modal.LabInspectorState {
+	state := labStateOf(m.lab, e)
+	var runs []modal.LabInspectorRun
+	for _, run := range m.lab.entryRuns(e) {
+		runs = append(runs, modal.LabInspectorRun{Workflow: run.workflow, PaneID: run.paneID})
+	}
+	return modal.LabInspectorState{
+		Entry:      e,
+		Badge:      state.badge,
+		Attention:  state.tone == labToneAttention,
+		StageLabel: labStageLabel(m.lab, e),
+		Runs:       runs,
+	}
+}
+
+// openLabInspector opens the inspector on the selected entry.
+func (m *Model) openLabInspector() (tea.Model, tea.Cmd) {
+	e, ok := m.lab.selected()
+	if !ok {
+		m.statusErr = "No Lab entry selected"
+		return m, clearErrorCmd()
+	}
+	inspector := modal.NewLabInspectorModal(m.labInspectorState(e))
+	m.activeModal = inspector
+	return m, inspector.Init()
+}
+
+// refreshLabInspector updates an open inspector after its entry or runs
+// changed. An inspector whose entry was deleted is closed.
+func (m *Model) refreshLabInspector() {
+	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
+	if !ok {
+		return
+	}
+	e, ok := m.lab.entry(inspector.EntryID())
+	if !ok {
+		m.activeModal = nil
+		return
+	}
+	inspector.SetState(m.labInspectorState(e))
+}
+
+// loadLabArtifactsCmd reads an entry's drafted artifacts.
+func loadLabArtifactsCmd(repoPath, id string) tea.Cmd {
+	return func() tea.Msg {
+		store, err := labStoreFor(repoPath)
+		if err != nil {
+			return modal.LabArtifactsLoadedMsg{EntryID: id, Err: err}
+		}
+		artifacts, err := store.Artifacts(id)
+		return modal.LabArtifactsLoadedMsg{EntryID: id, Artifacts: artifacts, Err: err}
+	}
+}
+
+// openLabRunPane focuses the Herdr pane of a run's agent.
+func (m *Model) openLabRunPane(runID string) (tea.Model, tea.Cmd) {
+	run, ok := m.lab.runs[runID]
+	if !ok || run.paneID == "" {
+		m.statusErr = "The session's pane is no longer available"
+		return m, clearErrorCmd()
+	}
+	return m, m.focusPaneCmd(run.paneID, firstNonEmptyString(run.workflow.Title, "Lab session"))
 }

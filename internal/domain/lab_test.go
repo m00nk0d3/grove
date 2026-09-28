@@ -77,3 +77,30 @@ func TestLabKind_Valid(t *testing.T) {
 	assert.False(t, domain.LabKind("").Valid())
 	assert.False(t, domain.LabKind("task").Valid())
 }
+
+func TestLabEntry_StagesFollowModeThenKind(t *testing.T) {
+	grill := []string{"Interview", "Spec", "Tickets", "Publish"}
+	shape := []string{"Shape", "Publish"}
+
+	assert.Equal(t, grill, domain.LabEntry{Kind: domain.LabKindIdea}.LabStages())
+	assert.Equal(t, shape, domain.LabEntry{Kind: domain.LabKindBug}.LabStages(), "a bug is shaped by default")
+	assert.Equal(t, grill, domain.LabEntry{Kind: domain.LabKindBug, Mode: domain.LabModeGrill}.LabStages(), "an escalated bug is grilled")
+}
+
+func TestLabEntry_Stage(t *testing.T) {
+	tests := []struct {
+		entry domain.LabEntry
+		want  int
+	}{
+		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusDraft}, 0},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusGrilling}, 1},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusSpecced}, 2},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusTicketed}, 3},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Mode: domain.LabModeGrill, Status: domain.LabStatusPublished}, 4},
+		{domain.LabEntry{Kind: domain.LabKindBug, Status: domain.LabStatusShaping}, 1},
+		{domain.LabEntry{Kind: domain.LabKindBug, Mode: domain.LabModeShape, Status: domain.LabStatusPublished}, 2},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, tt.entry.Stage(), "%s/%s", tt.entry.Kind, tt.entry.Status)
+	}
+}

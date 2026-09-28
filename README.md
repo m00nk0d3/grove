@@ -61,8 +61,26 @@ ideas only, or bugs only within the current tab.
 | Key | Action |
 |---|---|
 | `c` | Capture a new idea or bug |
-| `Enter` | The selected entry's next step; for a draft, edit it |
-| `a` | Actions for the selected entry: edit, archive, restore, delete |
+| `Enter` | The selected entry's next step: edit a draft, or open the pane of its live session |
+| `v` | Inspect the selected entry |
+| `a` | Actions for the selected entry: inspect, edit, archive, restore, delete |
+
+An entry whose agent is waiting for an answer is marked **WAITING ON YOU** and
+listed first under *Active / Attention*. Each row shows the step the entry has
+reached, such as *Interview 1/4*, and the Herdr pane of its live session.
+
+### Inspecting an entry
+
+`v` opens the inspector: header cards for stage, elapsed time, artifacts, and
+issues, then four tabs switched with `Tab` or `1`–`4`:
+
+- **Overview** — the entry and its current session: run, status, step, agent,
+  and pane. `Enter` opens the pane.
+- **Steps** — the build chain (*Interview → Spec → Tickets → Publish*, or
+  *Shape → Publish* for a bug) and every run the entry has had.
+- **Artifacts** — the files the agent has drafted, rendered in the terminal;
+  `[` and `]` switch between them.
+- **Capture** — the text as it was captured.
 
 ### Capturing an entry
 

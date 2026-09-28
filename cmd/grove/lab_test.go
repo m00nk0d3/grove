@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
@@ -288,11 +289,11 @@ func TestLabContextActions_DependOnState(t *testing.T) {
 		return out
 	}
 	assert.Equal(t, []string{"Capture new entry"}, labels(labContextActions(domain.LabEntry{}, false)))
-	assert.Equal(t, []string{"Edit", "Archive", "Delete", "Capture new entry"},
+	assert.Equal(t, []string{"Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
 		labels(labContextActions(domain.LabEntry{Status: domain.LabStatusDraft}, true)))
-	assert.Equal(t, []string{"Archive", "Capture new entry"},
+	assert.Equal(t, []string{"Inspect", "Archive", "Capture new entry"},
 		labels(labContextActions(domain.LabEntry{Status: domain.LabStatusGrilling}, true)))
-	assert.Equal(t, []string{"Restore", "Delete", "Capture new entry"},
+	assert.Equal(t, []string{"Inspect", "Restore", "Delete", "Capture new entry"},
 		labels(labContextActions(domain.LabEntry{Status: domain.LabStatusPublished, Archived: true}, true)))
 }
 
@@ -373,7 +374,7 @@ func TestRenderLabContext(t *testing.T) {
 	epic := 251
 	e := entryAt(time.Now(), "a", domain.LabKindIdea, domain.LabStatusPublished, "Plugin API\n\nLet users extend views.")
 	e.Issues = domain.LabIssues{Epic: &epic, Tickets: []int{252, 253}}
-	out := renderLabContext(e, 40, time.Now())
+	out := renderLabContext(newLabView(), e, 40, time.Now())
 
 	assert.Contains(t, out, "Context: Lab idea")
 	assert.Contains(t, out, "Plugin API")
@@ -429,4 +430,169 @@ func TestLab_WorktreesShareOneLab(t *testing.T) {
 	out, err := exec.Command("git", "-C", mainDir, "status", "--porcelain").Output()
 	require.NoError(t, err)
 	assert.Empty(t, strings.TrimSpace(string(out)), "git never sees the Lab")
+}
+
+// labMissionState reports one run per status, each with an agent in a pane.
+func labMissionState(runs map[string]string) *domain.MissionControlState {
+	state := &domain.MissionControlState{}
+	for id, status := range runs {
+		state.WorkflowRuns = append(state.WorkflowRuns, domain.WorkflowRunRef{
+			RunID: id, Kind: "grill", Status: status, CurrentStep: "Spec", StartedAt: time.Now().Add(-time.Hour),
+		})
+		state.Agents = append(state.Agents, domain.AgentRef{AgentID: "agent-" + id, WorkflowRunID: id, PaneID: "pane-" + id})
+	}
+	return state
+}
+
+func TestLabView_RunStateDrivesRows(t *testing.T) {
+	now := time.Now()
+	waiting := entryAt(now.Add(-time.Hour), "waiting", domain.LabKindIdea, domain.LabStatusGrilling, "Waiting entry")
+	waiting.Runs = []string{"run-w"}
+	running := entryAt(now, "running", domain.LabKindIdea, domain.LabStatusSpecced, "Running entry")
+	running.Runs = []string{"run-r"}
+	idle := entryAt(now, "idle", domain.LabKindIdea, domain.LabStatusTicketed, "Idle entry")
+
+	v := newLabView()
+	v.entries = []domain.LabEntry{waiting, running, idle}
+	v.setMission(labMissionState(map[string]string{"run-w": domain.WorkflowBlocked, "run-r": domain.WorkflowRunning}))
+
+	assert.Equal(t, "waiting", v.visibleIn(labTabActive)[0].ID, "an entry waiting for the user sorts first despite being older")
+
+	s := labStateOf(v, waiting)
+	assert.Equal(t, "◆", s.marker)
+	assert.Equal(t, "WAITING ON YOU", s.badge)
+	assert.Equal(t, labToneAttention, s.tone)
+
+	assert.Equal(t, "SPECCED", labStateOf(v, running).badge)
+	assert.Equal(t, "Spec 2/4", labStageLabel(v, running), "a live run's current step is shown")
+	assert.Contains(t, labDetail(v, running, now), "Herdr pane-run-r")
+	assert.Equal(t, "Tickets 3/4", labStageLabel(v, idle), "without a run the stored stage is shown")
+	assert.NotContains(t, labDetail(v, idle, now), "Herdr")
+}
+
+func TestLabView_FinishedRunDoesNotOverrideStatus(t *testing.T) {
+	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusTicketed, "Entry")
+	e.Runs = []string{"run-1"}
+	v := newLabView()
+	v.entries = []domain.LabEntry{e}
+	v.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowSucceeded}))
+
+	assert.Equal(t, "TICKETED", labStateOf(v, e).badge)
+	assert.Equal(t, "Tickets 3/4", labStageLabel(v, e))
+	assert.NotContains(t, labDetail(v, e, time.Now()), "Herdr", "a finished run's pane is not offered")
+}
+
+func TestLab_MissionUpdateRefreshesRowsAndInspector(t *testing.T) {
+	m := newLabModel(t)
+	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusGrilling, "Entry")
+	e.Runs = []string{"run-1"}
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.setTab(labTabActive)
+
+	updated, _ := m.openLabInspector()
+	m = updated.(*Model)
+	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
+	require.True(t, ok)
+	assert.NotContains(t, inspector.View(), "WAITING ON YOU")
+
+	updated, _ = m.Update(missionControlUpdatedMsg{state: *labMissionState(map[string]string{"run-1": domain.WorkflowBlocked})})
+	m = updated.(*Model)
+	assert.True(t, m.lab.waiting(e))
+	assert.Contains(t, m.activeModal.View(), "WAITING ON YOU", "an open inspector follows its run")
+}
+
+func TestLab_VOpensInspectorAndLoadsArtifacts(t *testing.T) {
+	commonDir := withLabCommonDir(t)
+	store := data.NewLabStore(commonDir)
+	e := domain.NewLabEntry(domain.LabKindIdea, "Plugin API", time.Now())
+	require.NoError(t, store.Put(e))
+	require.NoError(t, os.MkdirAll(store.ArtifactsDir(e.ID), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(store.ArtifactsDir(e.ID), "spec.md"), []byte("# Plugin API spec"), 0o644))
+
+	m := newLabModel(t)
+	m.width, m.height = 140, 40
+	m.lab.entries, _ = store.Load()
+	m.lab.setTab(labTabDrafts)
+
+	m, cmd := press(t, m, "v")
+	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
+	require.True(t, ok, "v opens the inspector")
+	require.NotNil(t, cmd, "opening asks for the artifacts")
+
+	// The request goes to Grove, which reads the files and hands them back.
+	updated, load := m.Update(cmd())
+	m = updated.(*Model)
+	require.NotNil(t, load)
+	updated, _ = m.Update(load())
+	m = updated.(*Model)
+
+	m, _ = press(t, m, "3")
+	view := inspector.View()
+	assert.Contains(t, view, "spec.md")
+	assert.Contains(t, view, "Plugin API spec")
+}
+
+func TestLab_EnterOnLiveRunFocusesItsPane(t *testing.T) {
+	navigator := &fakeHerdrNavigator{}
+	m := newLabModel(t)
+	m.herdrNavigator = navigator
+	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusGrilling, "Entry")
+	e.Runs = []string{"run-1"}
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowBlocked}))
+	m.lab.setTab(labTabActive)
+
+	m, cmd := press(t, m, "enter")
+	require.NotNil(t, cmd)
+	cmd()
+	assert.Equal(t, "pane-run-1", navigator.focusedPane, "Enter takes the user to the waiting agent")
+	assert.Nil(t, m.activeModal)
+}
+
+func TestLab_EnterWithoutLiveRunOpensInspector(t *testing.T) {
+	m := newLabModel(t)
+	m.lab.entries = []domain.LabEntry{entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusTicketed, "Entry")}
+	m.lab.setTab(labTabActive)
+
+	m, _ = press(t, m, "enter")
+	assert.IsType(t, &modal.LabInspectorModal{}, m.activeModal)
+}
+
+func TestLab_InspectorClosesWhenEntryIsDeleted(t *testing.T) {
+	m := newLabModel(t)
+	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusDraft, "Entry")
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.setTab(labTabDrafts)
+	updated, _ := m.openLabInspector()
+	m = updated.(*Model)
+
+	updated, _ = m.Update(labsLoadedMsg{entries: nil})
+	assert.Nil(t, updated.(*Model).activeModal)
+}
+
+// A row's title and badge share one line, and badges line up in one column,
+// however long the badge.
+func TestRenderLab_RowsFitAndBadgesAlign(t *testing.T) {
+	now := time.Now()
+	waiting := entryAt(now, "w", domain.LabKindIdea, domain.LabStatusGrilling, "Offline mode for the dashboard")
+	waiting.Runs = []string{"run-w"}
+	shaping := entryAt(now.Add(-time.Minute), "s", domain.LabKindBug, domain.LabStatusShaping, "Sync stalls")
+	v := newLabView()
+	v.entries = []domain.LabEntry{waiting, shaping}
+	v.setMission(labMissionState(map[string]string{"run-w": domain.WorkflowBlocked}))
+	v.setTab(labTabActive)
+
+	out := ansi.Strip(renderLab(v, styles.NewTheme(styles.Themes[0]), 77, 20, true))
+	lines := strings.Split(out, "\n")
+	column := func(title, badge string) int {
+		for _, line := range lines {
+			if strings.Contains(line, title) {
+				require.Contains(t, line, badge, "the badge is on the title's line")
+				return strings.Index(line, badge)
+			}
+		}
+		t.Fatalf("row %q not rendered", title)
+		return -1
+	}
+	assert.Equal(t, column("Offline mode for the dashboard", "WAITING ON YOU"), column("Sync stalls", "SHAPING"))
 }

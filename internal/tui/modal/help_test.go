@@ -266,7 +266,6 @@ func TestHelpModal_NonKeyMsg_DoesNothing(t *testing.T) {
 	assert.Nil(t, cmd)
 }
 
-
 // The Lab section documents only keys the Lab actually binds.
 func TestHelpModal_View_KeybindingsTab_ShowsLabKeys(t *testing.T) {
 	m := NewHelpModal()
@@ -278,7 +277,8 @@ func TestHelpModal_View_KeybindingsTab_ShowsLabKeys(t *testing.T) {
 	for _, text := range []string{
 		"Navigate entries",
 		"Capture a new idea or bug",
-		"Next step for the selected entry",
+		"Next step: edit a draft, open a live session's pane",
+		"Inspect: overview, steps, artifacts, capture",
 		"Actions: edit, archive, restore, delete",
 		"Switch tab: active, drafts, published, archived",
 		"Filter: All entries",

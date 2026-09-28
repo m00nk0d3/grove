@@ -132,6 +132,49 @@ func (e LabEntry) Deletable() bool {
 	return e.Status == LabStatusDraft || e.Archived
 }
 
+// LabStages returns the steps of the run an entry takes: a grill for ideas and
+// escalated bugs, a shape for bugs. The entry's mode decides once a run has
+// started; before that, its kind does.
+func (e LabEntry) LabStages() []string {
+	mode := e.Mode
+	if mode == "" {
+		mode = LabModeGrill
+		if e.Kind == LabKindBug {
+			mode = LabModeShape
+		}
+	}
+	if mode == LabModeShape {
+		return []string{"Shape", "Publish"}
+	}
+	return []string{"Interview", "Spec", "Tickets", "Publish"}
+}
+
+// Stage returns the 1-based step of LabStages the entry has reached, or 0 for
+// a draft.
+func (e LabEntry) Stage() int {
+	switch e.Status {
+	case LabStatusGrilling, LabStatusShaping:
+		return 1
+	case LabStatusSpecced:
+		return 2
+	case LabStatusTicketed:
+		return 3
+	case LabStatusPublished:
+		return len(e.LabStages())
+	default:
+		return 0
+	}
+}
+
+// LabArtifact is a file an agent drafted for an entry, such as CONTEXT.md, an
+// ADR, the spec, or the tickets. Path is relative to the entry's artifacts
+// directory and uses forward slashes.
+type LabArtifact struct {
+	Path    string
+	Body    string
+	ModTime time.Time
+}
+
 // LabFilter restricts the Lab list to one kind of entry.
 type LabFilter string
 
