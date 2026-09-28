@@ -134,6 +134,15 @@ func NewSettingsModal(cfg *domain.Config, configPath string) *SettingsModal {
 					func(c *domain.Config) *int { return &c.Herdr.PollIntervalSeconds }),
 			},
 		},
+		{
+			title: "LAB",
+			blurb: "where published issues go",
+			fields: []settingsField{
+				textField("Project board", "lab.project",
+					"GitHub project board that published issues are added to, in Backlog, as owner/number. When empty and the repository is linked to exactly one project, that project is used.",
+					func(c *domain.Config) *string { return &c.Lab.Project }),
+			},
+		},
 	}
 
 	cursors := make([]int, len(sections))

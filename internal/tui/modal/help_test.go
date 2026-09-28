@@ -279,7 +279,7 @@ func TestHelpModal_View_KeybindingsTab_ShowsLabKeys(t *testing.T) {
 		"Capture a new idea or bug",
 		"Next step: shape a bug, edit an idea, open a live session",
 		"Inspect: overview, steps, artifacts, capture",
-		"Actions: shape, end session, edit, archive, restore, delete",
+		"Actions: publish, shape, end session, edit, archive, delete",
 		"Switch tab: active, drafts, published, archived",
 		"Filter: All entries",
 		"Filter: Ideas only",

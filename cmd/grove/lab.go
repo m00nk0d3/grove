@@ -336,6 +336,10 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 		m.statusMsg = "Archived — restore it from the Actions panel to continue"
 		return m, clearMsgCmd()
 	}
+	// A draft waiting for review is reviewed in Grove, not in the pane.
+	if labPublishRequires(e) != nil && m.lab.draftReady(e) {
+		return m.openLabInspectorOnArtifacts()
+	}
 	if run, ok := m.lab.latestRun(e); ok && run.live() && run.paneID != "" {
 		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
 	}
@@ -358,6 +362,9 @@ func labContextActions(v labView) []contextActionOption {
 		return []contextActionOption{capture}
 	}
 	var actions []contextActionOption
+	if labPublishRequires(e) != nil && v.draftReady(e) {
+		actions = append(actions, contextActionOption{icon: "↑", label: "Publish issue", action: modal.ContextActionLabPublish})
+	}
 	if v.canShape(e) {
 		label := "Shape into an issue"
 		if e.Status == domain.LabStatusShaping {
@@ -405,6 +412,8 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 		return m.openLabInspector()
 	case modal.ContextActionLabShape:
 		return m.startLabShape(e)
+	case modal.ContextActionLabPublish:
+		return m.prepareLabPublish(e)
 	case modal.ContextActionLabEnd:
 		return m.endLabSession(e)
 	case modal.ContextActionLabEdit:
@@ -453,11 +462,12 @@ func (m *Model) labInspectorState(e domain.LabEntry) modal.LabInspectorState {
 		runs = append(runs, modal.LabInspectorRun{Workflow: run.workflow, PaneID: run.paneID})
 	}
 	return modal.LabInspectorState{
-		Entry:      e,
-		Badge:      state.badge,
-		Attention:  state.tone == labToneAttention,
-		StageLabel: labStageLabel(m.lab, e),
-		Runs:       runs,
+		Entry:           e,
+		Badge:           state.badge,
+		Attention:       state.tone == labToneAttention,
+		StageLabel:      labStageLabel(m.lab, e),
+		PublishRequires: labPublishRequires(e),
+		Runs:            runs,
 	}
 }
 
@@ -632,4 +642,24 @@ func (m *Model) endLabSession(e domain.LabEntry) (tea.Model, tea.Cmd) {
 	}
 	status := fmt.Sprintf("Ending the session for %q", e.Title())
 	return m, labChangeCmd(m.RepoPath, e.ID, status, func(s *data.LabStore) error { return s.CloseSession(e.ID) })
+}
+
+// draftReady reports whether e's session has finished its draft: its live run
+// is at the Publish step, or its session has ended.
+func (v labView) draftReady(e domain.LabEntry) bool {
+	run, ok := v.latestRun(e)
+	if !ok || !run.live() {
+		return true
+	}
+	return strings.EqualFold(run.workflow.CurrentStep, "Publish")
+}
+
+// openLabInspectorOnArtifacts opens the inspector on the selected entry's
+// Artifacts tab, for review.
+func (m *Model) openLabInspectorOnArtifacts() (tea.Model, tea.Cmd) {
+	updated, cmd := m.openLabInspector()
+	if inspector, ok := m.activeModal.(*modal.LabInspectorModal); ok {
+		inspector.ShowArtifacts()
+	}
+	return updated, cmd
 }

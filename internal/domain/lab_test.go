@@ -104,3 +104,29 @@ func TestLabEntry_Stage(t *testing.T) {
 		assert.Equal(t, tt.want, tt.entry.Stage(), "%s/%s", tt.entry.Kind, tt.entry.Status)
 	}
 }
+
+func TestLabEntry_ReviewFollowsContent(t *testing.T) {
+	e := domain.LabEntry{}
+	issue := domain.LabArtifact{Path: "issue.md", Body: "# Sync stalls"}
+	assert.Equal(t, domain.LabReviewDraft, e.ReviewOf(issue), "an artifact starts as a draft")
+
+	e.SetReview(issue, domain.LabReviewApproved)
+	assert.Equal(t, domain.LabReviewApproved, e.ReviewOf(issue))
+
+	revised := domain.LabArtifact{Path: "issue.md", Body: "# Sync stalls on token expiry"}
+	assert.Equal(t, domain.LabReviewDraft, e.ReviewOf(revised), "a revision is reviewed again")
+
+	e.SetReview(revised, domain.LabReviewDiscarded)
+	assert.Equal(t, domain.LabReviewDiscarded, e.ReviewOf(revised))
+	assert.Equal(t, domain.LabReviewDraft, e.ReviewOf(domain.LabArtifact{Path: "spec.md"}))
+}
+
+func TestParseIssueDraft(t *testing.T) {
+	title, body := domain.ParseIssueDraft("\r\n# Sync stalls on token expiry\r\n\r\n## Summary\r\nIt stalls.\r\n")
+	assert.Equal(t, "Sync stalls on token expiry", title)
+	assert.Equal(t, "## Summary\nIt stalls.", body)
+
+	title, body = domain.ParseIssueDraft("## Summary\nNo title heading.")
+	assert.Empty(t, title)
+	assert.Equal(t, "## Summary\nNo title heading.", body)
+}

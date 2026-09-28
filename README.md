@@ -81,6 +81,22 @@ the inspector's *Artifacts* tab; asking the agent for changes in its pane
 revises it. *End session* closes the agent's pane; *Resume shaping* starts a
 new session that continues from the existing draft.
 
+### Reviewing and publishing
+
+When the draft is ready, `Enter` opens it in the inspector's *Artifacts* tab.
+There `a` approves it, `e` edits it in `$VISUAL` or `$EDITOR`, `x` discards it,
+and `c` takes you to the agent's pane to ask for changes. An approval applies
+to the content you saw: if the agent revises the file, it is a draft again.
+
+`p` in the inspector, or *Publish issue* in the Actions panel, shows a preview
+of exactly what will be created — repository, labels, board, title, and body.
+Nothing is sent to GitHub until you press `y`. Grove then creates the issue
+through `gh` with the `bug` label, adds it to the project board in `Backlog`,
+and ends the session. The board is `lab.project` (`owner/number`) when set;
+otherwise the repository's linked board, or a choice among several, which Grove
+remembers. If adding it to the board fails, the created issue is recorded and
+publishing again only retries the board.
+
 ### Inspecting an entry
 
 `v` opens the inspector: header cards for stage, elapsed time, artifacts, and

@@ -43,6 +43,9 @@ type LabInspectorState struct {
 	StageLabel string
 	// Runs are the entry's runs, oldest first.
 	Runs []LabInspectorRun
+	// PublishRequires lists the artifacts that must be approved before the
+	// entry can be published; empty when it cannot be published.
+	PublishRequires []string
 }
 
 // latestRun returns the entry's most recent run.
@@ -68,6 +71,29 @@ type LabArtifactsLoadedMsg struct {
 // LabOpenPaneMsg asks Grove to focus the Herdr pane of a run's agent.
 type LabOpenPaneMsg struct {
 	RunID string
+}
+
+// Review actions on a drafted artifact.
+const (
+	LabReviewApprove = "approve"
+	LabReviewDiscard = "discard"
+	LabReviewEdit    = "edit"
+	LabReviewChanges = "changes"
+)
+
+// LabArtifactReviewMsg asks Grove to act on one of an entry's artifacts.
+// Hash identifies the content the user was shown, so a decision never applies
+// to a revision they have not seen.
+type LabArtifactReviewMsg struct {
+	EntryID string
+	Path    string
+	Hash    string
+	Action  string
+}
+
+// LabPublishRequestedMsg asks Grove to prepare publishing an entry.
+type LabPublishRequestedMsg struct {
+	EntryID string
 }
 
 type labInspectorTab int
@@ -109,6 +135,19 @@ func NewLabInspectorModal(state LabInspectorState) *LabInspectorModal {
 
 // EntryID returns the ID of the inspected entry.
 func (m *LabInspectorModal) EntryID() string { return m.state.Entry.ID }
+
+// ShowArtifacts opens the inspector on its Artifacts tab, for reviewing.
+func (m *LabInspectorModal) ShowArtifacts() { m.activeTab = labInspectorArtifacts }
+
+// review asks Grove to act on the selected artifact.
+func (m *LabInspectorModal) review(action string) tea.Cmd {
+	if m.activeTab != labInspectorArtifacts || m.selected >= len(m.artifacts) {
+		return nil
+	}
+	a := m.artifacts[m.selected]
+	msg := LabArtifactReviewMsg{EntryID: m.EntryID(), Path: a.Path, Hash: domain.LabContentHash(a.Body), Action: action}
+	return func() tea.Msg { return msg }
+}
 
 // SetState replaces what the inspector shows for its entry.
 func (m *LabInspectorModal) SetState(state LabInspectorState) { m.state = state }
@@ -209,6 +248,19 @@ func (m *LabInspectorModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectArtifact(1)
 		case "r", "R":
 			return m, tea.Batch(func() tea.Msg { return MissionRefreshMsg{} }, m.requestArtifacts())
+		case "a":
+			return m, m.review(LabReviewApprove)
+		case "x":
+			return m, m.review(LabReviewDiscard)
+		case "e":
+			return m, m.review(LabReviewEdit)
+		case "c":
+			return m, m.review(LabReviewChanges)
+		case "p":
+			if m.canPublish() {
+				id := m.EntryID()
+				return m, func() tea.Msg { return LabPublishRequestedMsg{EntryID: id} }
+			}
 		default:
 			if len(s) == 1 && s[0] >= '1' && s[0] < '1'+byte(labInspectorTabCount) {
 				return m, m.setTab(labInspectorTab(s[0] - '1'))
@@ -296,12 +348,18 @@ func (m *LabInspectorModal) View() string {
 	hints := []string{"Tab/h/l", "sections"}
 	switch m.activeTab {
 	case labInspectorArtifacts:
-		hints = append(hints, "j/k PgUp/PgDn", "scroll")
+		hints = append(hints, "j/k", "scroll")
 		if len(m.artifacts) > 1 {
 			hints = append(hints, "[ ]", "artifact")
 		}
+		if len(m.artifacts) > 0 {
+			hints = append(hints, "a", "approve", "x", "discard", "e", "edit", "c", "ask for changes")
+		}
 	case labInspectorCapture:
 		hints = append(hints, "j/k PgUp/PgDn", "scroll")
+	}
+	if m.canPublish() {
+		hints = append(hints, "p", "publish")
 	}
 	if run, ok := m.state.latestRun(); ok && run.Live() && run.PaneID != "" {
 		hints = append(hints, "Enter", "open pane")
@@ -534,12 +592,21 @@ func (m *LabInspectorModal) renderArtifacts() string {
 		if i == m.selected {
 			style = m.selectedStyle()
 		}
-		b.WriteString(style.Render(" " + a.Path + " "))
+		b.WriteString(style.Render(" " + labReviewMarker(m.state.Entry.ReviewOf(a)) + " " + a.Path + " "))
 		b.WriteString(" ")
 	}
 	b.WriteString("\n")
 	a := m.artifacts[m.selected]
-	b.WriteString(m.mutedStyle().Render(fmt.Sprintf("  written %s  •  %d lines", formatTimestamp(a.ModTime), strings.Count(a.Body, "\n")+1)))
+	review := m.state.Entry.ReviewOf(a)
+	reviewStyle := m.mutedStyle()
+	switch review {
+	case domain.LabReviewApproved:
+		reviewStyle = m.statusStyle("succeeded")
+	case domain.LabReviewDraft:
+		reviewStyle = m.accentStyle()
+	}
+	b.WriteString(reviewStyle.Render("  " + strings.ToUpper(string(review))))
+	b.WriteString(m.mutedStyle().Render(fmt.Sprintf("  •  written %s  •  %d lines", formatTimestamp(a.ModTime), strings.Count(a.Body, "\n")+1)))
 	b.WriteString("\n")
 	b.WriteString(m.mutedStyle().Render(strings.Repeat("─", m.contentWidth())))
 	b.WriteString("\n")
@@ -557,4 +624,36 @@ func (m *LabInspectorModal) renderDocument(lines []string) string {
 		out += "\n" + m.mutedStyle().Render(fmt.Sprintf("  lines %d–%d of %d", m.scroll+1, end, len(lines)))
 	}
 	return out
+}
+
+// labReviewMarker is the glyph shown beside an artifact for its review state.
+func labReviewMarker(state domain.LabReviewState) string {
+	switch state {
+	case domain.LabReviewApproved:
+		return "✓"
+	case domain.LabReviewDiscarded:
+		return "✗"
+	default:
+		return "◌"
+	}
+}
+
+// canPublish reports whether every artifact publishing needs is present and
+// approved as it is now.
+func (m *LabInspectorModal) canPublish() bool {
+	if len(m.state.PublishRequires) == 0 || !m.artifactsLoaded {
+		return false
+	}
+	for _, path := range m.state.PublishRequires {
+		approved := false
+		for _, a := range m.artifacts {
+			if a.Path == path && m.state.Entry.ReviewOf(a) == domain.LabReviewApproved {
+				approved = true
+			}
+		}
+		if !approved {
+			return false
+		}
+	}
+	return true
 }

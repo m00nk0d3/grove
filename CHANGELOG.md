@@ -28,7 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   question and the finished draft as *Waiting on you* and stays open for
   revisions until it is ended from Grove. Starting a session holds the entry's
   lock, so a second Grove instance cannot start another for the same entry.
-  Grilling and publishing follow in later changes.
+  In the inspector, `a`, `x`, `e`, and `c` approve, discard, edit, or ask for
+  changes to a drafted artifact; an approval is tied to the content it was
+  given on. `p` or *Publish issue* previews exactly what will be created, and
+  on `y` Grove creates the issue through `gh` with the `bug` label and places
+  it in `Backlog` on the board named by the new `lab.project` setting, the
+  repository's linked board, or one chosen and remembered. The issue number is
+  recorded the moment it exists, so a failed board placement is retried
+  without creating a duplicate. This is Grove's first GitHub write; ADR-0001
+  records it. Grilling follows in a later change.
 
 - **A live demo on the website** — the site plays a walk through Grove, from
   mission control to starting a workflow, following it in the inspector,

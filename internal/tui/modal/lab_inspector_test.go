@@ -217,3 +217,55 @@ func TestLabInspector_SetStateUpdatesView(t *testing.T) {
 	m.SetState(grillingState(domain.WorkflowBlocked))
 	assert.Contains(t, m.View(), "WAITING ON YOU")
 }
+
+func reviewState(approved bool) (LabInspectorState, domain.LabArtifact) {
+	s := grillingState(domain.WorkflowBlocked)
+	s.Entry.Mode, s.Entry.Status = domain.LabModeShape, domain.LabStatusShaping
+	s.PublishRequires = []string{"issue.md"}
+	issue := domain.LabArtifact{Path: "issue.md", Body: "# Sync stalls"}
+	if approved {
+		s.Entry.SetReview(issue, domain.LabReviewApproved)
+	}
+	return s, issue
+}
+
+func TestLabInspector_ReviewKeysActOnSelectedArtifact(t *testing.T) {
+	s, issue := reviewState(false)
+	m := newTestLabInspector(s)
+	m.SetArtifacts(LabArtifactsLoadedMsg{EntryID: "e1", Artifacts: []domain.LabArtifact{issue}})
+
+	_, cmd := m.Update(labKey("a"))
+	assert.Nil(t, cmd, "review keys only work in the Artifacts tab")
+
+	m.ShowArtifacts()
+	for key, action := range map[string]string{"a": LabReviewApprove, "x": LabReviewDiscard, "e": LabReviewEdit, "c": LabReviewChanges} {
+		_, cmd := m.Update(labKey(key))
+		require.NotNil(t, cmd, key)
+		assert.Equal(t, LabArtifactReviewMsg{EntryID: "e1", Path: "issue.md", Hash: domain.LabContentHash(issue.Body), Action: action}, cmd(), key)
+	}
+	assert.Contains(t, m.View(), "◌ issue.md")
+	assert.Contains(t, m.View(), "DRAFT")
+}
+
+func TestLabInspector_PublishNeedsEveryRequiredApproval(t *testing.T) {
+	s, issue := reviewState(false)
+	m := newTestLabInspector(s)
+	m.SetArtifacts(LabArtifactsLoadedMsg{EntryID: "e1", Artifacts: []domain.LabArtifact{issue}})
+	_, cmd := m.Update(labKey("p"))
+	assert.Nil(t, cmd, "an unapproved draft cannot be published")
+	assert.NotContains(t, m.View(), "publish")
+
+	s, issue = reviewState(true)
+	m.SetState(s)
+	m.ShowArtifacts()
+	assert.Contains(t, m.View(), "✓ issue.md")
+	_, cmd = m.Update(labKey("p"))
+	require.NotNil(t, cmd)
+	assert.Equal(t, LabPublishRequestedMsg{EntryID: "e1"}, cmd())
+
+	// The agent revises the draft: the approval no longer applies.
+	m.SetArtifacts(LabArtifactsLoadedMsg{EntryID: "e1", Artifacts: []domain.LabArtifact{{Path: "issue.md", Body: "# Revised"}}})
+	_, cmd = m.Update(labKey("p"))
+	assert.Nil(t, cmd)
+	assert.Contains(t, m.View(), "◌ issue.md")
+}

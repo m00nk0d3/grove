@@ -137,6 +137,7 @@ const (
 	ContextActionLabInspect = "lab-inspect"
 	ContextActionLabShape   = "lab-shape"
 	ContextActionLabEnd     = "lab-end-session"
+	ContextActionLabPublish = "lab-publish"
 	ContextActionLabEdit    = "lab-edit"
 	ContextActionLabArchive = "lab-archive"
 	ContextActionLabRestore = "lab-restore"

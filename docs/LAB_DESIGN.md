@@ -146,18 +146,23 @@ stage, elapsed time, artifacts, and issues, and tabs *Overview*, *Steps*,
 
 ## Review and approval
 
-Each artifact is `draft`, `approved`, or `discarded`. In the *Artifacts* tab:
+Each artifact is `draft`, `approved`, or `discarded`. A decision is recorded
+with a hash of the content it was made on: when the agent revises the file, the
+decision no longer applies and the artifact is a draft again, so what is
+published is always what the user approved. In the *Artifacts* tab:
 
-- **Approve** marks it approved. An approved `CONTEXT.md` or ADR is written to
-  its normal path in the selected checkout, default the base checkout, as an
-  uncommitted change; an existing `CONTEXT.md` is merged, not overwritten.
-- **Edit** opens it in `$EDITOR`; it remains a draft.
-- **Discard** excludes it.
-- **Request changes** opens the agent's pane; the agent revises the draft in
-  place.
+- `a` **approves** it. An approved `CONTEXT.md` or ADR is written to its normal
+  path in the selected checkout, default the base checkout, as an uncommitted
+  change; an existing `CONTEXT.md` is merged, not overwritten.
+- `e` **edits** it in `$VISUAL` or `$EDITOR`; it remains a draft.
+- `x` **discards** it.
+- `c` **asks for changes**: it opens the agent's pane, where the user says what
+  to change and the agent revises the draft in place.
+- `p` **publishes** once every artifact publishing needs is approved.
 
-Publishing is available once the spec and tickets are approved. `CONTEXT.md`
-and ADRs never block it. Grove never commits.
+A shaped bug publishes once `issue.md` is approved; a grilled idea once the
+spec and tickets are. `CONTEXT.md` and ADRs never block publishing. Grove never
+commits.
 
 ## Publishing
 
@@ -180,7 +185,12 @@ Grove and the runtime; the run's *Publish* step shows the draft waiting for it.
 6. Each issue number is recorded on the entry as soon as it is created, so a
    failed publish resumes instead of creating duplicates.
 
-A shaped bug publishes one issue labelled `bug`, through the same path.
+A shaped bug publishes one issue labelled `bug`, through the same path: the
+title is the draft's first `# ` heading and the body is the rest.
+
+Publishing holds the entry's lock and checks that the approved draft is still
+exactly what the preview showed; a draft revised after the preview is not
+published.
 
 ## Escalation
 

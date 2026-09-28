@@ -727,6 +727,9 @@ type Model struct {
 	sessions []domain.Session
 	// lab holds the repository's Lab entries and the Lab list's state.
 	lab labView
+	// labPending is the publication the preview is showing, until confirmed or
+	// cancelled.
+	labPending *labPendingPublish
 
 	// latestVersion holds the latest release version discovered on startup (empty if check failed).
 	latestVersion string
@@ -1147,6 +1150,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modal.LabOpenPaneMsg:
 			m.activeModal = nil
 			return m.openLabRunPane(msg.RunID)
+		case modal.LabArtifactReviewMsg:
+			return m.handleLabArtifactReview(msg)
+		case modal.LabPublishRequestedMsg:
+			e, ok := m.lab.entry(msg.EntryID)
+			if !ok {
+				return m, nil
+			}
+			m.activeModal = nil
+			return m.prepareLabPublish(e)
+		case modal.LabPublishConfirmedMsg:
+			return m.publishLabEntry(msg)
 		case modal.MissionReportsRequestedMsg:
 			return m, loadMissionReportsCmd(msg, m.RepoPath)
 		case modal.MissionReportsLoadedMsg:
@@ -1174,6 +1188,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.removeWorkflowCmd(msg.RunID, msg.Stop)
 		case modal.ModalCancelledMsg:
 			m.activeModal = nil
+			m.labPending = nil
 			return m, nil
 		case modal.LabCaptureSubmittedMsg:
 			return m.handleLabCaptureSubmitted(msg)
@@ -1485,6 +1500,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case labSessionStartedMsg:
 		return m.handleLabSessionStarted(msg)
+
+	case labPublishPlanMsg:
+		return m.handleLabPublishPlan(msg)
+
+	case labPublishedMsg:
+		return m.handleLabPublished(msg)
+
+	case labEditorClosedMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("The editor exited with an error: %v", msg.err)
+			return m, tea.Batch(clearErrorCmd(), loadLabArtifactsCmd(m.RepoPath, msg.entryID))
+		}
+		return m, loadLabArtifactsCmd(m.RepoPath, msg.entryID)
 
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
@@ -3213,6 +3241,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
 	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabEnd,
+		modal.ContextActionLabPublish,
 		modal.ContextActionLabEdit, modal.ContextActionLabArchive,
 		modal.ContextActionLabRestore, modal.ContextActionLabDelete:
 		return m.handleLabAction(action)

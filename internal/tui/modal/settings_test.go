@@ -19,6 +19,7 @@ const (
 	githubSection    = 1
 	worktreesSection = 2
 	agentsSection    = 3
+	labSection       = 4
 )
 
 // newTestCfg returns a minimal *domain.Config for testing.
@@ -109,7 +110,7 @@ func TestSettingsModal_SectionNavigation(t *testing.T) {
 	assert.Equal(t, githubSection, m.activeSection)
 	m, _ = sendKey(m, tea.KeyShiftTab)
 	m, _ = sendKey(m, tea.KeyShiftTab)
-	assert.Equal(t, agentsSection, m.activeSection, "shift+tab wraps to the last section")
+	assert.Equal(t, labSection, m.activeSection, "shift+tab wraps to the last section")
 	m, _ = sendKey(m, tea.KeyTab)
 	assert.Equal(t, appearanceSection, m.activeSection, "tab wraps to the first section")
 
