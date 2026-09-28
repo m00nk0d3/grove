@@ -661,16 +661,19 @@ func loadLabsFromJSON(repoPath string) ([]domain.LabEntry, error) {
 // cycleLabFilterToAll sets the lab filter to show all entries.
 func (m *Model) cycleLabFilterToAll() {
 	m.labFilter = domain.LabFilterAll
+	m.selectedLabIdx = 0
 }
 
 // cycleLabFilterToIdea sets the lab filter to show only idea entries.
 func (m *Model) cycleLabFilterToIdea() {
 	m.labFilter = domain.LabFilterIdea
+	m.selectedLabIdx = 0
 }
 
 // cycleLabFilterToBug sets the lab filter to show only bug entries.
 func (m *Model) cycleLabFilterToBug() {
 	m.labFilter = domain.LabFilterBug
+	m.selectedLabIdx = 0
 }
 
 // debouncedRenderCmd schedules a debouncedRenderMsg after delay.
@@ -710,6 +713,10 @@ const (
 	viewPRs                         // Shows the GitHub pull requests list
 	viewLab                         // Shows the Lab view for ideas/bugs
 )
+
+// lastNavView is the last view reachable from the navigation rail. Rail rows
+// map to views by position; rows after it are actions such as settings.
+const lastNavView = viewLab
 
 type dashboardTab int
 
@@ -1003,11 +1010,21 @@ func (m *Model) heightOrDefault() int {
 }
 
 func (m *Model) handleNavClick(msg tea.MouseMsg, layout mouseUILayout) (tea.Model, tea.Cmd) {
+	panelHeight := 0
+	if h := m.heightOrDefault(); h > fixedChromeRows {
+		panelHeight = h - fixedChromeRows
+	}
+	start, count := navWindow(panelHeight, m.view)
 	row := msg.Y - layout.panelTop - 1
-	if row < 0 || row >= len(navItems) {
+	if row < 0 || row >= count {
 		return m, nil
 	}
+	row += start
 	m.focused = panelNav
+	if row > int(lastNavView) {
+		m.activeModal = modal.NewSettingsModal(m.Config, data.DefaultConfigPath())
+		return m, nil
+	}
 	m.view = activeView(row)
 	m.ctxScrollOffset = 0
 	m.contextActionIdx = 0
@@ -1497,21 +1514,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, cmds
 			case "l", "L":
-				if len(m.labs) == 0 {
-					m.activeModal = modal.NewComposeModal(
-						modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
-						false, // isEditMode
-					)
-				} else if _, ok := m.selectedLab(); ok {
-					// Open view lab with pre-selected entry
-					m.view = viewLab
-					m.clampSelectedLabIdx()
-				} else {
-					m.activeModal = modal.NewComposeModal(
-						modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
-						false, // isEditMode
-					)
-				}
+				m.view = viewLab
+				m.clampSelectedLabIdx()
+				m.ctxScrollOffset = 0
+				m.contextActionIdx = 0
 			case "n":
 				m.nextPage()
 				return m, nil
@@ -3686,23 +3692,27 @@ func (m *Model) clampPRIdx() {
 	}
 }
 
+// selectedLab returns the entry under the Lab cursor. selectedLabIdx indexes
+// the entries visible under the active filter, matching what renderLab draws.
 func (m *Model) selectedLab() (*domain.LabEntry, bool) {
-	if len(m.labs) == 0 {
+	visible := filterLabs(m.labs, m.labFilter)
+	if len(visible) == 0 {
 		return nil, false
 	}
-	if m.selectedLabIdx < 0 || m.selectedLabIdx >= len(m.labs) {
+	if m.selectedLabIdx < 0 || m.selectedLabIdx >= len(visible) {
 		m.selectedLabIdx = 0
 	}
-	return &m.labs[m.selectedLabIdx], true
+	return &visible[m.selectedLabIdx], true
 }
 
 func (m *Model) clampSelectedLabIdx() {
-	if len(m.labs) == 0 {
+	visible := filterLabs(m.labs, m.labFilter)
+	if len(visible) == 0 {
 		m.selectedLabIdx = 0
 		return
 	}
-	if m.selectedLabIdx >= len(m.labs) {
-		m.selectedLabIdx = len(m.labs) - 1
+	if m.selectedLabIdx >= len(visible) {
+		m.selectedLabIdx = len(visible) - 1
 	}
 }
 
@@ -3745,7 +3755,7 @@ func (m *Model) moveDown() {
 	switch m.focused {
 	case panelNav:
 		n := int(m.view) + 1
-		if n > int(viewPRs) {
+		if n > int(lastNavView) {
 			n = int(viewDashboard)
 		}
 		m.view = activeView(n)
@@ -3778,6 +3788,11 @@ func (m *Model) moveDown() {
 				m.selectedPRIdx++
 				m.ctxScrollOffset = 0
 			}
+		case viewLab:
+			if m.selectedLabIdx < len(filterLabs(m.labs, m.labFilter))-1 {
+				m.selectedLabIdx++
+				m.ctxScrollOffset = 0
+			}
 		default:
 			if m.selectedIdx < len(m.Worktrees)-1 {
 				m.selectedIdx++
@@ -3796,7 +3811,7 @@ func (m *Model) moveUp() {
 	case panelNav:
 		n := int(m.view) - 1
 		if n < 0 {
-			n = int(viewPRs)
+			n = int(lastNavView)
 		}
 		m.view = activeView(n)
 	case panelCtx:
@@ -3826,6 +3841,11 @@ func (m *Model) moveUp() {
 		case viewPRs:
 			if m.selectedPRIdx > 0 {
 				m.selectedPRIdx--
+				m.ctxScrollOffset = 0
+			}
+		case viewLab:
+			if m.selectedLabIdx > 0 {
+				m.selectedLabIdx--
 				m.ctxScrollOffset = 0
 			}
 		default:

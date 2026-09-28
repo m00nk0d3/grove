@@ -64,6 +64,7 @@ var navItems = []navItem{
 	{"W", "WORKTREES"},
 	{"I", "ISSUES"},
 	{"P", "PRs"},
+	{"L", "LAB"},
 	{"T", "SETTINGS"},
 }
 
@@ -923,9 +924,21 @@ func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSes
 	return theme.RenderPanel(theme.GetStyle("header").Width(innerWidth), text)
 }
 
+// navWindow returns the range of navItems the rail draws. When the panel is too
+// short for every item, the window scrolls so the active view stays visible.
+// panelHeight of 0 means unconstrained.
+func navWindow(panelHeight int, view activeView) (start, count int) {
+	if panelHeight <= 0 || panelHeight >= len(navItems) {
+		return 0, len(navItems)
+	}
+	return listWindow(panelHeight, 1, len(navItems), int(view))
+}
+
 func renderNavRail(theme styles.Theme, panelHeight int, view activeView, focused bool) string {
 	var b strings.Builder
-	for i, item := range navItems {
+	start, count := navWindow(panelHeight, view)
+	for i := start; i < start+count; i++ {
+		item := navItems[i]
 		cursor := "  "
 		if activeView(i) == view {
 			cursor = "> "
@@ -1247,6 +1260,22 @@ func renderContextActions(theme styles.Theme, actions []contextActionOption, act
 	return b.String()
 }
 
+// filterLabs returns the entries visible under filter, in their stored order.
+func filterLabs(labs []domain.LabEntry, filter domain.LabFilter) []domain.LabEntry {
+	switch filter {
+	case domain.LabFilterIdea, domain.LabFilterBug:
+		var filtered []domain.LabEntry
+		for _, lab := range labs {
+			if lab.Kind == string(filter) {
+				filtered = append(filtered, lab)
+			}
+		}
+		return filtered
+	default:
+		return labs
+	}
+}
+
 func renderLab(labs []domain.LabEntry, selectedIdx int, filter domain.LabFilter, worktrees []domain.Worktree, theme styles.Theme, listInner, panelHeight int, focused bool) string {
 	const (
 		cursorW      = 2
@@ -1257,18 +1286,7 @@ func renderLab(labs []domain.LabEntry, selectedIdx int, filter domain.LabFilter,
 		fixedTotal   = cursorW + idW + titleW + kindW + contentW // 92
 	)
 
-	// Filter entries based on the active filter
-	var filtered []domain.LabEntry
-	switch filter {
-	case domain.LabFilterAll:
-		filtered = labs
-	case domain.LabFilterIdea, domain.LabFilterBug:
-		for _, lab := range labs {
-			if lab.Kind == string(filter) {
-				filtered = append(filtered, lab)
-			}
-		}
-	}
+	filtered := filterLabs(labs, filter)
 
 	bodyWidth := listInner - scrollbarWidth(len(filtered), len(filtered))
 	nameW := bodyWidth - fixedTotal

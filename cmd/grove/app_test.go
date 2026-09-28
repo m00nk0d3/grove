@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1101,8 +1102,10 @@ func TestModel_JK_NavFocused_ChangesView(t *testing.T) {
 	}{
 		{name: "j from worktrees → issues", key: 'j', initialView: viewWorktrees, wantView: viewIssues},
 		{name: "j from issues → PRs", key: 'j', initialView: viewIssues, wantView: viewPRs},
-		{name: "j from PRs wraps → dashboard", key: 'j', initialView: viewPRs, wantView: viewDashboard},
-		{name: "k from dashboard → PRs", key: 'k', initialView: viewDashboard, wantView: viewPRs},
+		{name: "j from PRs → lab", key: 'j', initialView: viewPRs, wantView: viewLab},
+		{name: "j from lab wraps → dashboard", key: 'j', initialView: viewLab, wantView: viewDashboard},
+		{name: "k from dashboard wraps → lab", key: 'k', initialView: viewDashboard, wantView: viewLab},
+		{name: "k from lab → PRs", key: 'k', initialView: viewLab, wantView: viewPRs},
 		{name: "k from PRs → issues", key: 'k', initialView: viewPRs, wantView: viewIssues},
 		{name: "k from issues → worktrees", key: 'k', initialView: viewIssues, wantView: viewWorktrees},
 		{name: "k from worktrees wraps → dashboard", key: 'k', initialView: viewWorktrees, wantView: viewDashboard},
@@ -1677,6 +1680,131 @@ func TestModel_MouseClickNavigatesViews(t *testing.T) {
 	model := updated.(*Model)
 	assert.Equal(t, viewIssues, model.view)
 	assert.Equal(t, panelNav, model.focused)
+}
+
+func TestModel_MouseClickNavigatesToLab(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      2,
+		Y:      layout.panelTop + 1 + int(viewLab),
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.Equal(t, viewLab, model.view)
+	assert.Nil(t, model.activeModal)
+}
+
+// The settings row follows the views on the rail; clicking it opens settings
+// rather than switching to whichever view shares its position.
+func TestModel_MouseClickSettingsRowOpensSettings(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	m.view = viewWorktrees
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      2,
+		Y:      layout.panelTop + 1 + int(lastNavView) + 1,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.IsType(t, &modal.SettingsModal{}, model.activeModal)
+	assert.Equal(t, viewWorktrees, model.view, "the settings row must not change the view")
+}
+
+// On a terminal too short for the whole rail, the rail scrolls to keep the
+// active view visible, and a click lands on the item drawn at that row.
+func TestModel_NavRailScrollsOnShortTerminal(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = fixedChromeRows + 3
+	m.view = viewLab
+
+	start, count := navWindow(m.height-fixedChromeRows, m.view)
+	require.Equal(t, 3, count)
+	require.LessOrEqual(t, start, int(viewLab))
+	require.Greater(t, start+count, int(viewLab), "the active view must be inside the window")
+
+	rendered := m.View()
+	assert.Contains(t, rendered, "> L: LAB")
+	assert.LessOrEqual(t, strings.Count(rendered, "\n")+1, m.height)
+
+	layout := m.mouseLayout()
+	updated, _ := m.Update(tea.MouseMsg{
+		X:      2,
+		Y:      layout.panelTop + 1, // first drawn row
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	assert.Equal(t, activeView(start), updated.(*Model).view)
+}
+
+func TestModel_L_KeyOpensLabTabWhenEmpty(t *testing.T) {
+	m := NewModel()
+	m.view = viewPRs
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	model := updated.(*Model)
+	assert.Equal(t, viewLab, model.view)
+	assert.Nil(t, model.activeModal, "an empty Lab shows its tab rather than the compose modal")
+}
+
+func TestModel_LabListNavigationMovesLabSelection(t *testing.T) {
+	m := NewModel()
+	m.view = viewLab
+	m.focused = panelList
+	m.labs = []domain.LabEntry{
+		{ID: "a", Kind: "idea", Title: "A", Content: "a"},
+		{ID: "b", Kind: "bug", Title: "B", Content: "b"},
+		{ID: "c", Kind: "idea", Title: "C", Content: "c"},
+	}
+	m.Worktrees = []domain.Worktree{{Path: "/w1"}, {Path: "/w2"}}
+
+	m.moveDown()
+	m.moveDown()
+	m.moveDown() // stops at the last entry
+	selected, ok := m.selectedLab()
+	require.True(t, ok)
+	assert.Equal(t, "c", selected.ID)
+	assert.Equal(t, 0, m.selectedIdx, "Lab navigation must not move the worktree cursor")
+
+	m.moveUp()
+	selected, _ = m.selectedLab()
+	assert.Equal(t, "b", selected.ID)
+}
+
+// The cursor indexes the entries visible under the active filter, so the entry
+// acted on is the one drawn as selected.
+func TestModel_SelectedLabFollowsFilter(t *testing.T) {
+	m := NewModel()
+	m.view = viewLab
+	m.focused = panelList
+	m.labs = []domain.LabEntry{
+		{ID: "idea-1", Kind: "idea", Title: "I1", Content: "x"},
+		{ID: "bug-1", Kind: "bug", Title: "B1", Content: "x"},
+		{ID: "idea-2", Kind: "idea", Title: "I2", Content: "x"},
+		{ID: "bug-2", Kind: "bug", Title: "B2", Content: "x"},
+	}
+	m.selectedLabIdx = 2
+
+	m.cycleLabFilterToBug()
+	selected, ok := m.selectedLab()
+	require.True(t, ok)
+	assert.Equal(t, "bug-1", selected.ID, "changing the filter resets the cursor to the first visible entry")
+
+	m.moveDown()
+	m.moveDown() // stops at the last visible bug
+	selected, _ = m.selectedLab()
+	assert.Equal(t, "bug-2", selected.ID)
 }
 
 func TestModel_MouseClickSwitchesDashboardTabs(t *testing.T) {
@@ -4387,9 +4515,9 @@ func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
 		expectedAfterDown activeView // expected after moveDown from initial state
 	}{
 		{
-			name:              "from dashboard up goes to PRs, down goes to worktrees",
+			name:              "from dashboard up wraps to lab, down goes to worktrees",
 			initialView:       viewDashboard,
-			expectedAfterUp:   viewPRs,
+			expectedAfterUp:   viewLab,
 			expectedAfterDown: viewWorktrees,
 		},
 		{
@@ -4405,9 +4533,15 @@ func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
 			expectedAfterDown: viewPRs,
 		},
 		{
-			name:              "from PRs up goes to issues, down wraps to dashboard",
+			name:              "from PRs up goes to issues, down goes to lab",
 			initialView:       viewPRs,
 			expectedAfterUp:   viewIssues,
+			expectedAfterDown: viewLab,
+		},
+		{
+			name:              "from lab up goes to PRs, down wraps to dashboard",
+			initialView:       viewLab,
+			expectedAfterUp:   viewPRs,
 			expectedAfterDown: viewDashboard,
 		},
 	}
