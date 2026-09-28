@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,6 +116,7 @@ func shapedEntry(t *testing.T, store *data.LabStore, approved bool) domain.LabEn
 	t.Helper()
 	e := domain.NewLabEntry(domain.LabKindBug, "Sync stalls", time.Now())
 	e.Mode, e.Status = domain.LabModeShape, domain.LabStatusShaping
+	e.Runs = []string{"run-1"}
 	require.NoError(t, os.MkdirAll(store.ArtifactsDir(e.ID), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(store.ArtifactsDir(e.ID), "issue.md"), []byte(shapedDraft), 0o644))
 	if approved {
@@ -177,7 +179,7 @@ func TestLabPublish_PreviewThenPublish(t *testing.T) {
 	require.NotNil(t, stored[0].Issues.Issue)
 	assert.Equal(t, 251, *stored[0].Issues.Issue)
 	assert.Equal(t, domain.LabStatusPublished, stored[0].Status)
-	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "session.close"), "the session is ended")
+	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "run-1.close"), "the session is ended")
 	assert.NoFileExists(t, filepath.Join(store.EntryDir(e.ID), "session.lock"))
 	assert.Equal(t, labTabPublished, m.lab.tab)
 	assert.Contains(t, m.statusMsg, "as #251 in m00nk0d3/grove")
@@ -382,6 +384,7 @@ func grilledEntry(t *testing.T, store *data.LabStore, approveTickets bool) domai
 	t.Helper()
 	e := domain.NewLabEntry(domain.LabKindIdea, "Offline mode", time.Now())
 	e.Mode, e.Status = domain.LabModeGrill, domain.LabStatusTicketed
+	e.Runs = []string{"run-1"}
 	files := map[string]string{
 		"spec.md":                grilledSpec,
 		"tickets.json":           grilledTickets,
@@ -467,7 +470,7 @@ func TestLabPublishEpic_EpicThenTicketsThenLinksThenBoard(t *testing.T) {
 	require.NotNil(t, got.Issues.Epic)
 	assert.Equal(t, 251, *got.Issues.Epic)
 	assert.Equal(t, []int{252, 253, 254}, got.Issues.Tickets)
-	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "session.close"))
+	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "run-1.close"))
 	assert.Contains(t, m.statusMsg, `Published epic "Offline mode for the dashboard" as #251 with 3 tickets`)
 }
 
@@ -549,4 +552,91 @@ func TestLabPublishRequires(t *testing.T) {
 	}
 	assert.Equal(t, []string{"issue.md"}, labPublishRequires(domain.LabEntry{Mode: domain.LabModeShape, Status: domain.LabStatusShaping}))
 	assert.Nil(t, labPublishRequires(domain.LabEntry{Mode: domain.LabModeShape, Status: domain.LabStatusShaping, Archived: true}))
+}
+
+func TestLab_EscalateShapingBugHandsOverToGrill(t *testing.T) {
+	m, store, starter, e := shapeModel(t)
+	e.Mode, e.Status, e.Runs = domain.LabModeShape, domain.LabStatusShaping, []string{"run-1"}
+	require.NoError(t, store.Put(e))
+	m.lab.entries, _ = store.Load()
+	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowBlocked}))
+	m.lab.setTab(labTabActive)
+
+	assert.Contains(t, labelsOf(labContextActions(m.lab)), "Escalate to grill")
+	updated, cmd := m.handleLabAction(modal.ContextActionLabEscalate)
+	updated, _ = updated.(*Model).Update(cmd())
+	m = updated.(*Model)
+
+	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "run-1.close"), "the shape session is ended")
+	require.Len(t, starter.requests, 1)
+	assert.Equal(t, "grill", starter.requests[0].Kind)
+	stored, _ := store.Load()
+	assert.Equal(t, domain.LabModeGrill, stored[0].Mode)
+	assert.Equal(t, domain.LabStatusGrilling, stored[0].Status)
+	assert.Equal(t, []string{"run-1", "run-shape-1"}, stored[0].Runs)
+	assert.Equal(t, domain.LabKindBug, stored[0].Kind, "it is still the bug it was")
+}
+
+func TestLab_EscalatePublishedBugKeepsItsIssue(t *testing.T) {
+	m, store, starter, e := shapeModel(t)
+	bug := 240
+	e.Mode, e.Status, e.Runs = domain.LabModeShape, domain.LabStatusPublished, []string{"run-1"}
+	e.Issues.Issue = &bug
+	require.NoError(t, store.Put(e))
+	m.lab.entries, _ = store.Load()
+	m.lab.setTab(labTabPublished)
+
+	updated, cmd := m.handleLabAction(modal.ContextActionLabEscalate)
+	updated.(*Model).Update(cmd())
+
+	require.Len(t, starter.requests, 1)
+	stored, _ := store.Load()
+	assert.Equal(t, domain.LabStatusGrilling, stored[0].Status)
+	require.NotNil(t, stored[0].Issues.Issue)
+	assert.Equal(t, 240, *stored[0].Issues.Issue)
+}
+
+func TestLabView_CanEscalateOnlyShapedBugs(t *testing.T) {
+	v := newLabView()
+	for _, tc := range []struct {
+		e    domain.LabEntry
+		want bool
+	}{
+		{domain.LabEntry{Kind: domain.LabKindBug, Mode: domain.LabModeShape, Status: domain.LabStatusShaping}, true},
+		{domain.LabEntry{Kind: domain.LabKindBug, Mode: domain.LabModeShape, Status: domain.LabStatusPublished}, true},
+		{domain.LabEntry{Kind: domain.LabKindBug, Status: domain.LabStatusDraft}, false},
+		{domain.LabEntry{Kind: domain.LabKindBug, Mode: domain.LabModeGrill, Status: domain.LabStatusGrilling}, false},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Mode: domain.LabModeGrill, Status: domain.LabStatusGrilling}, false},
+		{domain.LabEntry{Kind: domain.LabKindBug, Mode: domain.LabModeShape, Status: domain.LabStatusShaping, Archived: true}, false},
+	} {
+		assert.Equal(t, tc.want, v.canEscalate(tc.e), "%s %s %s", tc.e.Kind, tc.e.Mode, tc.e.Status)
+	}
+}
+
+func TestLabPublishEpic_EscalatedBugBecomesSubIssue(t *testing.T) {
+	gh := &fakeGitHub{}
+	withFakeGitHub(t, gh)
+	store := data.NewLabStore(withLabCommonDir(t))
+	e := grilledEntry(t, store, true)
+	bug := 240
+	e.Kind, e.Issues.Issue = domain.LabKindBug, &bug
+	require.NoError(t, store.Put(e))
+	m := newLabModel(t)
+	m.lab.entries, _ = store.Load()
+	m.lab.setTab(labTabActive)
+
+	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
+	m = step(t, updated.(*Model), cmd)
+	preview := m.activeModal.(*modal.LabPublishModal)
+	preview.SetWidth(140)
+	assert.Contains(t, preview.View(), "Bug #240, which this grew out of, becomes a sub-issue of the epic")
+
+	updated, cmd = m.publishLabEntry(modal.LabPublishConfirmedMsg{EntryID: e.ID})
+	m = step(t, updated.(*Model), cmd)
+	require.Empty(t, m.statusErr)
+
+	assert.True(t, strings.HasPrefix(gh.bodies[0], "_Grew out of bug #240._"), "the epic says where it came from")
+	assert.Equal(t, append(append([]string{}, wantEpicLinks...), "#240 ⊂ #251"), gh.links, "the bug is linked after the tickets")
+	stored, _ := store.Load()
+	assert.True(t, stored[0].Issues.BugLinked)
 }

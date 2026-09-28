@@ -1192,6 +1192,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case modal.LabCaptureSubmittedMsg:
 			return m.handleLabCaptureSubmitted(msg)
+		case modal.LabArchiveConfirmedMsg:
+			return m.handleLabArchiveConfirmed(msg)
 		case modal.LabDeleteConfirmedMsg:
 			return m.handleLabDeleteConfirmed(msg)
 		case modal.SettingsSavedMsg:
@@ -1522,6 +1524,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusErr = msg.labsErr.Error()
 			} else {
 				m.lab.entries = msg.labs
+				m.lab.locks = msg.labLocks
 				m.lab.clamp()
 			}
 			// Always use the main worktree (first entry) as the canonical repo path
@@ -1947,6 +1950,18 @@ func (m *Model) renderView() string {
 // using the gh CLI. Returns nil when in viewWorktrees or when the relevant list is empty.
 func (m *Model) openInBrowserCmd() tea.Cmd {
 	switch m.view {
+	case viewLab:
+		e, ok := m.lab.selected()
+		if !ok {
+			return nil
+		}
+		num := labPrimaryIssue(e)
+		if num == nil {
+			return nil
+		}
+		cmd := exec.Command("gh", "issue", "view", fmt.Sprintf("%d", *num), "--web")
+		cmd.Dir = m.RepoPath
+		return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
 	case viewIssues:
 		if len(m.issues) == 0 || m.selectedIssueIdx >= len(m.issues) {
 			return nil
@@ -2914,6 +2929,7 @@ type worktreesRefreshedMsg struct {
 	worktrees []domain.Worktree
 	labs      []domain.LabEntry
 	labsErr   error
+	labLocks  map[string]data.LabLockOwner
 	err       error
 }
 
@@ -2927,6 +2943,9 @@ func (m *Model) refreshWorktreesCmd() tea.Cmd {
 		msg := worktreesRefreshedMsg{worktrees: worktrees, err: err}
 		if err == nil {
 			msg.labs, msg.labsErr = loadLabs(repoPath)
+			if store, err := labStoreFor(repoPath); err == nil {
+				msg.labLocks, _ = store.Locks()
+			}
 		}
 		return msg
 	}
@@ -3241,7 +3260,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
-	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEnd,
+	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEscalate, modal.ContextActionLabOpenIssue, modal.ContextActionLabClearLock, modal.ContextActionLabEnd,
 		modal.ContextActionLabPublish,
 		modal.ContextActionLabEdit, modal.ContextActionLabArchive,
 		modal.ContextActionLabRestore, modal.ContextActionLabDelete:

@@ -52,6 +52,9 @@ type LabIssues struct {
 	// key as they are made, so an interrupted publication resumes where it
 	// stopped instead of creating or linking anything twice.
 	Published map[string]LabPublishedTicket `json:"published,omitempty"`
+	// BugLinked records that the issue of a bug escalated to a grill has been
+	// made a sub-issue of the epic that grew out of it.
+	BugLinked bool `json:"bug_linked,omitempty"`
 }
 
 // LabPublishedTicket is the publication progress of one ticket.

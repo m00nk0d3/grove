@@ -42,15 +42,18 @@ export interface LabPaths {
   artifactsDir: string;
   /** The agent writes its progress marker here, one word. */
   stageFile: string;
-  /** Grove writes this file to end the session. */
+  /**
+   * Grove writes this file to end the session. It is named for the run, so
+   * ending one session never ends, or is undone by, another of the same entry.
+   */
   closeFile: string;
 }
 
 const ENTRY_ID = /^[A-Za-z0-9_-]+$/;
 
-export function labPaths(commonDir: string, entryId: string): LabPaths {
-  if (!ENTRY_ID.test(entryId)) {
-    throw new Error(`Invalid Lab entry ID: ${entryId}`);
+export function labPaths(commonDir: string, entryId: string, runId = "session"): LabPaths {
+  if (!ENTRY_ID.test(entryId) || !ENTRY_ID.test(runId)) {
+    throw new Error(`Invalid Lab entry or run ID: ${entryId}, ${runId}`);
   }
   const labDir = path.join(commonDir, "grove-lab");
   const entryDir = path.join(labDir, entryId);
@@ -59,7 +62,7 @@ export function labPaths(commonDir: string, entryId: string): LabPaths {
     entryDir,
     artifactsDir: path.join(entryDir, "artifacts"),
     stageFile: path.join(entryDir, "stage"),
-    closeFile: path.join(entryDir, "session.close"),
+    closeFile: path.join(entryDir, `${runId}.close`),
   };
 }
 
@@ -161,6 +164,7 @@ export function buildGrillPrompt(
   repo: string,
   paths: LabPaths,
   skillsDir: string,
+  shapedReport?: string,
 ): string {
   const skill = (...parts: string[]) => path.join(skillsDir, ...parts);
   const artifact = (...parts: string[]) => path.join(paths.artifactsDir, ...parts);
@@ -175,6 +179,15 @@ export function buildGrillPrompt(
     entry.text,
     ">>>",
     "",
+    ...(shapedReport
+      ? [
+          "This entry began as a bug and was shaped into the report below. It turned out bigger than one issue; start the interview from what the report already establishes rather than from a blank page.",
+          "<<<",
+          shapedReport.trim(),
+          ">>>",
+          "",
+        ]
+      : []),
     "Work through three skills, in order, as one continuous conversation with the user in this pane. When you reach each one, read its files in full and follow them, except where the Grove rules below say otherwise.",
     "",
     "1. Interview (grill-with-docs) — follow both:",
@@ -387,7 +400,8 @@ function readStageFile(file: string): string {
 
 async function main(kind: LabSessionKind, entryId: string): Promise<void> {
   const repo = process.cwd();
-  const paths = labPaths(gitCommonDir(repo), entryId);
+  const runId = process.env.GROVE_WORKFLOW_RUN_ID ?? `lab-${process.pid}`;
+  const paths = labPaths(gitCommonDir(repo), entryId, runId);
   const entry = readLabEntry(paths, entryId);
   fs.mkdirSync(paths.artifactsDir, { recursive: true });
   fs.rmSync(paths.closeFile, { force: true });
@@ -401,7 +415,7 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
   const promptText =
     kind === "shape"
       ? buildShapePrompt(entry, repo, paths)
-      : buildGrillPrompt(entry, repo, paths, bundledSkillsDir());
+      : buildGrillPrompt(entry, repo, paths, bundledSkillsDir(), readShapedReport(paths));
   const assignmentPath = path.join(paths.entryDir, "assignment.md");
   fs.writeFileSync(assignmentPath, promptText, "utf8");
 
@@ -471,4 +485,14 @@ if (isEntrypoint) {
     console.error(`\x1b[31m[Lab]\x1b[0m ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   });
+}
+
+/** The shaped report of a bug escalated to a grill, if it has one. */
+function readShapedReport(paths: LabPaths): string | undefined {
+  try {
+    const report = fs.readFileSync(path.join(paths.artifactsDir, "issue.md"), "utf8");
+    return report.trim() === "" ? undefined : report;
+  } catch {
+    return undefined;
+  }
 }

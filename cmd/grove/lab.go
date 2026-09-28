@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -53,6 +54,8 @@ type labView struct {
 	// with mission control state. An entry's session state is read from its
 	// runs here, never stored on the entry.
 	runs map[string]labRun
+	// locks are the entries' held session locks, by entry ID.
+	locks map[string]data.LabLockOwner
 }
 
 // labRun is a Sandcastle run as the Lab shows it.
@@ -217,10 +220,13 @@ func (v *labView) selectID(id string) {
 // selectID, when set, is the entry the list should move to; status is the
 // message to show.
 type labsLoadedMsg struct {
-	entries  []domain.LabEntry
-	selectID string
-	status   string
-	err      error
+	// locks, when locksLoaded, are the entries' held session locks.
+	locks       map[string]data.LabLockOwner
+	locksLoaded bool
+	entries     []domain.LabEntry
+	selectID    string
+	status      string
+	err         error
 }
 
 // labStoreFor returns the Lab store of the repository at repoPath.
@@ -252,7 +258,8 @@ func labChangeCmd(repoPath, selectID, status string, change func(*data.LabStore)
 			return labsLoadedMsg{err: err}
 		}
 		entries, err := store.Load()
-		return labsLoadedMsg{entries: entries, selectID: selectID, status: status, err: err}
+		locks, lockErr := store.Locks()
+		return labsLoadedMsg{entries: entries, locks: locks, locksLoaded: lockErr == nil, selectID: selectID, status: status, err: err}
 	}
 }
 
@@ -263,6 +270,9 @@ func (m *Model) handleLabsLoaded(msg labsLoadedMsg) (tea.Model, tea.Cmd) {
 		return m, clearErrorCmd()
 	}
 	m.lab.entries = msg.entries
+	if msg.locksLoaded {
+		m.lab.locks = msg.locks
+	}
 	if msg.selectID != "" {
 		m.lab.selectID(msg.selectID)
 	} else {
@@ -336,6 +346,9 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 		m.statusMsg = "Archived — restore it from the Actions panel to continue"
 		return m, clearMsgCmd()
 	}
+	if e.Status == domain.LabStatusPublished {
+		return m.openLabIssue(e)
+	}
 	// A draft waiting for review is reviewed in Grove, not in the pane.
 	if labPublishRequires(e) != nil && m.lab.draftReady(e) {
 		return m.openLabInspectorOnArtifacts()
@@ -375,6 +388,9 @@ func labContextActions(v labView) []contextActionOption {
 		}
 		actions = append(actions, contextActionOption{icon: "◇", label: label, action: modal.ContextActionLabShape})
 	}
+	if v.canEscalate(e) {
+		actions = append(actions, contextActionOption{icon: "⇪", label: "Escalate to grill", action: modal.ContextActionLabEscalate})
+	}
 	if v.canGrill(e) {
 		label := "Grill"
 		if e.Status != domain.LabStatusDraft {
@@ -382,9 +398,18 @@ func labContextActions(v labView) []contextActionOption {
 		}
 		actions = append(actions, contextActionOption{icon: "✦", label: label, action: modal.ContextActionLabGrill})
 	}
+	if labPrimaryIssue(e) != nil {
+		actions = append(actions,
+			contextActionOption{icon: "↵", label: "Open in Issues", action: modal.ContextActionLabOpenIssue},
+			contextActionOption{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
+		)
+	}
 	actions = append(actions, contextActionOption{icon: "◎", label: "Inspect", action: modal.ContextActionLabInspect})
 	if v.hasLiveSession(e) {
 		actions = append(actions, contextActionOption{icon: "■", label: "End session", action: modal.ContextActionLabEnd})
+	}
+	if owner, ok := v.foreignLock(e); ok {
+		actions = append(actions, contextActionOption{icon: "⊘", label: "Clear lock from " + owner.Host, action: modal.ContextActionLabClearLock})
 	}
 	switch {
 	case e.Archived:
@@ -420,9 +445,13 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 	switch action {
 	case modal.ContextActionLabInspect:
 		return m.openLabInspector()
+	case modal.ContextActionLabOpenIssue:
+		return m.openLabIssue(e)
+	case modal.ContextActionLabClearLock:
+		return m.clearLabLock(e)
 	case modal.ContextActionLabShape:
 		return m.startLabSession(e, domain.LabModeShape)
-	case modal.ContextActionLabGrill:
+	case modal.ContextActionLabGrill, modal.ContextActionLabEscalate:
 		return m.startLabSession(e, domain.LabModeGrill)
 	case modal.ContextActionLabPublish:
 		return m.prepareLabPublish(e)
@@ -437,6 +466,10 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modal.ContextActionLabArchive, modal.ContextActionLabRestore:
 		archive := action == modal.ContextActionLabArchive
+		if archive && m.lab.hasLiveSession(e) {
+			m.activeModal = modal.NewLabArchiveModal(e)
+			return m, nil
+		}
 		e.Archived = archive
 		e.Updated = time.Now().UTC()
 		verb := "Restored"
@@ -446,6 +479,10 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 		status := fmt.Sprintf("%s %q", verb, e.Title())
 		return m, labChangeCmd(m.RepoPath, e.ID, status, func(s *data.LabStore) error { return s.Put(e) })
 	case modal.ContextActionLabDelete:
+		if m.lab.hasLiveSession(e) {
+			m.statusErr = "End the entry's session before deleting it"
+			return m, clearErrorCmd()
+		}
 		if !e.Deletable() {
 			m.statusErr = "Only drafts and archived entries can be deleted — archive it first"
 			return m, clearErrorCmd()
@@ -586,7 +623,8 @@ var labSessionVerbs = map[domain.LabMode]string{
 // another.
 func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Model, tea.Cmd) {
 	verb := labSessionVerbs[mode]
-	allowed := (mode == domain.LabModeShape && m.lab.canShape(e)) || (mode == domain.LabModeGrill && m.lab.canGrill(e))
+	escalating := mode == domain.LabModeGrill && m.lab.canEscalate(e)
+	allowed := (mode == domain.LabModeShape && m.lab.canShape(e)) || (mode == domain.LabModeGrill && (m.lab.canGrill(e) || escalating))
 	if !allowed {
 		m.statusErr = fmt.Sprintf("A %s session cannot start for this entry now", verb)
 		return m, clearErrorCmd()
@@ -614,6 +652,15 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 		}
 		defer release()
 
+		// Escalating hands the entry from its shape session to a grill. The
+		// shape run is told to close first; its close file is its own, so the
+		// grill that starts next cannot undo it.
+		if escalating && len(e.Runs) > 0 {
+			if err := store.CloseSession(e.ID, e.Runs[len(e.Runs)-1]); err != nil {
+				return fail(err)
+			}
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		workflow, err := starter.StartWorkflow(ctx, sandcastle.StartWorkflowRequest{
@@ -630,7 +677,7 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 		switch {
 		case mode == domain.LabModeShape:
 			e.Status = domain.LabStatusShaping
-		case e.Status == domain.LabStatusDraft || e.Status == domain.LabStatusShaping:
+		case e.Status == domain.LabStatusDraft || e.Status == domain.LabStatusShaping || e.Status == domain.LabStatusPublished:
 			e.Status = domain.LabStatusGrilling
 		}
 		e.Runs = append(e.Runs, firstNonEmptyString(workflow.RunID, workflow.WorkflowID))
@@ -678,7 +725,9 @@ func (m *Model) endLabSession(e domain.LabEntry) (tea.Model, tea.Cmd) {
 		return m, clearErrorCmd()
 	}
 	status := fmt.Sprintf("Ending the session for %q", e.Title())
-	return m, labChangeCmd(m.RepoPath, e.ID, status, func(s *data.LabStore) error { return s.CloseSession(e.ID) })
+	run, _ := m.lab.latestRun(e)
+	runID := firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID)
+	return m, labChangeCmd(m.RepoPath, e.ID, status, func(s *data.LabStore) error { return s.CloseSession(e.ID, runID) })
 }
 
 // draftReady reports whether e's session has finished its draft: its live run
@@ -763,4 +812,97 @@ func (m *Model) syncLabStatusesCmd() tea.Cmd {
 		}
 		return nil
 	})
+}
+
+// canEscalate reports whether e is a bug that turned out bigger than one
+// issue and can be taken into a full grill: one being shaped, or one already
+// published, whose issue then becomes a sub-issue of the epic.
+func (v labView) canEscalate(e domain.LabEntry) bool {
+	if e.Archived || e.Kind != domain.LabKindBug || e.Mode != domain.LabModeShape {
+		return false
+	}
+	return e.Status == domain.LabStatusShaping || e.Status == domain.LabStatusPublished
+}
+
+// handleLabArchiveConfirmed ends a live session and archives its entry.
+func (m *Model) handleLabArchiveConfirmed(msg modal.LabArchiveConfirmedMsg) (tea.Model, tea.Cmd) {
+	m.activeModal = nil
+	e, ok := m.lab.entry(msg.ID)
+	if !ok {
+		return m, nil
+	}
+	var runID string
+	if run, live := m.lab.latestRun(e); live && run.live() {
+		runID = firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID)
+	}
+	e.Archived = true
+	e.Updated = time.Now().UTC()
+	status := fmt.Sprintf("Ended the session and archived %q", e.Title())
+	return m, labChangeCmd(m.RepoPath, e.ID, status, func(s *data.LabStore) error {
+		if runID != "" {
+			if err := s.CloseSession(e.ID, runID); err != nil {
+				return err
+			}
+		}
+		return s.Put(e)
+	})
+}
+
+// labPrimaryIssue returns the issue a published entry is known by: its epic,
+// or the single issue of a shaped bug.
+func labPrimaryIssue(e domain.LabEntry) *int {
+	if e.Issues.Epic != nil {
+		return e.Issues.Epic
+	}
+	return e.Issues.Issue
+}
+
+// openLabIssue shows a published entry's epic or issue in the Issues tab,
+// where an epic's sub-issues are listed beneath it.
+func (m *Model) openLabIssue(e domain.LabEntry) (tea.Model, tea.Cmd) {
+	num := labPrimaryIssue(e)
+	if num == nil {
+		m.statusErr = "This entry has no published issue"
+		return m, clearErrorCmd()
+	}
+	for i, issue := range m.issues {
+		if issue.Number == *num {
+			m.view = viewIssues
+			m.selectedIssueIdx = i
+			m.ctxScrollOffset = 0
+			m.contextActionIdx = 0
+			return m, nil
+		}
+	}
+	m.statusMsg = fmt.Sprintf("#%d is not among the synced issues yet — syncing GitHub", *num)
+	return m, tea.Batch(clearMsgCmd(), m.syncGitHubCmd(true))
+}
+
+// labLocalHost is this machine's name, for telling a lock held here from one
+// held by a Grove elsewhere. Tests replace it.
+var labLocalHost = func() string {
+	host, _ := os.Hostname()
+	return host
+}
+
+// foreignLock returns e's session lock when a Grove on another host holds it.
+// A lock left on this host is taken over automatically, so only another
+// host's lock needs clearing by hand.
+func (v labView) foreignLock(e domain.LabEntry) (data.LabLockOwner, bool) {
+	owner, ok := v.locks[e.ID]
+	if !ok || owner.Host == labLocalHost() {
+		return data.LabLockOwner{}, false
+	}
+	return owner, true
+}
+
+// clearLabLock removes a lock another host's Grove left on e.
+func (m *Model) clearLabLock(e domain.LabEntry) (tea.Model, tea.Cmd) {
+	owner, ok := m.lab.foreignLock(e)
+	if !ok {
+		m.statusErr = "This entry has no lock from another machine"
+		return m, clearErrorCmd()
+	}
+	status := fmt.Sprintf("Cleared the lock held by Grove on %s", owner.Host)
+	return m, labChangeCmd(m.RepoPath, e.ID, status, func(s *data.LabStore) error { return s.ClearEntryLock(e.ID) })
 }

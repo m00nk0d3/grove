@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 )
 
@@ -99,19 +100,47 @@ func readLabLock(path string) (LabLockOwner, error) {
 	return owner, nil
 }
 
-// labSessionCloseName is the file that tells an entry's session to end. The
-// Sandcastle runtime watches for it.
-const labSessionCloseName = "session.close"
-
-// CloseSession tells the entry's session, if one is running, to close its
-// agent pane and finish.
-func (s *LabStore) CloseSession(id string) error {
+// CloseSession tells the entry's session for runID to close its agent pane and
+// finish. Each run watches its own <run-id>.close file, so ending one session
+// never ends another of the same entry, such as the grill an escalated shape
+// hands over to. Closing a run that has already finished does nothing.
+func (s *LabStore) CloseSession(id, runID string) error {
+	if !labIDPattern.MatchString(runID) {
+		return fmt.Errorf("close lab session: invalid run ID %q", runID)
+	}
 	dir := s.EntryDir(id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("close lab session: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, labSessionCloseName), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, runID+".close"), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return fmt.Errorf("close lab session: %w", err)
 	}
 	return nil
+}
+
+// labIDPattern matches the entry and run IDs used in Lab file names.
+var labIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// Locks returns the entries whose session lock is held, by entry ID. A lock is
+// held only while a run starts or an entry is published, so one that stays is
+// usually left by a Grove that stopped part-way.
+func (s *LabStore) Locks() (map[string]LabLockOwner, error) {
+	dirs, err := os.ReadDir(s.dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read lab locks: %w", err)
+	}
+	locks := make(map[string]LabLockOwner)
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		owner, err := readLabLock(filepath.Join(s.dir, d.Name(), labSessionLockName))
+		if err == nil {
+			locks[d.Name()] = owner
+		}
+	}
+	return locks, nil
 }

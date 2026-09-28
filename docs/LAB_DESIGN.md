@@ -47,7 +47,7 @@ of the repository, belongs to no branch, and is never tracked or committed:
       tickets.json           the epic's tickets
       issue.md               a shaped bug report
     stage                    the agent's progress marker
-    session.close            written by Grove to end the session
+    <run-id>.close           written by Grove to end that run's session
     session.lock             held while a run starts or publishing is in progress
 ```
 
@@ -108,9 +108,11 @@ then watches the agent until Grove ends the session:
   ends at `drafted` is a draft waiting for review. Both make the run `blocked`.
   A Herdr `blocked` state is a permission prompt, reported the same way.
 - The session stays open after drafting, so the user can ask for changes in the
-  pane. Grove ends it by writing `<entry-id>/session.close`, after publishing or
-  when the user chooses *End session*; the runtime then closes the pane and
-  finishes the run.
+  pane. Grove ends it by writing `<entry-id>/<run-id>.close`, after publishing,
+  on *End session*, when escalating, or when archiving; the runtime then closes
+  the pane and finishes the run. Each run has its own close file, so a new
+  session of the same entry — the grill an escalation starts — can never undo
+  the close of the one before it.
 
 Conversations with the agent happen only in its Herdr pane. Grove does not read
 from or type into the pane; it links to it.

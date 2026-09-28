@@ -49,7 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   first as native sub-issues with native blocked-by links, all in `Backlog`;
   missing `epic` and `ready-for-agent` labels are created. Every issue and link
   is recorded as it is made, so an interrupted publication finishes on the next
-  attempt without duplicating anything.
+  attempt without duplicating anything. *Escalate to grill* takes a shaped bug
+  into a grilling session seeded with its report; a bug already published
+  becomes a sub-issue of the resulting epic. `Enter` on a published entry opens
+  its epic or issue in the Issues tab, and *Open on GitHub* opens it in the
+  browser. Archiving an entry with a running session asks, then ends it;
+  deleting is refused while one runs. Each run has its own close file, so
+  ending one session can never be undone by the next. A lock left by a Grove on
+  another machine is shown and can be cleared. The unfinished `grilling`
+  workflow kind and its unused runtime module are removed.
 
 - **A live demo on the website** — the site plays a walk through Grove, from
   mission control to starting a workflow, following it in the inspector,

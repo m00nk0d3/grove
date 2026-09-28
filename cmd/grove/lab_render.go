@@ -264,6 +264,9 @@ func renderLabContext(v labView, e domain.LabEntry, width int, now time.Time) st
 	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
 		session += "\nPane: Herdr " + run.paneID + "  (Enter to open)"
 	}
+	if owner, ok := v.locks[e.ID]; ok {
+		session += fmt.Sprintf("\nLocked: by Grove on %s (pid %d) since %s", owner.Host, owner.PID, formatFinishedAt(owner.Since, now))
+	}
 	body := e.Body()
 	if body == "" {
 		body = "(no details)"

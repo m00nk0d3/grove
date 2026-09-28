@@ -139,11 +139,37 @@ issues, then four tabs switched with `Tab` or `1`–`4`:
 Press `c`, choose the kind with `Tab`, and write the entry. The first line is
 its title; anything below is the detail. `Ctrl+S` saves and `Esc` cancels.
 
+### Escalating a bug
+
+A bug that turns out bigger than one issue can be grilled instead: *Escalate
+to grill* ends its shaping session and starts a grilling session that begins
+from the shaped report. It works after the bug is published too — the bug's
+issue is kept, and when the epic is published the bug becomes one of its
+sub-issues and the epic notes that it grew out of it.
+
+### Published entries
+
+`Enter` on a published entry opens its epic, or its issue, in the Issues tab,
+where an epic's sub-issues are listed beneath it; *Open on GitHub* opens it in
+the browser.
+
 ### Archiving and deleting
 
 Archiving moves an entry to the *Archived* tab from any state, and restoring
-returns it unchanged. Drafts and archived entries can be deleted; deleting
-removes the entry and anything drafted for it, after a confirmation.
+returns it unchanged. Archiving an entry whose session is still running asks
+first, then ends the session. Drafts and archived entries can be deleted, but
+not while a session is running; deleting removes the entry and anything drafted
+for it, after a confirmation, and leaves published issues alone.
+
+### Two Groves, one Lab
+
+Starting a session or publishing holds the entry's lock, so a second Grove —
+another terminal, or another machine sharing the repository — refuses with
+*Entry is in use by Grove on host (pid N)* instead of duplicating the work.
+Viewing an entry and opening its pane are never blocked. A lock left by a Grove
+that stopped on this machine is taken over automatically; one left on another
+machine is shown in the entry's context panel and can be removed with *Clear
+lock*.
 
 ---
 

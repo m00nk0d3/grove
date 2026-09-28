@@ -24,8 +24,11 @@ test("Lab paths live under the git common directory and reject escaping IDs", ()
   assert.equal(paths.entryDir, path.join("/repo/.git", "grove-lab", entry.id));
   assert.equal(paths.artifactsDir, path.join(paths.entryDir, "artifacts"));
   assert.equal(paths.stageFile, path.join(paths.entryDir, "stage"));
-  assert.equal(paths.closeFile, path.join(paths.entryDir, "session.close"));
-  assert.throws(() => labPaths("/repo/.git", "../outside"), /Invalid Lab entry ID/);
+  assert.equal(paths.closeFile, path.join(paths.entryDir, "session.close"), "without a run ID the default name is used");
+  assert.equal(labPaths("/repo/.git", entry.id, "run_42").closeFile, path.join(paths.entryDir, "run_42.close"),
+    "each run has its own close file, so ending one session never touches another");
+  assert.throws(() => labPaths("/repo/.git", entry.id, "../x"), /Invalid Lab entry or run ID/);
+  assert.throws(() => labPaths("/repo/.git", "../outside"), /Invalid Lab entry or run ID/);
 });
 
 test("the entry title is its first non-blank line", () => {
@@ -175,4 +178,15 @@ test("the grill prompt points at the bundled skills and overrides where they pub
   for (const stage of ["interview", "spec", "tickets", "drafted"]) {
     assert.match(prompt, new RegExp(`^  ${stage} `, "m"), stage);
   }
+});
+
+test("an escalated bug's grill starts from its shaped report", async () => {
+  const { buildGrillPrompt } = await import("./lab-session.js");
+  const paths = labPaths("/repo/.git", entry.id);
+  const report = "# Sync stalls on token expiry\n\n## Summary\nThe dashboard freezes.";
+  const prompt = buildGrillPrompt(entry, "/repo", paths, "/skills", report);
+  assert.match(prompt, /began as a bug and was shaped into the report below/);
+  assert.ok(prompt.includes(report));
+  assert.ok(prompt.indexOf(report) < prompt.indexOf("Work through three skills"), "the report comes before the skills");
+  assert.doesNotMatch(buildGrillPrompt(entry, "/repo", paths, "/skills"), /began as a bug/);
 });

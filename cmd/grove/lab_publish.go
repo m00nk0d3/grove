@@ -113,6 +113,9 @@ func readLabDraft(store *data.LabStore, e domain.LabEntry) (labDraft, error) {
 			return labDraft{}, err
 		}
 		d.title, d.body = domain.ParseIssueDraft(spec.Body)
+		if e.Issues.Issue != nil {
+			d.body = fmt.Sprintf("_Grew out of bug #%d._\n\n%s", *e.Issues.Issue, d.body)
+		}
 		d.labels = []string{labEpicLabel}
 		hashes = append(hashes, domain.LabContentHash(spec.Body), domain.LabContentHash(tickets.Body))
 		// The epic summarises the approved glossary and decision records, so
@@ -262,6 +265,7 @@ func (m *Model) prepareLabPublish(e domain.LabEntry) (tea.Model, tea.Cmd) {
 				Labels:  d.labels,
 				Board:   -1,
 				Resume:  labResumeNote(e, d),
+				Notes:   labPublishNotes(e),
 			},
 		}
 		for _, t := range d.tickets {
@@ -407,6 +411,18 @@ func (p *labPublication) epic() (int, error) {
 		}
 	}
 
+	// A bug escalated after it was published keeps its issue, which becomes
+	// a sub-issue of the epic it grew into.
+	if bug := p.entry.Issues.Issue; bug != nil && !p.entry.Issues.BugLinked {
+		if err := p.gh.AddSubIssue(p.plan.Repo, epic, *bug); err != nil {
+			return 0, fmt.Errorf("every ticket is linked, but %w — publish again to finish", err)
+		}
+		p.entry.Issues.BugLinked = true
+		if err := p.save(); err != nil {
+			return 0, err
+		}
+	}
+
 	if err := p.place(epic); err != nil {
 		return 0, err
 	}
@@ -507,7 +523,12 @@ func (m *Model) publishLabEntry(msg modal.LabPublishConfirmedMsg) (tea.Model, te
 		if err := pub.save(); err != nil {
 			return done(err, store, "")
 		}
-		return done(store.CloseSession(e.ID), store, status)
+		if len(e.Runs) > 0 {
+			if err := store.CloseSession(e.ID, e.Runs[len(e.Runs)-1]); err != nil {
+				return done(err, store, status)
+			}
+		}
+		return done(nil, store, status)
 	}
 }
 
@@ -627,4 +648,13 @@ func (m *Model) handleLabArtifactReview(msg modal.LabArtifactReviewMsg) (tea.Mod
 		}
 	}
 	return m, nil
+}
+
+// labPublishNotes lists what publishing e does beyond creating what the
+// preview shows.
+func labPublishNotes(e domain.LabEntry) []string {
+	if e.Mode == domain.LabModeGrill && e.Issues.Issue != nil && !e.Issues.BugLinked {
+		return []string{fmt.Sprintf("Bug #%d, which this grew out of, becomes a sub-issue of the epic", *e.Issues.Issue)}
+	}
+	return nil
 }

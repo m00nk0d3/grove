@@ -80,6 +80,21 @@ func TestLabStore_LockEntryReplacesUnreadableLock(t *testing.T) {
 
 func TestLabStore_CloseSessionWritesMarker(t *testing.T) {
 	s := newTestLabStore(t)
-	require.NoError(t, s.CloseSession("e1"))
-	assert.FileExists(t, filepath.Join(s.EntryDir("e1"), labSessionCloseName))
+	require.NoError(t, s.CloseSession("e1", "run_1"))
+	assert.FileExists(t, filepath.Join(s.EntryDir("e1"), "run_1.close"))
+	assert.Error(t, s.CloseSession("e1", "../x"), "a run ID cannot name a file outside the entry")
+}
+
+func TestLabStore_LocksListsHeldLocks(t *testing.T) {
+	s := newTestLabStore(t)
+	locks, err := s.Locks()
+	require.NoError(t, err)
+	assert.Empty(t, locks, "a repository without a Lab has no locks")
+
+	writeLock(t, s, "e1", LabLockOwner{PID: 7, Host: "other", Since: time.Now()})
+	require.NoError(t, os.MkdirAll(s.EntryDir("e2"), 0o755))
+	locks, err = s.Locks()
+	require.NoError(t, err)
+	require.Len(t, locks, 1)
+	assert.Equal(t, "other", locks["e1"].Host)
 }

@@ -538,8 +538,10 @@ func TestLab_EnterOnLiveRunFocusesItsPane(t *testing.T) {
 
 func TestLab_EnterWithoutLiveRunOpensInspector(t *testing.T) {
 	m := newLabModel(t)
-	m.lab.entries = []domain.LabEntry{entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusPublished, "Entry")}
-	m.lab.setTab(labTabPublished)
+	ended := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusSpecced, "Entry")
+	ended.Mode = domain.LabModeGrill
+	m.lab.entries = []domain.LabEntry{ended}
+	m.lab.setTab(labTabActive)
 
 	m, _ = press(t, m, "enter")
 	assert.IsType(t, &modal.LabInspectorModal{}, m.activeModal)
@@ -726,7 +728,7 @@ func TestLab_EndSessionWritesCloseMarker(t *testing.T) {
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabEnd)
 	m = runCmd(t, updated.(*Model), cmd)
-	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "session.close"))
+	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "run-1.close"))
 	assert.Contains(t, m.statusMsg, "Ending the session")
 }
 
@@ -856,4 +858,105 @@ func TestLabReview_ApprovalThatWouldDropContentIsRefused(t *testing.T) {
 	assert.Equal(t, existing, string(kept), "the checkout's glossary is untouched")
 	stored, _ := store.Load()
 	assert.Equal(t, domain.LabReviewDraft, stored[0].ReviewOf(domain.LabArtifact{Path: "CONTEXT.md", Body: draft}), "the approval is not recorded")
+}
+
+func TestLab_EnterOnPublishedEntryOpensItsEpicInIssues(t *testing.T) {
+	m := newLabModel(t)
+	epic := 251
+	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusPublished, "Offline mode")
+	e.Mode, e.Issues.Epic = domain.LabModeGrill, &epic
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.setTab(labTabPublished)
+	m.issues = []domain.Issue{{Number: 240, Title: "Other"}, {Number: 251, Title: "Offline mode"}}
+
+	assert.Contains(t, labelsOf(labContextActions(m.lab)), "Open on GitHub")
+	m, _ = press(t, m, "enter")
+	assert.Equal(t, viewIssues, m.view)
+	assert.Equal(t, 1, m.selectedIssueIdx, "the epic is selected, with its sub-issues beneath it")
+}
+
+func TestLab_PublishedEntryNotYetSyncedSaysSo(t *testing.T) {
+	m := newLabModel(t)
+	issue := 260
+	e := entryAt(time.Now(), "e", domain.LabKindBug, domain.LabStatusPublished, "Sync stalls")
+	e.Mode, e.Issues.Issue = domain.LabModeShape, &issue
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.setTab(labTabPublished)
+
+	updated, _ := m.openLabIssue(e)
+	m = updated.(*Model)
+	assert.Equal(t, viewLab, m.view)
+	assert.Contains(t, m.statusMsg, "#260 is not among the synced issues yet")
+}
+
+func TestLab_ArchivingLiveSessionAsksThenEndsIt(t *testing.T) {
+	m, store, _, e := shapeModel(t)
+	e.Mode, e.Status, e.Runs = domain.LabModeShape, domain.LabStatusShaping, []string{"run-1"}
+	require.NoError(t, store.Put(e))
+	m.lab.entries, _ = store.Load()
+	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowBlocked}))
+	m.lab.setTab(labTabActive)
+
+	updated, _ := m.handleLabAction(modal.ContextActionLabArchive)
+	m = updated.(*Model)
+	require.IsType(t, &modal.LabArchiveModal{}, m.activeModal, "archiving a live session asks first")
+	stored, _ := store.Load()
+	assert.False(t, stored[0].Archived, "nothing changes before confirmation")
+
+	m, cmd := press(t, m, "y")
+	updated, cmd = m.Update(cmd())
+	m = runCmd(t, updated.(*Model), cmd)
+
+	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "run-1.close"))
+	stored, _ = store.Load()
+	assert.True(t, stored[0].Archived)
+	assert.Equal(t, labTabArchived, m.lab.tab)
+}
+
+func TestLab_DeleteRefusedWhileSessionIsLive(t *testing.T) {
+	m := newLabModel(t)
+	e := entryAt(time.Now(), "e", domain.LabKindBug, domain.LabStatusShaping, "Bug")
+	e.Archived, e.Runs = true, []string{"run-1"}
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowRunning}))
+	m.lab.setTab(labTabArchived)
+
+	updated, _ := m.handleLabAction(modal.ContextActionLabDelete)
+	m = updated.(*Model)
+	assert.Nil(t, m.activeModal)
+	assert.Contains(t, m.statusErr, "End the entry's session before deleting it")
+}
+
+func TestLab_ForeignLockIsShownAndCleared(t *testing.T) {
+	commonDir := withLabCommonDir(t)
+	store := data.NewLabStore(commonDir)
+	e := domain.NewLabEntry(domain.LabKindBug, "Sync stalls", time.Now())
+	require.NoError(t, store.Put(e))
+	require.NoError(t, os.MkdirAll(store.EntryDir(e.ID), 0o755))
+	lockPath := filepath.Join(store.EntryDir(e.ID), "session.lock")
+	require.NoError(t, os.WriteFile(lockPath, []byte(`{"pid":42,"host":"build-server","since":"2026-09-28T08:00:00Z"}`), 0o644))
+
+	m := newLabModel(t)
+	m.lab.entries, _ = store.Load()
+	m.lab.locks, _ = store.Locks()
+	m.lab.setTab(labTabDrafts)
+
+	assert.Contains(t, renderLabContext(m.lab, e, 60, time.Now()), "Locked: by Grove on build-server (pid 42)")
+	assert.Contains(t, labelsOf(labContextActions(m.lab)), "Clear lock from build-server")
+
+	updated, cmd := m.handleLabAction(modal.ContextActionLabClearLock)
+	m = runCmd(t, updated.(*Model), cmd)
+	assert.NoFileExists(t, lockPath)
+	assert.Empty(t, m.lab.locks, "the reloaded locks no longer include it")
+	assert.NotContains(t, labelsOf(labContextActions(m.lab)), "Clear lock from build-server")
+}
+
+func TestLab_LocalLockIsNotOfferedForClearing(t *testing.T) {
+	v := newLabView()
+	e := entryAt(time.Now(), "e", domain.LabKindBug, domain.LabStatusDraft, "Bug")
+	v.entries = []domain.LabEntry{e}
+	v.locks = map[string]data.LabLockOwner{"e": {PID: 1, Host: labLocalHost()}}
+	v.setTab(labTabDrafts)
+	_, foreign := v.foreignLock(e)
+	assert.False(t, foreign, "a lock on this machine is taken over automatically")
 }

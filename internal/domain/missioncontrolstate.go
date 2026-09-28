@@ -51,11 +51,12 @@ const (
 	StatusSucceeded WorkItemStatus = "succeeded"
 )
 
-// Kind is one of imp|review|address|ci|resolve|clean|grilling. See cmd/grove/app.go for workflow launch patterns.
+// Kind is one of imp|review|address|ci|resolve|clean, or shape|grill for a Lab
+// session. See cmd/grove/app.go for workflow launch patterns.
 type WorkflowRunRef struct {
 	WorkflowID   string
 	RunID        string
-	Kind         string // imp, review, address, ci, resolve, clean, or grilling (grilling is for Lab entries)
+	Kind         string // imp, review, address, ci, resolve, clean, or shape or grill for a Lab session
 	Title        string
 	Repo         string
 	WorktreePath string

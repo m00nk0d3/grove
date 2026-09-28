@@ -32,6 +32,8 @@ type LabPublishPlan struct {
 	Board int
 	// Tickets are an epic's tickets, published as its sub-issues in this order.
 	Tickets []LabPublishTicket
+	// Notes are further consequences of publishing, each shown on its own line.
+	Notes []string
 	// Resume describes what an earlier, interrupted publication already
 	// created, which is not created again; empty for a first attempt.
 	Resume string
@@ -167,6 +169,9 @@ func (m *LabPublishModal) View() string {
 	b.WriteString(m.field("Labels", labels))
 	b.WriteString(m.field("Board", m.boardLabel()))
 	b.WriteString(m.field("Title", lipgloss.NewStyle().Bold(true).Render(m.truncateTo(p.Title, m.contentWidth()-20))))
+	for _, note := range p.Notes {
+		b.WriteString(m.field("Note", note))
+	}
 	if len(p.Tickets) > 0 {
 		b.WriteString("\n")
 		b.WriteString(m.heading(fmt.Sprintf("TICKETS  %d sub-issues, labelled ready-for-agent, in this order", len(p.Tickets))))
