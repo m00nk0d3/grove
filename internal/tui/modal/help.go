@@ -70,13 +70,14 @@ var keybindingGroups = []bindingGroup{
 		title: "LAB VIEW",
 		bindings: [][2]string{
 			{"↑/↓  j/k", "Navigate entries"},
-			{"a / A", "Create new entry"},
-			{"e / E", "Edit selected entry (removes it first)"},
+			{"c", "Capture a new idea or bug"},
+			{"Enter", "Next step: shape, grill, review, open a pane or issue"},
+			{"v / V", "Inspect: overview, steps, artifacts, capture"},
+			{"a / A", "Actions: publish, shape, grill, escalate, open issue, end session, archive"},
+			{"[ / ]", "Switch tab: active, drafts, published, archived"},
 			{"1", "Filter: All entries"},
 			{"2", "Filter: Ideas only"},
 			{"3", "Filter: Bugs only"},
-			{"d / D", "Delete selected entry"},
-			{"s", "Shape bug into GitHub issue (bug entries only)"},
 		},
 	},
 	{

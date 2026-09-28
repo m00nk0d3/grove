@@ -15,10 +15,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // githubAPIBase is the base URL for GitHub API calls. It can be overridden in tests.
@@ -451,11 +453,16 @@ func moveFile(src, dst string) error {
 //  1. Rename currentExe → currentExe+".old"  (the kernel holds the open inode
 //     by reference, so the running process is unaffected by the rename)
 //  2. Move   newPath    → currentExe          (target slot is now free)
+//  3. Verify the installed binary runs; otherwise restore the original.
 //
 // This avoids ETXTBSY on Linux/macOS (writing to a running executable is
 // forbidden) and the equivalent restriction on Windows. Step 2 uses moveFile
 // which falls back to copy+delete when newPath and currentExe are on different
 // filesystems (e.g. /tmp vs /usr/local/bin, or C: vs D: on Windows).
+//
+// Step 3 guards against the new binary being removed or blocked after it is
+// written, for example by endpoint security software, which would otherwise
+// leave no runnable executable at currentExe.
 //
 // The ".old" file is cleaned up on the next startup by CleanupOldBinary.
 func replaceBinary(newPath, currentExe string) error {
@@ -468,11 +475,41 @@ func replaceBinary(newPath, currentExe string) error {
 		return fmt.Errorf("rename current binary: %w", err)
 	}
 	if err := moveFile(newPath, currentExe); err != nil {
-		// Best-effort rollback: put the original back.
-		_ = os.Rename(oldExe, currentExe)
-		return fmt.Errorf("replace binary: %w", err)
+		return restoreBinary(oldExe, currentExe, fmt.Errorf("replace binary: %w", err))
+	}
+	if err := verifyBinary(currentExe); err != nil {
+		return restoreBinary(oldExe, currentExe, fmt.Errorf("verify new binary: %w", err))
 	}
 	// oldExe will be cleaned up on the next startup by CleanupOldBinary.
+	return nil
+}
+
+// restoreBinary puts the original binary at oldExe back at currentExe after a
+// failed replacement and returns cause. When the restore itself fails, the
+// returned error names oldExe so the user can recover it manually.
+func restoreBinary(oldExe, currentExe string, cause error) error {
+	_ = os.Remove(currentExe)
+	if err := os.Rename(oldExe, currentExe); err != nil {
+		return fmt.Errorf("%w; restoring previous binary failed (%v): copy %s to %s", cause, err, oldExe, currentExe)
+	}
+	return cause
+}
+
+// verifyTimeout bounds how long verifyBinary waits for the new binary to report
+// its version.
+const verifyTimeout = 15 * time.Second
+
+// verifyBinary checks that the executable at path exists and runs. It can be
+// overridden in tests.
+var verifyBinary = func(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), verifyTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput(); err != nil {
+		return fmt.Errorf("run %s --version: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

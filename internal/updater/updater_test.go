@@ -197,7 +197,17 @@ func TestVerifyChecksum_Mismatch(t *testing.T) {
 	assert.Contains(t, err.Error(), "checksum mismatch")
 }
 
+// stubVerifyBinary replaces verifyBinary for the duration of the test so that
+// placeholder files can stand in for real executables.
+func stubVerifyBinary(t *testing.T, verify func(path string) error) {
+	t.Helper()
+	orig := verifyBinary
+	verifyBinary = verify
+	t.Cleanup(func() { verifyBinary = orig })
+}
+
 func TestReplaceBinary(t *testing.T) {
+	stubVerifyBinary(t, func(string) error { return nil })
 	dir := t.TempDir()
 
 	currentExe := filepath.Join(dir, "nexus")
@@ -220,7 +230,74 @@ func TestReplaceBinary(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
+func TestReplaceBinary_VerifyFailureRestoresOriginal(t *testing.T) {
+	stubVerifyBinary(t, func(string) error { return errors.New("blocked") })
+	dir := t.TempDir()
+
+	currentExe := filepath.Join(dir, "nexus")
+	if runtime.GOOS == "windows" {
+		currentExe += ".exe"
+	}
+	newBinary := filepath.Join(dir, "grove-new")
+
+	require.NoError(t, os.WriteFile(currentExe, []byte("old"), 0755))
+	require.NoError(t, os.WriteFile(newBinary, []byte("new"), 0755))
+
+	err := replaceBinary(newBinary, currentExe)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "verify new binary")
+
+	got, readErr := os.ReadFile(currentExe)
+	require.NoError(t, readErr)
+	assert.Equal(t, "old", string(got))
+
+	_, statErr := os.Stat(currentExe + ".old")
+	assert.True(t, os.IsNotExist(statErr), ".old should be moved back into place")
+}
+
+func TestReplaceBinary_RemovedAfterInstallRestoresOriginal(t *testing.T) {
+	// Simulate security software deleting the new binary right after it is
+	// written, before verification sees it.
+	stubVerifyBinary(t, func(path string) error {
+		require.NoError(t, os.Remove(path))
+		_, err := os.Stat(path)
+		return err
+	})
+	dir := t.TempDir()
+
+	currentExe := filepath.Join(dir, "nexus")
+	if runtime.GOOS == "windows" {
+		currentExe += ".exe"
+	}
+	newBinary := filepath.Join(dir, "grove-new")
+
+	require.NoError(t, os.WriteFile(currentExe, []byte("old"), 0755))
+	require.NoError(t, os.WriteFile(newBinary, []byte("new"), 0755))
+
+	require.Error(t, replaceBinary(newBinary, currentExe))
+
+	got, err := os.ReadFile(currentExe)
+	require.NoError(t, err)
+	assert.Equal(t, "old", string(got))
+}
+
+func TestVerifyBinary_MissingFile(t *testing.T) {
+	err := verifyBinary(filepath.Join(t.TempDir(), "missing"))
+	require.Error(t, err)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestVerifyBinary_NotExecutable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "grove")
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
+	require.NoError(t, os.WriteFile(path, []byte("not a binary"), 0755))
+	assert.Error(t, verifyBinary(path))
+}
+
 func TestReplaceBinary_OldFileCleanedUp(t *testing.T) {
+	stubVerifyBinary(t, func(string) error { return nil })
 	dir := t.TempDir()
 
 	currentExe := filepath.Join(dir, "nexus")

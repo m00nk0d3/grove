@@ -5,14 +5,6 @@ import (
 	"github.com/m00nk0d3/grove/internal/domain"
 )
 
-// GrillingArtifacts holds the context and spec documents produced by grilling.
-type GrillingArtifacts struct {
-	Context   string
-	Spec      string
-	RepoPath  string
-	OutputPath string // Optional custom output path (empty uses default repo root)
-}
-
 // Modal extends tea.Model with a Title for themed overlay rendering.
 type Modal interface {
 	tea.Model
@@ -112,13 +104,13 @@ type ParentWorktreeRequiredMsg struct {
 type UpdateConfirmedMsg struct{}
 
 const (
-	WorkflowKindImplement  = "imp"
-	WorkflowKindGrilling   = "grilling"
-	WorkflowKindReview     = "review"
-	WorkflowKindResolve    = "resolve"
-	WorkflowKindCI         = "ci"
-	WorkflowKindAddress    = "address"
-	WorkflowKindClean      = "clean"
+	WorkflowKindImplement = "imp"
+
+	WorkflowKindReview  = "review"
+	WorkflowKindResolve = "resolve"
+	WorkflowKindCI      = "ci"
+	WorkflowKindAddress = "address"
+	WorkflowKindClean   = "clean"
 )
 
 // WorkflowLaunchMsg requests a Grove-owned Sandcastle workflow.
@@ -131,16 +123,29 @@ type WorkflowLaunchMsg struct {
 }
 
 const (
-	ContextActionOpen       = "open"
-	ContextActionOpenShell  = "open-shell"
-	ContextActionClose      = "close-session"
-	ContextActionDelete     = "delete-worktree"
-	ContextActionOpenGitHub = "open-github"
-	ContextActionInspect    = "inspect-mission"
-	ContextActionRetryRun   = "retry-workflow"
-	ContextActionMarkDone   = "mark-done"
-	ContextActionRemoveRun  = "remove-workflow"
-	ContextActionSyncGitHub = "sync-github"
+	ContextActionOpen         = "open"
+	ContextActionOpenShell    = "open-shell"
+	ContextActionClose        = "close-session"
+	ContextActionDelete       = "delete-worktree"
+	ContextActionOpenGitHub   = "open-github"
+	ContextActionInspect      = "inspect-mission"
+	ContextActionRetryRun     = "retry-workflow"
+	ContextActionMarkDone     = "mark-done"
+	ContextActionRemoveRun    = "remove-workflow"
+	ContextActionSyncGitHub   = "sync-github"
+	ContextActionLabCapture   = "lab-capture"
+	ContextActionLabInspect   = "lab-inspect"
+	ContextActionLabShape     = "lab-shape"
+	ContextActionLabGrill     = "lab-grill"
+	ContextActionLabEscalate  = "lab-escalate"
+	ContextActionLabOpenIssue = "lab-open-issue"
+	ContextActionLabClearLock = "lab-clear-lock"
+	ContextActionLabEnd       = "lab-end-session"
+	ContextActionLabPublish   = "lab-publish"
+	ContextActionLabEdit      = "lab-edit"
+	ContextActionLabArchive   = "lab-archive"
+	ContextActionLabRestore   = "lab-restore"
+	ContextActionLabDelete    = "lab-delete"
 )
 
 // CandidateKind distinguishes the type of a cleanup candidate.
@@ -163,65 +168,4 @@ type CleanupCandidate struct {
 type CleanupConfirmedMsg struct {
 	Worktrees []string
 	Branches  []string
-}
-
-// EntrySavedMsg carries a newly composed LabEntry to refresh the lab list.
-type EntrySavedMsg struct {
-	Entry domain.LabEntry
-}
-
-// EntrySavedErrMsg is returned when an entry fails to save.
-type EntrySavedErrMsg struct {
-	Error error // Error message
-}
-
-
-// ContextActionGrill is the string constant for the grilling context action.
-const ContextActionGrill = "grill"
-
-// GrillingSessionStartedMsg is dispatched when a grilling workflow starts successfully.
-type GrillingSessionStartedMsg struct {
-	Workflow domain.WorkflowRunRef // The workflow run for the griller
-	EntryID  string                // ID of the Lab entry being grilled
-}
-
-// ShapeIssueInitMsg is dispatched when a bug entry is selected for shaping.
-type ShapeIssueInitMsg struct {
-	Entry    domain.LabEntry
-	RepoPath string
-}
-
-// ShapeIssueConfirmedMsg carries the result of approving the shaped issue.
-type ShapeIssueConfirmedMsg struct {
-	IssueNumber int  // GitHub issue number created
-	URL         string  // Full issue URL
-	Entry       *domain.LabEntry  // Updated entry with linked issue
-}
-
-// ShapeIssueCancelledMsg is dispatched when user rejects shaping.
-type ShapeIssueCancelledMsg struct{}
-
-// ShapeIssueCreationFailedMsg indicates issue creation failed with error.
-type ShapeIssueCreationFailedMsg struct {
-	Err error
-}
-
-
-// GrillingArtifactsRequestedMsg is dispatched when grilling workflow completes
-// and artifacts are ready for review.
-type GrillingArtifactsRequestedMsg struct {
-	Artifacts GrillingArtifacts
-}
-
-// GrillingArtifactsApprovedMsg is dispatched when approved artifacts are written to working tree.
-type GrillingArtifactsApprovedMsg struct{}
-
-// GrillingArtifactsCommitErr is returned when artifact write fails.
-type GrillingArtifactsCommitErr struct {
-	Error error
-}
-
-// GrillingRejectedMsg is dispatched when user rejects artifacts, triggering grilling retry.
-type GrillingRejectedMsg struct {
-	Kind string // "grilling" - used to re-trigger workflow on reject
 }

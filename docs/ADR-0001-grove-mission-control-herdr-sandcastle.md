@@ -13,6 +13,13 @@ terminal panes — stands. Three details changed in the build:
   as `grove-sandcastle`, rather than a separate tool Grove integrates with.
 - **Stopping, removing, and retrying runs are supported**, which this record
   placed out of scope.
+- **The Lab writes to GitHub.** This record defers GitHub mutations. Publishing
+  a Lab entry is Grove's one sanctioned write: after the user approves the
+  drafted artifacts and confirms a preview of exactly what will be created,
+  Grove creates the issues through `gh`, with the user's own authentication,
+  and places them in `Backlog` on the configured project board. Agents never
+  write to GitHub, and no other Grove action does. See
+  [the Lab design](./LAB_DESIGN.md).
 
 The current behaviour is described in the [README](../README.md), the
 [runbook](./RUNBOOK.md), and the

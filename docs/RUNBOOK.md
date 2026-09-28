@@ -12,7 +12,7 @@ keybinding reference, see the [README](../README.md).
 | Component | What it is | Installed by |
 |---|---|---|
 | `grove` | The terminal UI (Go) | The platform installers, `go install`, or `make build` |
-| Sandcastle runtime | `grove-sandcastle` and the workflow commands `imp` (alias `agent-flow`), `review`, `address`, `ci`, `resolve`, `clean` (TypeScript on a private Node.js 22) | The platform installers, or `make install-runtime` |
+| Sandcastle runtime | `grove-sandcastle` and the workflow commands `imp` (alias `agent-flow`), `review`, `address`, `ci`, `resolve`, `clean`, and the Lab session command `grove-lab` (TypeScript on a private Node.js 22) | The platform installers, or `make install-runtime` |
 | Herdr | The terminal pane manager workflows run in | The platform installers, when `herdr` is not already on `PATH` |
 | `gh` | The GitHub CLI Grove and the workflows use for GitHub | You; authenticate with `gh auth login` |
 | An agent backend | OpenCode, Pi, or Claude Code, which the workflows drive | You; see the README's Agent Backends |

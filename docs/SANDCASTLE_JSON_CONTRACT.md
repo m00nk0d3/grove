@@ -67,12 +67,12 @@ runtime reads the runs of the repository containing that directory.
 
 ```bash
 grove-sandcastle workflow start --json \
-  --kind <imp|review|address|ci|resolve|clean|grilling> \
+  --kind <imp|review|address|ci|resolve|clean|shape|grill> \
   --repo <repository path> \
   --worktree <worktree path> \
   --agent <opencode|pi|claude> \
   --source grove \
-  [--issue <number>] [--pr <number>]
+  [--issue <number>] [--pr <number>] [--entry <lab entry id>]
 ```
 
 | Flag | Required | Notes |
@@ -80,6 +80,7 @@ grove-sandcastle workflow start --json \
 | `--kind` | no | Defaults to `imp` |
 | `--issue` | for `imp` | A positive integer |
 | `--pr` | for `review`, `address`, `ci`, `resolve` | A positive integer |
+| `--entry` | for `shape`, `grill` | A Lab entry ID; the run's pane runs `grove-lab <kind> <entry>` |
 | `--repo` | no | The repository the run belongs to and where its tab opens; defaults to the working directory |
 | `--agent` | no | Defaults to `opencode`; see rule 2 |
 | `--source` | no | Defaults to `grove` |
@@ -132,7 +133,7 @@ The record the runtime writes for each run, and the entry shape of `status`,
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id` | string | `run_<uuid>`; stable for the run's lifetime and the record's file name |
-| `kind` | string | `imp`, `review`, `address`, `ci`, `resolve`, clean, or grilling |
+| `kind` | string | `imp`, `review`, `address`, `ci`, `resolve`, `clean`, or a Lab session, `shape` or `grill` |
 | `title` | string | For example `Implement issue #42`, `Review pull request #17`, `Clean merged worktrees` |
 | `status` | string | See [Status vocabulary](#status-vocabulary) |
 | `repo` | string | The repository's top-level directory |
@@ -208,8 +209,7 @@ removed only with `--stop`. `status` counts only `queued` and `running` runs in
 
 Reports are not part of the command interface: Grove reads them directly from
 `<common-git-dir>/agent-flow/`, where the workflows write them beside their
-checkpoints. Grilling artifacts (`context.md`, `spec.md`) follow a separate path
-under `grilling/`.
+checkpoints. Lab sessions write to the Lab instead; see below.
 
 | Kind | Files | Path |
 | --- | --- | --- |
@@ -217,11 +217,12 @@ under `grilling/`.
 | `review` | `pr-<N>-<head sha, 8 characters>-review.md` | `agent-flow/` (one per reviewed head) |
 | `ci` | `ci-pr-<N>/failures.md` | `agent-flow/ci-pr-<N>/` |
 
-Grilling artifacts for a completed grilling workflow:
-
-| Kind | Files | Path |
-| --- | --- | --- |
-| `grilling` | `context.md`, `spec.md` | `agent-flow/grilling/` |
+Lab sessions (`shape`, `grill`) write to their entry's directory,
+`<common-git-dir>/grove-lab/<entry id>/`: drafts in `artifacts/` —
+`issue.md` for a shape; `spec.md`, `tickets.json`, and repository documents at
+their repository-relative paths for a grill — and a one-word progress marker
+in `stage`. A session ends when Grove writes `<run id>.close` there. See
+[the Lab design](./LAB_DESIGN.md).
 
 The same directory holds `issue-<N>.json` (an `imp` run's checkpoint, which a
 retry resumes from), `issue-<N>-pr-title.txt`, `issue-<N>-lean-evidence.json`,

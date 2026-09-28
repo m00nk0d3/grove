@@ -619,60 +619,6 @@ func saveDismissedWorkflows(dismissed map[string]bool) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// loadLabsFromJSON loads Lab entries from a repository-specific labs.json file.
-func loadLabsFromJSON(repoPath string) ([]domain.LabEntry, error) {
-	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".grove", "labs", repoPath, "labs.json"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read labs file: %w", err)
-	}
-	var entries []map[string]interface{}
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("failed to parse labs file: %w", err)
-	}
-	labs := make([]domain.LabEntry, 0, len(entries))
-	for _, e := range entries {
-		var lab domain.LabEntry
-		if id, ok := e["id"].(string); ok {
-			lab.ID = id
-		} else {
-			lab.ID = ""
-		}
-		if title, ok := e["title"].(string); ok {
-			lab.Title = title
-		}
-		if kind, ok := e["kind"].(string); ok {
-			lab.Kind = kind
-		}
-		if content, ok := e["content"].(string); ok {
-			lab.Content = content
-		}
-		if created, ok := e["created"].(string); ok {
-			lab.Created = created
-		}
-		if len(lab.ID) == 0 {
-			// Generate ID from title if not provided
-			lab.ID = fmt.Sprintf("%d-%s", time.Now().Unix(), domain.Slugify(lab.Title))
-		}
-		labs = append(labs, lab)
-	}
-	return labs, nil
-}
-
-// cycleLabFilterToAll sets the lab filter to show all entries.
-func (m *Model) cycleLabFilterToAll() {
-	m.labFilter = domain.LabFilterAll
-}
-
-// cycleLabFilterToIdea sets the lab filter to show only idea entries.
-func (m *Model) cycleLabFilterToIdea() {
-	m.labFilter = domain.LabFilterIdea
-}
-
-// cycleLabFilterToBug sets the lab filter to show only bug entries.
-func (m *Model) cycleLabFilterToBug() {
-	m.labFilter = domain.LabFilterBug
-}
-
 // debouncedRenderCmd schedules a debouncedRenderMsg after delay.
 func debouncedRenderCmd(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(t time.Time) tea.Msg {
@@ -710,6 +656,10 @@ const (
 	viewPRs                         // Shows the GitHub pull requests list
 	viewLab                         // Shows the Lab view for ideas/bugs
 )
+
+// lastNavView is the last view reachable from the navigation rail. Rail rows
+// map to views by position; rows after it are actions such as settings.
+const lastNavView = viewLab
 
 type dashboardTab int
 
@@ -758,7 +708,6 @@ type Model struct {
 	syncTickInterval   time.Duration        // Interval of the pending periodic sync tick; 0 when none is pending
 	selectedIssueIdx   int                  // Currently selected issue index
 	selectedPRIdx      int                  // Currently selected PR index
-	selectedLabIdx     int                  // Currently selected lab entry index
 	selectedMissionIdx int                  // Selected workflow/mission on the dashboard
 	dashboardTab       dashboardTab         // Active or completed dashboard workflows
 	focused            focusedPanel         // Which panel currently has keyboard focus
@@ -776,10 +725,11 @@ type Model struct {
 
 	// sessions holds the last-known list of active terminal sessions.
 	sessions []domain.Session
-	// labs holds LabEntry records for the current repository.
-	labs []domain.LabEntry
-	// labFilter controls which entries are shown in the Lab view.
-	labFilter domain.LabFilter
+	// lab holds the repository's Lab entries and the Lab list's state.
+	lab labView
+	// labPending is the publication the preview is showing, until confirmed or
+	// cancelled.
+	labPending *labPendingPublish
 
 	// latestVersion holds the latest release version discovered on startup (empty if check failed).
 	latestVersion string
@@ -857,8 +807,7 @@ func NewModel() *Model {
 			ti.Placeholder = "Search worktrees, issues, PRs, files…"
 			return ti
 		}(),
-		labs:      []domain.LabEntry{}, // Will be loaded via refreshWorktreesCmd handler
-		labFilter: domain.LabFilterAll,
+		lab: newLabView(), // entries are loaded with the worktrees
 	}
 }
 
@@ -1003,11 +952,21 @@ func (m *Model) heightOrDefault() int {
 }
 
 func (m *Model) handleNavClick(msg tea.MouseMsg, layout mouseUILayout) (tea.Model, tea.Cmd) {
+	panelHeight := 0
+	if h := m.heightOrDefault(); h > fixedChromeRows {
+		panelHeight = h - fixedChromeRows
+	}
+	start, count := navWindow(panelHeight, m.view)
 	row := msg.Y - layout.panelTop - 1
-	if row < 0 || row >= len(navItems) {
+	if row < 0 || row >= count {
 		return m, nil
 	}
+	row += start
 	m.focused = panelNav
+	if row > int(lastNavView) {
+		m.activeModal = modal.NewSettingsModal(m.Config, data.DefaultConfigPath())
+		return m, nil
+	}
 	m.view = activeView(row)
 	m.ctxScrollOffset = 0
 	m.contextActionIdx = 0
@@ -1181,6 +1140,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
+		case modal.LabArtifactsRequestedMsg:
+			return m, loadLabArtifactsCmd(m.RepoPath, msg.EntryID)
+		case modal.LabArtifactsLoadedMsg:
+			if inspector, ok := m.activeModal.(*modal.LabInspectorModal); ok {
+				inspector.SetArtifacts(msg)
+			}
+			return m, nil
+		case modal.LabOpenPaneMsg:
+			m.activeModal = nil
+			return m.openLabRunPane(msg.RunID)
+		case modal.LabArtifactReviewMsg:
+			return m.handleLabArtifactReview(msg)
+		case modal.LabPublishRequestedMsg:
+			e, ok := m.lab.entry(msg.EntryID)
+			if !ok {
+				return m, nil
+			}
+			m.activeModal = nil
+			return m.prepareLabPublish(e)
+		case modal.LabPublishConfirmedMsg:
+			return m.publishLabEntry(msg)
 		case modal.MissionReportsRequestedMsg:
 			return m, loadMissionReportsCmd(msg, m.RepoPath)
 		case modal.MissionReportsLoadedMsg:
@@ -1208,55 +1188,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.removeWorkflowCmd(msg.RunID, msg.Stop)
 		case modal.ModalCancelledMsg:
 			m.activeModal = nil
+			m.labPending = nil
 			return m, nil
-		case modal.EntrySavedMsg:
-			// Append new entry to labs list and refresh worktrees to update display
-			m.labs = append(m.labs, msg.Entry)
-			m.activeModal = nil
-			// Reload from file to ensure persistence is reflected
-			labs, err := loadLabsFromJSON(m.RepoPath)
-			if err != nil {
-				m.statusErr = fmt.Sprintf("Error reloading labs: %v", err)
-			} else {
-				m.labs = labs
-			}
-			return m, m.refreshWorktreesCmd()
-		case modal.EntrySavedErrMsg:
-			m.statusErr = msg.Error.Error()
-			m.activeModal = nil
-			return m, nil
-		case modal.ShapeIssueConfirmedMsg:
-			// Update entry with issue link
-			if msg.Entry.LinkedIssue != nil {
-				m.labs = append(m.labs, *msg.Entry)
-			}
-			m.activeModal = nil
-			m.statusMsg = fmt.Sprintf("Created issue #%d", msg.IssueNumber)
-			return m, m.refreshWorktreesCmd()
-		case modal.ShapeIssueCancelledMsg:
-			m.activeModal = nil
-			// Don't show error - cancellation is normal
-		case modal.GrillingArtifactsRequestedMsg:
-			// Grilling completed - present artifacts for review/approval
-			m.activeModal = modal.NewApproveGrillModal(msg.Artifacts)
-		case modal.GrillingArtifactsApprovedMsg:
-			// Artifacts approved - clear any status message
-			m.statusMsg = ""
-			return m, nil
-		case modal.GrillingArtifactsCommitErr:
-			// Artifact write failed - show error
-			m.statusErr = msg.Error.Error()
-			m.activeModal = nil
-			return m, nil
-		case modal.GrillingRejectedMsg:
-			// Both artifacts rejected - re-trigger grilling for feedback loop
-			return m, tea.Batch(
-				func() tea.Msg { return clearErrorCmd() },
-				func() tea.Msg {
-					return sandcastleWorkflowStartedMsg{kind: "grilling"}
-				},
-				m.startGrillingWorkflowCmd(modal.WorkflowLaunchMsg{Kind: modal.WorkflowKindGrilling, IssueNumber: nil}, "", ""),
-			)
+		case modal.LabCaptureSubmittedMsg:
+			return m.handleLabCaptureSubmitted(msg)
+		case modal.LabArchiveConfirmedMsg:
+			return m.handleLabArchiveConfirmed(msg)
+		case modal.LabDeleteConfirmedMsg:
+			return m.handleLabDeleteConfirmed(msg)
 		case modal.SettingsSavedMsg:
 			m.Config = msg.Config
 			// Update themeIdx to match the saved theme.
@@ -1352,31 +1291,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focused == panelCtx {
 				return m.runSelectedContextAction()
 			}
-			// In viewLab, Enter activates or edits the selected entry
-			if m.view == viewLab && m.activeModal == nil {
-				selected, ok := m.selectedLab()
-				if !ok || selected.Kind == "" {
-					// No valid entry - open compose modal for new entry
-					m.activeModal = modal.NewComposeModal(
-						modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
-						false, // isEditMode
-					)
-				} else if selected.Content == "" {
-					// Empty content - open compose modal for new entry
-					m.activeModal = modal.NewComposeModal(
-						modal.ComposeInitMsg{Kind: string(selected.Kind), RepoPath: m.RepoPath},
-						false, // isEditMode
-					)
-				} else {
-					// Non-empty entry with content - edit it
-					m.activeModal = modal.NewComposeModal(
-						modal.ComposeInitMsg{Kind: string(selected.Kind), Title: selected.Title, Content: selected.Content, RepoPath: m.RepoPath},
-						true, // isEditMode
-					)
-				}
-			} else {
-				return m.activateSelectedItem()
-			}
+			return m.activateSelectedItem()
 		case tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyCtrlC:
@@ -1451,6 +1366,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.view == viewDashboard {
 					return m.openSelectedMissionInspector()
 				}
+				if m.view == viewLab {
+					return m.openLabInspector()
+				}
 			case "x", "X":
 				if m.view == viewDashboard {
 					return m.confirmSelectedWorkflowRemoval()
@@ -1467,6 +1385,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.dashboardTab = dashboardTabCompleted
 					}
 					m.selectedMissionIdx = 0
+					return m, nil
+				}
+				if m.view == viewLab {
+					if msg.String() == "[" {
+						m.lab.setTab(m.lab.tab - 1)
+					} else {
+						m.lab.setTab(m.lab.tab + 1)
+					}
+					m.ctxScrollOffset = 0
+					m.contextActionIdx = 0
 					return m, nil
 				}
 			case "w", "W":
@@ -1497,68 +1425,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, cmds
 			case "l", "L":
-				if len(m.labs) == 0 {
-					m.activeModal = modal.NewComposeModal(
-						modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
-						false, // isEditMode
-					)
-				} else if _, ok := m.selectedLab(); ok {
-					// Open view lab with pre-selected entry
-					m.view = viewLab
-					m.clampSelectedLabIdx()
-				} else {
-					m.activeModal = modal.NewComposeModal(
-						modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
-						false, // isEditMode
-					)
-				}
+				m.view = viewLab
+				m.lab.clamp()
+				m.ctxScrollOffset = 0
+				m.contextActionIdx = 0
 			case "n":
 				m.nextPage()
 				return m, nil
 
 			case "/":
 				return m, m.openFuzzyCmd()
-			// Filter cycling when in viewLab (keys 1/2/3 cycle between all/idea/bug filters)
 			case "1", "2", "3":
 				if m.view == viewLab {
-					switch msg.String() {
-					case "1", "1\r":
-						m.cycleLabFilterToAll()
-					case "2", "2\r":
-						m.cycleLabFilterToIdea()
-					case "3", "3\r":
-						m.cycleLabFilterToBug()
-					}
+					filters := map[string]domain.LabFilter{"1": domain.LabFilterAll, "2": domain.LabFilterIdea, "3": domain.LabFilterBug}
+					m.lab.setFilter(filters[msg.String()])
+					m.ctxScrollOffset = 0
+					m.contextActionIdx = 0
 				}
-			// Edit handler for viewLab (only when in viewLab and not already handled by dashboard switch)
-			case "e", "E":
-				if m.view == viewLab && m.activeModal == nil {
-					// Edit selected lab entry if one exists
-					selected, ok := m.selectedLab()
-					if ok && selected.ID != "" {
-						m.activeModal = modal.NewComposeModal(
-							modal.ComposeInitMsg{Kind: string(domain.LabFilterIdea), RepoPath: m.RepoPath},
-							true, // isEditMode
-						)
-					}
-				}
-			// Shape handler for viewLab (only when in viewLab and not already handled by dashboard switch)
-			case "s":
-				if m.view == viewLab && m.activeModal == nil {
-					// Open shape modal for selected lab entry
-					selected, ok := m.selectedLab()
-					if ok && selected.Kind == "bug" && len(selected.Content) > 0 {
-						m.activeModal = modal.NewShapeIssueModal(modal.ShapeIssueInitMsg{
-							Entry:    *selected,
-							RepoPath: m.RepoPath,
-						})
-					} else if ok && selected.Kind == "" {
-						// Empty content - open compose first (can't shape empty entry)
-						m.activeModal = modal.NewComposeModal(
-							modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
-							false, // isEditMode
-						)
-					}
+			case "c":
+				if m.view == viewLab {
+					m.openLabCapture()
 				}
 			}
 		}
@@ -1611,11 +1497,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = fmt.Sprintf("Session spawned for %s (PID %d)", msg.session.WorktreePath, pid)
 		return m, clearMsgCmd()
 
+	case labsLoadedMsg:
+		return m.handleLabsLoaded(msg)
+
+	case labSessionStartedMsg:
+		return m.handleLabSessionStarted(msg)
+
+	case labPublishPlanMsg:
+		return m.handleLabPublishPlan(msg)
+
+	case labPublishedMsg:
+		return m.handleLabPublished(msg)
+
+	case labEditorClosedMsg:
+		if msg.err != nil {
+			m.statusErr = fmt.Sprintf("The editor exited with an error: %v", msg.err)
+			return m, tea.Batch(clearErrorCmd(), loadLabArtifactsCmd(m.RepoPath, msg.entryID))
+		}
+		return m, loadLabArtifactsCmd(m.RepoPath, msg.entryID)
+
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
 			m.Worktrees = msg.worktrees
-			m.labs = msg.labs
 			m.clampSelectedIdx()
+			if msg.labsErr != nil {
+				m.statusErr = msg.labsErr.Error()
+			} else {
+				m.lab.entries = msg.labs
+				m.lab.locks = msg.labLocks
+				m.lab.clamp()
+			}
 			// Always use the main worktree (first entry) as the canonical repo path
 			// so the header shows the repo name rather than the current worktree dir.
 			if len(msg.worktrees) > 0 {
@@ -1769,58 +1680,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.snapshot.Agents = m.sandcastleSnapshot.Agents
 				msg.snapshot.CapturedAt = m.sandcastleSnapshot.CapturedAt
 			}
-		m.sandcastleSnapshot = &msg.snapshot
-	}
-	return m, m.rebuildMissionStateCmd()
-
-	// Check for completed grilling workflow and read artifacts
-	if msg.err == nil && m.sandcastleSnapshot != nil {
-		for _, wf := range msg.snapshot.Workflows {
-			if wf.Kind == modal.WorkflowKindGrilling && wf.Status == "completed" {
-				// Grilling completed - read artifacts from expected paths per SANDCASTLE_JSON_CONTRACT
-				repoRoot := m.RepoPath
-				commonDir := filepath.Join(repoRoot, ".git", "common")
-				grillingDir := filepath.Join(commonDir, "agent-flow", "grilling")
-
-				var contextContent string
-				var specContent string
-
-				// Read context artifact from direct path per contract
-				contextPath := filepath.Join(grillingDir, "context.md")
-				ctxBytes, readErr := os.ReadFile(contextPath)
-				if readErr == nil {
-					contextContent = string(ctxBytes)
-				}
-
-				// Read spec artifact from direct path per contract
-				specPath := filepath.Join(grillingDir, "spec.md")
-				spcBytes, readErr2 := os.ReadFile(specPath)
-				if readErr2 == nil {
-					specContent = string(spcBytes)
-				}
-
-				if contextContent != "" && specContent != "" {
-					// Both artifacts exist - trigger approval modal
-					m.statusMsg = "Grilling completed. Review artifacts below."
-					return m, tea.Batch(
-						func() tea.Msg { return clearMsgMsg{} },
-						func() tea.Msg {
-							return modal.GrillingArtifactsRequestedMsg{
-								Artifacts: modal.GrillingArtifacts{
-									Context:  contextContent,
-									Spec:     specContent,
-									RepoPath: m.RepoPath,
-								},
-							}
-						},
-					)
-				}
-			}
+			m.sandcastleSnapshot = &msg.snapshot
 		}
-	}
+		return m, m.rebuildMissionStateCmd()
 
 	case missionControlUpdatedMsg:
 		m.missionState = &msg.state
+		m.lab.setMission(m.missionState)
+		m.refreshLabInspector()
 		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 		if len(missions) == 0 {
 			m.selectedMissionIdx = 0
@@ -1832,6 +1699,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				inspector.SetWorkflow(workflow, agentsForWorkflow(m.missionState, inspector.RunID()))
 			}
 		}
+		return m, m.syncLabStatusesCmd()
 
 	case sessionFocusedMsg:
 		// Focus is best-effort; show a friendly toast regardless of outcome.
@@ -2012,7 +1880,7 @@ func (m *Model) renderView() string {
 	if actionIdx >= len(actions) {
 		actionIdx = max(0, len(actions)-1)
 	}
-	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, m.labs, m.selectedLabIdx, m.labFilter, func() *domain.ExternalIntegration {
+	baseView := renderFull(m.Worktrees, m.selectedIdx, m.RepoPath, m.themeIdx, m.view, m.width, m.height, m.syncing, m.lastSynced, m.syncErr, m.issues, m.selectedIssueIdx, m.prs, m.selectedPRIdx, m.focused, m.ctxScrollOffset, m.sessions, m.lab, func() *domain.ExternalIntegration {
 		if m.herdrSnapshot != nil {
 			return &m.herdrSnapshot.Integration
 		}
@@ -2082,6 +1950,18 @@ func (m *Model) renderView() string {
 // using the gh CLI. Returns nil when in viewWorktrees or when the relevant list is empty.
 func (m *Model) openInBrowserCmd() tea.Cmd {
 	switch m.view {
+	case viewLab:
+		e, ok := m.lab.selected()
+		if !ok {
+			return nil
+		}
+		num := labPrimaryIssue(e)
+		if num == nil {
+			return nil
+		}
+		cmd := exec.Command("gh", "issue", "view", fmt.Sprintf("%d", *num), "--web")
+		cmd.Dir = m.RepoPath
+		return tea.ExecProcess(cmd, func(err error) tea.Msg { return browserOpenErrMsg{err: err} })
 	case viewIssues:
 		if len(m.issues) == 0 || m.selectedIssueIdx >= len(m.issues) {
 			return nil
@@ -2821,36 +2701,6 @@ func (m *Model) removeWorkflowCmd(runID string, stop bool) tea.Cmd {
 	}
 }
 
-// startGrillingWorkflowCmd starts a grilling session workflow for a Lab entry.
-func (m *Model) startGrillingWorkflowCmd(msg modal.WorkflowLaunchMsg, worktreePath string, entryID string) tea.Cmd {
-	starter := m.workflowStarter
-	repoPath := m.RepoPath
-
-	defaultAgent := msg.AgentKind
-	if defaultAgent == "" {
-		defaultAgent = "pi"
-	}
-
-	return func() tea.Msg {
-		if starter == nil {
-			return sandcastleWorkflowStartedMsg{kind: modal.WorkflowKindImplement, err: fmt.Errorf("runtime unavailable")}
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		workflow, err := starter.StartWorkflow(ctx, sandcastle.StartWorkflowRequest{
-			Kind:        msg.Kind,
-			RepoPath:    repoPath,
-			IssueNumber: msg.IssueNumber,
-			AgentKind:   defaultAgent,
-			Source:      "grove",
-		})
-
-		return sandcastleWorkflowStartedMsg{workflow: workflow, kind: msg.Kind, err: err}
-	}
-}
-
 // defaultHealthChecker is the production sessionHealthChecker backed by real
 // herdr and sandcastle clients.
 type defaultHealthChecker struct {
@@ -3078,20 +2928,26 @@ func (m *Model) checkSessionsCmd() tea.Cmd {
 type worktreesRefreshedMsg struct {
 	worktrees []domain.Worktree
 	labs      []domain.LabEntry
+	labsErr   error
+	labLocks  map[string]data.LabLockOwner
 	err       error
 }
 
-// refreshWorktreesCmd returns a Cmd that reloads the worktree list from git and labs.
+// refreshWorktreesCmd returns a Cmd that reloads the worktree list from git
+// and the repository's Lab entries.
 func (m *Model) refreshWorktreesCmd() tea.Cmd {
 	repoPath := m.RepoPath
 	return func() tea.Msg {
 		cmd := internalexec.NewGitCommand(repoPath)
 		worktrees, err := cmd.ListWorktrees()
-		var labs []domain.LabEntry
+		msg := worktreesRefreshedMsg{worktrees: worktrees, err: err}
 		if err == nil {
-			labs, _ = loadLabsFromJSON(repoPath)
+			msg.labs, msg.labsErr = loadLabs(repoPath)
+			if store, err := labStoreFor(repoPath); err == nil {
+				msg.labLocks, _ = store.Locks()
+			}
 		}
-		return worktreesRefreshedMsg{worktrees: worktrees, err: err, labs: labs}
+		return msg
 	}
 }
 
@@ -3345,27 +3201,8 @@ func (m *Model) activateSelectedItem() (tea.Model, tea.Cmd) {
 		}
 		return m, m.spawnSessionCmd(selected.Path)
 	case viewLab:
-		selected, ok := m.selectedLab()
-		if !ok {
-			m.activeModal = modal.NewComposeModal(
-				modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
-				false, // isEditMode
-			)
-		} else if selected.Kind == "" {
-			// Empty entry - open compose modal
-			m.activeModal = modal.NewComposeModal(
-				modal.ComposeInitMsg{Kind: "", RepoPath: m.RepoPath},
-				false, // isEditMode
-			)
-		}
-		return m, nil
+		return m.labNextStep()
 	}
-}
-
-func (m *Model) openViewLabCmd() (tea.Model, tea.Cmd) {
-	m.view = viewLab
-	m.clampSelectedLabIdx()
-	return m, nil
 }
 
 func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
@@ -3423,26 +3260,11 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
-	case modal.ContextActionGrill:
-		entry, ok := m.selectedLab()
-		if !ok {
-			m.statusErr = "No Lab entry selected — select one first"
-			return m, clearMsgCmd()
-		}
-
-		worktree, ok := m.selectedWorktree()
-		if !ok {
-			m.statusErr = "No worktree selected for grilling session"
-			return m, clearMsgCmd()
-		}
-
-		request := modal.WorkflowLaunchMsg{
-			Kind:      modal.WorkflowKindGrilling,
-			AgentKind: "pi",
-		}
-
-		m.statusMsg = fmt.Sprintf("Starting grilling session for %s…", entry.Title)
-		return m, m.startGrillingWorkflowCmd(request, worktree.Path, entry.ID)
+	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEscalate, modal.ContextActionLabOpenIssue, modal.ContextActionLabClearLock, modal.ContextActionLabEnd,
+		modal.ContextActionLabPublish,
+		modal.ContextActionLabEdit, modal.ContextActionLabArchive,
+		modal.ContextActionLabRestore, modal.ContextActionLabDelete:
+		return m.handleLabAction(action)
 	default:
 		m.statusErr = fmt.Sprintf("Unknown action: %s", action)
 		return m, clearErrorCmd()
@@ -3459,8 +3281,7 @@ func (m *Model) availableContextActions() []contextActionOption {
 		m.prs,
 		m.selectedPRIdx,
 		m.sessions,
-		m.labs,
-		m.selectedLabIdx,
+		m.lab,
 		dashboardActionContext{state: m.missionState, tab: m.dashboardTab, selected: m.selectedMissionIdx, dismissed: m.dismissedWorkflows},
 	))
 }
@@ -3480,7 +3301,7 @@ type dashboardActionContext struct {
 	dismissed map[string]bool
 }
 
-func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session, labs []domain.LabEntry, labIdx int, dashboard ...dashboardActionContext) []contextActionOption {
+func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, sessions []domain.Session, lab labView, dashboard ...dashboardActionContext) []contextActionOption {
 	switch view {
 	case viewIssues:
 		if len(issues) == 0 || issueIdx < 0 || issueIdx >= len(issues) {
@@ -3528,14 +3349,7 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 		)
 
 	case viewLab:
-		if len(labs) == 0 || labIdx < 0 || labIdx >= len(labs) {
-			return nil
-		}
-		actions := []contextActionOption{
-			{icon: "🔥", label: "Grill entry", action: modal.ContextActionGrill},
-			{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
-		}
-		return actions
+		return labContextActions(lab)
 	default:
 		actions := []contextActionOption{
 			{icon: "◎", label: "Inspect workflow", action: modal.ContextActionInspect},
@@ -3686,26 +3500,6 @@ func (m *Model) clampPRIdx() {
 	}
 }
 
-func (m *Model) selectedLab() (*domain.LabEntry, bool) {
-	if len(m.labs) == 0 {
-		return nil, false
-	}
-	if m.selectedLabIdx < 0 || m.selectedLabIdx >= len(m.labs) {
-		m.selectedLabIdx = 0
-	}
-	return &m.labs[m.selectedLabIdx], true
-}
-
-func (m *Model) clampSelectedLabIdx() {
-	if len(m.labs) == 0 {
-		m.selectedLabIdx = 0
-		return
-	}
-	if m.selectedLabIdx >= len(m.labs) {
-		m.selectedLabIdx = len(m.labs) - 1
-	}
-}
-
 // nextPage moves the selection a screenful down the current list view.
 //
 // The lists used to be drawn one fixed page of fifty at a time while also
@@ -3745,7 +3539,7 @@ func (m *Model) moveDown() {
 	switch m.focused {
 	case panelNav:
 		n := int(m.view) + 1
-		if n > int(viewPRs) {
+		if n > int(lastNavView) {
 			n = int(viewDashboard)
 		}
 		m.view = activeView(n)
@@ -3778,6 +3572,9 @@ func (m *Model) moveDown() {
 				m.selectedPRIdx++
 				m.ctxScrollOffset = 0
 			}
+		case viewLab:
+			m.lab.move(1)
+			m.ctxScrollOffset = 0
 		default:
 			if m.selectedIdx < len(m.Worktrees)-1 {
 				m.selectedIdx++
@@ -3796,7 +3593,7 @@ func (m *Model) moveUp() {
 	case panelNav:
 		n := int(m.view) - 1
 		if n < 0 {
-			n = int(viewPRs)
+			n = int(lastNavView)
 		}
 		m.view = activeView(n)
 	case panelCtx:
@@ -3828,6 +3625,9 @@ func (m *Model) moveUp() {
 				m.selectedPRIdx--
 				m.ctxScrollOffset = 0
 			}
+		case viewLab:
+			m.lab.move(-1)
+			m.ctxScrollOffset = 0
 		default:
 			if m.selectedIdx > 0 {
 				m.selectedIdx--

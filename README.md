@@ -42,36 +42,134 @@ Modern software development means juggling several things at once: features in f
 - **Mouse support** — click the navigation rail, rows, tabs, and actions; scroll with the wheel
 - **Self-update** — Grove checks for a new release on startup and can replace its own binary
 - **Local persistence** — configuration in `~/.grove/config.toml`, a SQLite cache so Grove starts fast
-- **Lab view** — `'l'` opens the Lab, which holds ideas and bugs discovered during work. Each entry is stored per repository under `~/.grove/labs/`. Select an entry and press `Enter` to edit it. Press `/` to search entries as you type. Keys `1`, `2`, and `3` cycle between *All*, *Idea*, and *Bug* filters.
+- **Lab** — `l` opens the Lab, where ideas and bugs live before they become issues. Entries are stored per repository in its git directory, shared by every worktree and never committed.
 
 ---
 
 ## The Lab
 
-The Lab is a persistent collection of ideas, bugs, and tasks discovered during your work. Every repository has its own lab stored under `~/.grove/labs/<repo-path>/labs.json`.
+The Lab is where work lives before it becomes a GitHub issue. Each repository
+keeps its Lab in `<git-common-dir>/grove-lab/`, so every worktree of the
+repository shares it and git never tracks it. The full design, including the
+grilling and publishing flows still being built, is in
+[docs/LAB_DESIGN.md](docs/LAB_DESIGN.md).
 
-### Adding an Entry
+The list has four tabs, switched with `[` and `]`: *Active / Attention*,
+*Drafts*, *Published*, and *Archived*. Keys `1`, `2`, and `3` show all entries,
+ideas only, or bugs only within the current tab.
 
-1. Press `'l'` to open the Lab
-2. Select an empty row (or press `Enter` when no entry is selected)
-3. Press `Enter` to activate editing
-4. Fill in the fields:
-   - **Kind** — `idea` or `bug`
-   - **Title** — a short descriptive name
-   - **Content** — details, steps to reproduce, or context
+| Key | Action |
+|---|---|
+| `c` | Capture a new idea or bug |
+| `Enter` | The selected entry's next step: shape a bug draft, grill an idea draft, review a finished draft, or open the pane of a live session |
+| `v` | Inspect the selected entry |
+| `a` | Actions for the selected entry: inspect, edit, archive, restore, delete |
 
-### Editing Entries
+An entry whose agent is waiting for an answer is marked **WAITING ON YOU** and
+listed first under *Active / Attention*. Each row shows the step the entry has
+reached, such as *Interview 1/4*, and the Herdr pane of its live session.
 
-- In the Lab view, select an entry and press `Enter` to enter edit mode
-- Changes save automatically when you leave edit mode or quit Grove
+### Shaping a bug
 
-### Deleting Entries
+*Shape into an issue* (or `Enter` on a bug draft) starts a shaping session: an
+agent — `sandcastle.default_agent` — opens in a Herdr pane beside the workflow
+and turns the captured text into a structured bug report. It asks you for
+anything the report needs that the text does not say, and you answer it in
+that pane. The entry shows **WAITING ON YOU** whenever the agent is waiting for
+an answer, and again when the draft is ready. The draft, `issue.md`, appears in
+the inspector's *Artifacts* tab; asking the agent for changes in its pane
+revises it. *End session* closes the agent's pane; *Resume shaping* starts a
+new session that continues from the existing draft.
 
-To remove an entry: delete its file directly from `~/.grove/labs/<repo-path>/labs.json`, or use your preferred editor.
+### Grilling an idea
 
-### Grilling a Lab Entry
+*Grill* (or `Enter` on an idea draft) starts a grilling session: the agent
+interviews you in its Herdr pane using the bundled
+[grill-with-docs](https://github.com/mattpocock/skills), then writes a spec and
+breaks it into tracer-bullet tickets, following to-spec and to-tickets. As
+terms and decisions settle it drafts `CONTEXT.md` and decision records under
+`docs/adr/`, at the paths they belong in the repository. The entry moves
+through *Interview 1/4*, *Spec 2/4*, *Tickets 3/4* as the session does.
+Approving a `CONTEXT.md` or decision record copies it into your checkout as an
+uncommitted change, and never drops a line an existing file has. *End session*
+and *Resume grilling* work as they do for shaping.
 
-Select a Lab entry and press `Enter` to open the Actions panel, then choose *Grill entry*. This starts an agent workflow with a grilling session for the entry, using its title as the work item. The workflow runs in Herdr and can be inspected like any other mission.
+### Reviewing and publishing
+
+When the draft is ready, `Enter` opens it in the inspector's *Artifacts* tab.
+There `a` approves it, `e` edits it in `$VISUAL` or `$EDITOR`, `x` discards it,
+and `c` takes you to the agent's pane to ask for changes. An approval applies
+to the content you saw: if the agent revises the file, it is a draft again.
+
+`p` in the inspector, or *Publish issue* in the Actions panel, shows a preview
+of exactly what will be created — repository, labels, board, title, and body.
+Nothing is sent to GitHub until you press `y`. Grove then creates the issue
+through `gh` with the `bug` label, adds it to the project board in `Backlog`,
+and ends the session. The board is `lab.project` (`owner/number`) when set;
+otherwise the repository's linked board, or a choice among several, which Grove
+remembers. If adding it to the board fails, the created issue is recorded and
+publishing again only retries the board.
+
+A grilled idea publishes once `spec.md` and `tickets.json` are approved. The
+preview lists every ticket and what blocks it. Grove creates the epic from the
+spec, labelled `epic`, with a *Glossary and decisions* section summarising the
+approved `CONTEXT.md` and decision records; then each ticket, blockers first,
+labelled `ready-for-agent`, as a native sub-issue of the epic with native
+blocked-by links to its blockers; then puts them all in `Backlog`. Labels that
+do not exist yet are created; existing ones are left as they are. Every issue
+and link is recorded as it is made, so a publication interrupted part-way —
+by a rate limit, say — finishes on the next attempt without repeating any of
+it.
+
+### Inspecting an entry
+
+`v` opens the inspector: header cards for stage, elapsed time, artifacts, and
+issues, then four tabs switched with `Tab` or `1`–`4`:
+
+- **Overview** — the entry and its current session: run, status, step, agent,
+  and pane. `Enter` opens the pane.
+- **Steps** — the build chain (*Interview → Spec → Tickets → Publish*, or
+  *Shape → Publish* for a bug) and every run the entry has had.
+- **Artifacts** — the files the agent has drafted, rendered in the terminal;
+  `[` and `]` switch between them.
+- **Capture** — the text as it was captured.
+
+### Capturing an entry
+
+Press `c`, choose the kind with `Tab`, and write the entry. The first line is
+its title; anything below is the detail. `Ctrl+S` saves and `Esc` cancels.
+
+### Escalating a bug
+
+A bug that turns out bigger than one issue can be grilled instead: *Escalate
+to grill* ends its shaping session and starts a grilling session that begins
+from the shaped report. It works after the bug is published too — the bug's
+issue is kept, and when the epic is published the bug becomes one of its
+sub-issues and the epic notes that it grew out of it.
+
+### Published entries
+
+`Enter` on a published entry opens its epic, or its issue, in the Issues tab,
+where an epic's sub-issues are listed beneath it; *Open on GitHub* opens it in
+the browser.
+
+### Archiving and deleting
+
+Archiving moves an entry to the *Archived* tab from any state, and restoring
+returns it unchanged. Archiving an entry whose session is still running asks
+first, then ends the session. Drafts and archived entries can be deleted, but
+not while a session is running; deleting removes the entry and anything drafted
+for it, after a confirmation, and leaves published issues alone.
+
+### Two Groves, one Lab
+
+Starting a session or publishing holds the entry's lock, so a second Grove —
+another terminal, or another machine sharing the repository — refuses with
+*Entry is in use by Grove on host (pid N)* instead of duplicating the work.
+Viewing an entry and opening its pane are never blocked. A lock left by a Grove
+that stopped on this machine is taken over automatically; one left on another
+machine is shown in the entry's context panel and can be removed with *Clear
+lock*.
 
 ---
 
@@ -113,8 +211,8 @@ Sandcastle runtime under `%LOCALAPPDATA%\grove\`, installs Herdr when it is
 missing, and adds the directory to your user `PATH`. Restart your terminal
 afterwards.
 
-Both installers install the workflow commands `grove-sandcastle`, `imp`
-(alias `agent-flow`), `review`, `address`, `ci`, `resolve`, `clean`, and `grill`.
+Both installers install the workflow commands `grove-sandcastle`, `grove-lab`, `imp`
+(alias `agent-flow`), `review`, `address`, `ci`, `resolve`, and `clean`.
 
 ### go install
 
@@ -491,8 +589,8 @@ The Herdr integration is active only when Grove runs inside a Herdr pane.
 | `~/.grove/config.toml` | Configuration |
 | `~/.grove/grove.db` | SQLite cache of GitHub data and sessions |
 | `~/.grove/logs/grove.log` | Log file |
-| `~/.grove/labs/<repo>/labs.json` | Ideas and bugs (one JSON array per repository) |
 | `<repo>/.git` | The repository's shared git directory, which every worktree of the repository uses |
+| `<repo>/.git/grove-lab/` | The repository's Lab: ideas, bugs, and their drafted artifacts |
 
 ---
 

@@ -51,12 +51,7 @@ func (m *MissionModal) reportWidth() int {
 	return m.contentWidth() - 2
 }
 
-func (m *MissionModal) currentTheme() styles.Theme {
-	if m.theme != nil {
-		return *m.theme
-	}
-	return styles.NewTheme("")
-}
+func (m *MissionModal) currentTheme() styles.Theme { return m.chrome().currentTheme() }
 
 // reportLines returns the selected report laid out for the current width and
 // theme, laying it out again only when one of them or the report changed.

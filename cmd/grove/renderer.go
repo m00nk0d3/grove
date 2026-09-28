@@ -64,6 +64,7 @@ var navItems = []navItem{
 	{"W", "WORKTREES"},
 	{"I", "ISSUES"},
 	{"P", "PRs"},
+	{"L", "LAB"},
 	{"T", "SETTINGS"},
 }
 
@@ -132,7 +133,7 @@ func renderSessionBlock(s *domain.Session) string {
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, sessions []domain.Session, labs []domain.LabEntry, selectedLabIdx int, filter domain.LabFilter, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, selections ...int) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, sessions []domain.Session, lab labView, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, selections ...int) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
@@ -239,7 +240,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	case viewPRs:
 		list = renderPRList(prs, selectedPRIdx, theme, listInner, panelHeight, focused == panelList)
 	case viewLab:
-		list = renderLab(labs, selectedIdx, filter, worktrees, theme, listInner, panelHeight, focused == panelList)
+		list = renderLab(lab, theme, listInner, panelHeight, focused == panelList)
 	default:
 		list = renderWorktreePanel(worktrees, selectedIdx, theme, listInner, panelHeight, focused == panelList, sessions)
 	}
@@ -257,11 +258,10 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 		prs,
 		selectedPRIdx,
 		sessions,
-		labs,
-		selectedLabIdx,
+		lab,
 		dashboardActionContext{state: missionState, tab: selectedDashboardTab, selected: selectedMissionIdx},
 	))
-	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState, actions, actionIdx)
+	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, lab, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState, actions, actionIdx)
 	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, nav, list, ctx)
 	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, selectedIssueIdx, prs, selectedPRIdx)
 	actionBar := renderActionBar(theme, termWidth)
@@ -923,9 +923,21 @@ func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSes
 	return theme.RenderPanel(theme.GetStyle("header").Width(innerWidth), text)
 }
 
+// navWindow returns the range of navItems the rail draws. When the panel is too
+// short for every item, the window scrolls so the active view stays visible.
+// panelHeight of 0 means unconstrained.
+func navWindow(panelHeight int, view activeView) (start, count int) {
+	if panelHeight <= 0 || panelHeight >= len(navItems) {
+		return 0, len(navItems)
+	}
+	return listWindow(panelHeight, 1, len(navItems), int(view))
+}
+
 func renderNavRail(theme styles.Theme, panelHeight int, view activeView, focused bool) string {
 	var b strings.Builder
-	for i, item := range navItems {
+	start, count := navWindow(panelHeight, view)
+	for i := start; i < start+count; i++ {
+		item := navItems[i]
 		cursor := "  "
 		if activeView(i) == view {
 			cursor = "> "
@@ -1068,7 +1080,7 @@ func renderWorktreePanel(worktrees []domain.Worktree, selectedIdx int, theme sty
 	return theme.RenderPanel(st, body)
 }
 
-func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session, missionState *domain.MissionControlState, actions []contextActionOption, actionIdx int) string {
+func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeIdx int, issues []domain.Issue, issueIdx int, prs []domain.PullRequest, prIdx int, lab labView, theme styles.Theme, panelHeight int, ctxScroll int, focused bool, ctxInner int, sessions []domain.Session, missionState *domain.MissionControlState, actions []contextActionOption, actionIdx int) string {
 	var content string
 	switch view {
 	case viewDashboard:
@@ -1143,6 +1155,12 @@ func renderContextPanel(view activeView, worktrees []domain.Worktree, worktreeId
 				body,
 				activity,
 			)
+		}
+	case viewLab:
+		if e, ok := lab.selected(); ok {
+			content = renderLabContext(lab, e, ctxInner, time.Now())
+		} else {
+			content = "No entry selected.\nPress C to capture an idea or a bug."
 		}
 	default: // viewWorktrees
 		if len(worktrees) == 0 || worktreeIdx < 0 || worktreeIdx >= len(worktrees) {
@@ -1245,139 +1263,6 @@ func renderContextActions(theme styles.Theme, actions []contextActionOption, act
 			Render("↑/↓ select  •  Enter run"))
 	}
 	return b.String()
-}
-
-func renderLab(labs []domain.LabEntry, selectedIdx int, filter domain.LabFilter, worktrees []domain.Worktree, theme styles.Theme, listInner, panelHeight int, focused bool) string {
-	const (
-		cursorW      = 2
-		idW          = 8
-		titleW       = 35
-		kindW        = 12
-		contentW     = 30
-		fixedTotal   = cursorW + idW + titleW + kindW + contentW // 92
-	)
-
-	// Filter entries based on the active filter
-	var filtered []domain.LabEntry
-	switch filter {
-	case domain.LabFilterAll:
-		filtered = labs
-	case domain.LabFilterIdea, domain.LabFilterBug:
-		for _, lab := range labs {
-			if lab.Kind == string(filter) {
-				filtered = append(filtered, lab)
-			}
-		}
-	}
-
-	bodyWidth := listInner - scrollbarWidth(len(filtered), len(filtered))
-	nameW := bodyWidth - fixedTotal
-	if nameW < 10 {
-		nameW = 10
-	}
-
-	type entry struct {
-		cursor, id, title, kind, content string
-	}
-	visible := filtered
-	startIdx := 0
-	count := len(filtered)
-	if panelHeight > 0 {
-		available := panelHeight - listHeaderRows - 2 // -2 for hints
-		if available < 0 {
-			available = 1
-		}
-		count = available
-		if count > len(filtered) {
-			count = len(filtered)
-		}
-		// Guard clause: if filtered is empty, use it directly without startIdx calculation
-		if len(filtered) == 0 {
-			visible = filtered
-		} else {
-			startIdx = 0
-			if selectedIdx-startIdx >= count {
-				startIdx = max(0, selectedIdx-count+1)
-			}
-			visible = filtered[startIdx : startIdx+count]
-		}
-	}
-
-	entries := make([]entry, len(visible))
-	for i, lab := range visible {
-		cursor := "  "
-		if i == selectedIdx-startIdx {
-			cursor = "> "
-		}
-		contentTrunc := truncateStr(lab.Content, contentW)
-		if len(contentTrunc) < contentW {
-			contentTrunc += strings.Repeat(" ", contentW-len(contentTrunc))
-		}
-		entries[i] = entry{
-			cursor: cursor,
-			id:     lab.ID,
-			title:  truncateStr(lab.Title, titleW),
-			kind:   lab.Kind,
-			content: contentTrunc,
-		}
-	}
-
-	selSt := theme.GetStyle("selected-row")
-	normalSt := theme.GetStyle("_")
-	surfaceBg := normalSt.GetBackground()
-	normalFg := normalSt.GetForeground()
-
-	colStyle := func(row, col int) lipgloss.Style {
-		var base lipgloss.Style
-		switch col {
-		case 0:
-			base = lipgloss.NewStyle().Width(cursorW).AlignHorizontal(lipgloss.Left)
-		case 1:
-			base = lipgloss.NewStyle().Width(idW).AlignHorizontal(lipgloss.Left)
-		case 2:
-			base = lipgloss.NewStyle().Width(titleW).AlignHorizontal(lipgloss.Left)
-		case 3:
-			base = lipgloss.NewStyle().Width(kindW).AlignHorizontal(lipgloss.Center)
-		case 4:
-			base = lipgloss.NewStyle().Width(contentW).AlignHorizontal(lipgloss.Left)
-		default:
-			return lipgloss.NewStyle()
-		}
-		if row == libtable.HeaderRow {
-			return base.Foreground(lipgloss.Color(theme.Muted())).Bold(true)
-		}
-		if i := row + startIdx; i == selectedIdx-startIdx {
-			return base.
-				Background(selSt.GetBackground()).
-				Foreground(selSt.GetForeground()).
-				Bold(true)
-		}
-		return base.Background(surfaceBg).Foreground(normalFg)
-	}
-
-	t := libtable.New().
-		Headers(" ", "ID", "TITLE", "KIND", "CONTENT").
-		BorderTop(false).BorderBottom(false).
-		BorderLeft(false).BorderRight(false).
-		BorderHeader(false).BorderColumn(false).BorderRow(false).
-		Wrap(false).
-		Width(bodyWidth).
-		StyleFunc(colStyle)
-
-	for _, e := range entries {
-		t.Row(e.cursor, e.id, e.title, e.kind, e.content)
-	}
-
-	body := attachScrollbar(t.Render(), listHeaderRows, len(filtered), len(visible), startIdx, theme)
-
-	st := theme.GetStyle("lab-list").Width(listInner + panelPaddingOverhead)
-	if !focused {
-		st = theme.MutedBorder(st)
-	}
-	if panelHeight > 0 {
-		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
-	}
-	return theme.RenderPanel(st, body)
 }
 
 func renderDashboardTelemetry(missionState *domain.MissionControlState, worktrees []domain.Worktree, issues []domain.Issue, prs []domain.PullRequest, sessions []domain.Session, width int, theme styles.Theme) string {

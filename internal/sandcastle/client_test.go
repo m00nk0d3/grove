@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -643,39 +644,39 @@ func TestSnapshot_UnknownStatusPassthrough(t *testing.T) {
 	assert.Equal(t, "custom_agent_state", snap.Agents[0].Status)
 }
 
-// Grilling workflow tests for issue #230
+// Start requests that name no kind run an implementation workflow.
 
-func TestStartWorkflow_GrillingWithPiAgent(t *testing.T) {
+func TestStartWorkflow_KindlessRequestForwardsAgent(t *testing.T) {
 	runner := newFakeRunner()
 	runner.responses["workflow"] = fakeResponse{
-		stdout: []byte(`{"workflow":{"id":"run_griller_1","status":"queued","default_agent":"opencode"}}`),
+		stdout: []byte(`{"workflow":{"id":"run_1","status":"queued","default_agent":"opencode"}}`),
 	}
 
 	client := newTestClient(runner)
 
 	run, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
 		RepoPath:     "/repo",
-		WorktreePath: "/worktrees/grilling-1",
+		WorktreePath: "/worktrees/feature-1",
 		AgentKind:    "pi",
 		Source:       "grove",
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "run_griller_1", run.WorkflowID)
+	assert.Equal(t, "run_1", run.WorkflowID)
 	assert.Equal(t, "queued", run.Status)
 }
 
-func TestStartWorkflow_GrillingDefaultsToImpKind(t *testing.T) {
+func TestStartWorkflow_KindlessRequestDefaultsToImp(t *testing.T) {
 	runner := newFakeRunner()
 	runner.responses["workflow"] = fakeResponse{
-		stdout: []byte(`{"workflow":{"id":"run_griller_1","status":"queued","kind":"imp"}}`),
+		stdout: []byte(`{"workflow":{"id":"run_1","status":"queued","kind":"imp"}}`),
 	}
 
 	client := newTestClient(runner)
 
 	req := StartWorkflowRequest{
 		RepoPath:     "/repo",
-		WorktreePath: "/worktrees/grilling-1",
+		WorktreePath: "/worktrees/feature-1",
 		AgentKind:    "pi",
 		Source:       "grove",
 	}
@@ -686,17 +687,17 @@ func TestStartWorkflow_GrillingDefaultsToImpKind(t *testing.T) {
 	assert.Equal(t, "imp", run.Kind) // Defaults to imp when not specified
 }
 
-func TestStartWorkflow_GrillingWithIssueNumber(t *testing.T) {
+func TestStartWorkflow_KindlessRequestWithIssueNumber(t *testing.T) {
 	runner := newFakeRunner()
 	runner.responses["workflow"] = fakeResponse{
-		stdout: []byte(`{"workflow":{"id":"run_griller_2","status":"queued","github":{"issue":230}}}`),
+		stdout: []byte(`{"workflow":{"id":"run_2","status":"queued","github":{"issue":230}}}`),
 	}
 
 	client := newTestClient(runner)
 
 	run, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
 		RepoPath:     "/repo",
-		WorktreePath: "/worktrees/grilling-1",
+		WorktreePath: "/worktrees/feature-1",
 		IssueNumber:  intPtr(230),
 		AgentKind:    "pi",
 		Source:       "grove",
@@ -704,4 +705,24 @@ func TestStartWorkflow_GrillingWithIssueNumber(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 230, *run.IssueNumber)
+}
+
+func TestStartWorkflow_LabSessionPassesEntry(t *testing.T) {
+	runner := newFakeRunner()
+	runner.responses["workflow"] = fakeResponse{
+		stdout: []byte(`{"workflow":{"id":"run_shape_1","status":"queued","kind":"shape"}}`),
+	}
+	client := newTestClient(runner)
+
+	run, err := client.StartWorkflow(context.Background(), StartWorkflowRequest{
+		Kind:     "shape",
+		RepoPath: "/repo",
+		EntryID:  "20260928-081530-abcdef",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "run_shape_1", run.RunID)
+
+	args := runner.lastCall()
+	assert.Contains(t, strings.Join(args, " "), "--kind shape")
+	assert.Contains(t, strings.Join(args, " "), "--entry 20260928-081530-abcdef")
 }

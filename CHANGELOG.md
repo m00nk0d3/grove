@@ -9,8 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Lab view** — `'l'` opens the Lab, a persistent collection of ideas and bugs discovered during work. Each repository stores its lab under `~/.grove/labs/<repo-path>/labs.json`. Entries have a kind (`idea` or `bug`), title, and content. Select an entry and press `Enter` to edit it. Press `/` to search entries as you type. Keys `1`, `2`, and `3` cycle between *All*, *Idea*, and *Bug* filters.
-- **Grill entry** — select a Lab entry and press `Enter` to open the Actions panel, then choose *Grill entry*. This starts an agent workflow with a grilling session for the entry, using its title as the work item. The workflow runs in Herdr and can be inspected like any other mission.
+- **Lab** — a navigation rail tab (`l`) for ideas and bugs before they become
+  issues, rebuilt to the design in `docs/LAB_DESIGN.md`. Entries are stored in
+  `<git-common-dir>/grove-lab/`, shared by every worktree and never committed,
+  and written atomically so concurrent Grove instances do not overwrite each
+  other. `c` captures an entry in a multi-line editor whose first line is the
+  title; `Enter` edits a draft; the Actions panel archives, restores, and
+  deletes. The list has *Active / Attention*, *Drafts*, *Published*, and
+  *Archived* tabs, switched with `[` and `]`, and `1`, `2`, and `3` filter by
+  kind. Rows follow the entry's Sandcastle run: an agent waiting for an answer
+  is marked *Waiting on you* and sorted first, and each row shows the step
+  reached and the session's Herdr pane, which `Enter` opens. `v` opens an
+  inspector with *Overview*, *Steps*, *Artifacts*, and *Capture* tabs; drafted
+  artifacts are rendered as Markdown. *Shape into an issue* starts a shaping
+  session: a new `shape` Sandcastle workflow opens the configured agent in a
+  Herdr pane with a bug-report brief, the user answers its questions there, and
+  the draft `issue.md` appears in the inspector. The session reports each
+  question and the finished draft as *Waiting on you* and stays open for
+  revisions until it is ended from Grove. Starting a session holds the entry's
+  lock, so a second Grove instance cannot start another for the same entry.
+  In the inspector, `a`, `x`, `e`, and `c` approve, discard, edit, or ask for
+  changes to a drafted artifact; an approval is tied to the content it was
+  given on. `p` or *Publish issue* previews exactly what will be created, and
+  on `y` Grove creates the issue through `gh` with the `bug` label and places
+  it in `Backlog` on the board named by the new `lab.project` setting, the
+  repository's linked board, or one chosen and remembered. The issue number is
+  recorded the moment it exists, so a failed board placement is retried
+  without creating a duplicate. This is Grove's first GitHub write; ADR-0001
+  records it. *Grill* starts a grilling session on an idea: the runtime now
+  ships pinned copies of the grill-with-docs, to-spec, and to-tickets skills
+  from mattpocock/skills (MIT), and the agent interviews the user, drafts
+  `CONTEXT.md` and decision records at their repository paths, then writes the
+  spec and tickets for review. The entry's status follows the session through
+  *specced* and *ticketed*. Approving a `CONTEXT.md` or decision record copies
+  it into the checkout, uncommitted, and refuses a draft that would drop lines
+  from an existing file. Drafted tickets are validated and shown in publish
+  order. Publishing a grilled idea creates an epic from the spec, with a
+  summary of the approved glossary and decisions, then its tickets blockers
+  first as native sub-issues with native blocked-by links, all in `Backlog`;
+  missing `epic` and `ready-for-agent` labels are created. Every issue and link
+  is recorded as it is made, so an interrupted publication finishes on the next
+  attempt without duplicating anything. *Escalate to grill* takes a shaped bug
+  into a grilling session seeded with its report; a bug already published
+  becomes a sub-issue of the resulting epic. `Enter` on a published entry opens
+  its epic or issue in the Issues tab, and *Open on GitHub* opens it in the
+  browser. Archiving an entry with a running session asks, then ends it;
+  deleting is refused while one runs. Each run has its own close file, so
+  ending one session can never be undone by the next. A lock left by a Grove on
+  another machine is shown and can be cleared. The unfinished `grilling`
+  workflow kind and its unused runtime module are removed.
 
 - **A live demo on the website** — the site plays a walk through Grove, from
   mission control to starting a workflow, following it in the inspector,

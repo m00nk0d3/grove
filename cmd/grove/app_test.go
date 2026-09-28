@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1101,8 +1102,10 @@ func TestModel_JK_NavFocused_ChangesView(t *testing.T) {
 	}{
 		{name: "j from worktrees → issues", key: 'j', initialView: viewWorktrees, wantView: viewIssues},
 		{name: "j from issues → PRs", key: 'j', initialView: viewIssues, wantView: viewPRs},
-		{name: "j from PRs wraps → dashboard", key: 'j', initialView: viewPRs, wantView: viewDashboard},
-		{name: "k from dashboard → PRs", key: 'k', initialView: viewDashboard, wantView: viewPRs},
+		{name: "j from PRs → lab", key: 'j', initialView: viewPRs, wantView: viewLab},
+		{name: "j from lab wraps → dashboard", key: 'j', initialView: viewLab, wantView: viewDashboard},
+		{name: "k from dashboard wraps → lab", key: 'k', initialView: viewDashboard, wantView: viewLab},
+		{name: "k from lab → PRs", key: 'k', initialView: viewLab, wantView: viewPRs},
 		{name: "k from PRs → issues", key: 'k', initialView: viewPRs, wantView: viewIssues},
 		{name: "k from issues → worktrees", key: 'k', initialView: viewIssues, wantView: viewWorktrees},
 		{name: "k from worktrees wraps → dashboard", key: 'k', initialView: viewWorktrees, wantView: viewDashboard},
@@ -1677,6 +1680,82 @@ func TestModel_MouseClickNavigatesViews(t *testing.T) {
 	model := updated.(*Model)
 	assert.Equal(t, viewIssues, model.view)
 	assert.Equal(t, panelNav, model.focused)
+}
+
+func TestModel_MouseClickNavigatesToLab(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      2,
+		Y:      layout.panelTop + 1 + int(viewLab),
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.Equal(t, viewLab, model.view)
+	assert.Nil(t, model.activeModal)
+}
+
+// The settings row follows the views on the rail; clicking it opens settings
+// rather than switching to whichever view shares its position.
+func TestModel_MouseClickSettingsRowOpensSettings(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = 30
+	m.view = viewWorktrees
+	layout := m.mouseLayout()
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X:      2,
+		Y:      layout.panelTop + 1 + int(lastNavView) + 1,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	require.Nil(t, cmd)
+	model := updated.(*Model)
+	assert.IsType(t, &modal.SettingsModal{}, model.activeModal)
+	assert.Equal(t, viewWorktrees, model.view, "the settings row must not change the view")
+}
+
+// On a terminal too short for the whole rail, the rail scrolls to keep the
+// active view visible, and a click lands on the item drawn at that row.
+func TestModel_NavRailScrollsOnShortTerminal(t *testing.T) {
+	m := NewModel()
+	m.width = 120
+	m.height = fixedChromeRows + 3
+	m.view = viewLab
+
+	start, count := navWindow(m.height-fixedChromeRows, m.view)
+	require.Equal(t, 3, count)
+	require.LessOrEqual(t, start, int(viewLab))
+	require.Greater(t, start+count, int(viewLab), "the active view must be inside the window")
+
+	rendered := m.View()
+	assert.Contains(t, rendered, "> L: LAB")
+	assert.LessOrEqual(t, strings.Count(rendered, "\n")+1, m.height)
+
+	layout := m.mouseLayout()
+	updated, _ := m.Update(tea.MouseMsg{
+		X:      2,
+		Y:      layout.panelTop + 1, // first drawn row
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	assert.Equal(t, activeView(start), updated.(*Model).view)
+}
+
+func TestModel_L_KeyOpensLabTabWhenEmpty(t *testing.T) {
+	m := NewModel()
+	m.view = viewPRs
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	model := updated.(*Model)
+	assert.Equal(t, viewLab, model.view)
+	assert.Nil(t, model.activeModal, "an empty Lab shows its tab rather than the compose modal")
 }
 
 func TestModel_MouseClickSwitchesDashboardTabs(t *testing.T) {
@@ -4387,9 +4466,9 @@ func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
 		expectedAfterDown activeView // expected after moveDown from initial state
 	}{
 		{
-			name:              "from dashboard up goes to PRs, down goes to worktrees",
+			name:              "from dashboard up wraps to lab, down goes to worktrees",
 			initialView:       viewDashboard,
-			expectedAfterUp:   viewPRs,
+			expectedAfterUp:   viewLab,
 			expectedAfterDown: viewWorktrees,
 		},
 		{
@@ -4405,9 +4484,15 @@ func TestNavigation_CyclingIncludesDashboard(t *testing.T) {
 			expectedAfterDown: viewPRs,
 		},
 		{
-			name:              "from PRs up goes to issues, down wraps to dashboard",
+			name:              "from PRs up goes to issues, down goes to lab",
 			initialView:       viewPRs,
 			expectedAfterUp:   viewIssues,
+			expectedAfterDown: viewLab,
+		},
+		{
+			name:              "from lab up goes to PRs, down wraps to dashboard",
+			initialView:       viewLab,
+			expectedAfterUp:   viewPRs,
 			expectedAfterDown: viewDashboard,
 		},
 	}
@@ -4466,79 +4551,3 @@ func TestRenderPRList_SelectionIsAlwaysInTheWindow(t *testing.T) {
 	}
 }
 
-// TestModel_ContextActionGrill verifies that when ContextActionGrill is used with
-// a selected lab entry and worktree, it creates a WorkflowLaunchMsg with Kind="grilling"
-// and calls startGrillingWorkflowCmd.
-func TestModel_ContextActionGrill(t *testing.T) {
-	tests := []struct {
-		name      string
-		view      activeView
-		labs      []domain.LabEntry
-		worktrees []domain.Worktree
-		idx       int
-		wantKind  string
-		wantErr   string // empty if no error expected
-	}{
-		{
-			name: "lab entry and worktree selected creates grilling workflow",
-			view: viewLab,
-			labs: []domain.LabEntry{{ID: "lab-1", Title: "Test Lab Entry"}},
-			worktrees: []domain.Worktree{
-				{Path: "/tmp/repo"},
-				{Branch: "main"},
-			},
-			idx:      0,
-			wantKind: modal.WorkflowKindGrilling,
-		},
-		{
-			name:      "no lab selected returns clear-msg Cmd",
-			view:      viewLab,
-			labs:      []domain.LabEntry{},
-			worktrees: []domain.Worktree{{Path: "/tmp/repo"}},
-			idx:       0,
-			wantErr:   "No Lab entry selected — select one first",
-		},
-		{
-			name:      "no worktree selected returns clear-msg Cmd",
-			view:      viewLab,
-			labs:      []domain.LabEntry{{ID: "lab-1", Title: "Test Lab"}},
-			worktrees: []domain.Worktree{},
-			idx:       0,
-			wantErr:   "No worktree selected for grilling session",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := NewModel()
-			require.NotNil(t, m)
-			m.view = tt.view
-			if len(tt.labs) > 0 {
-				m.labs = tt.labs
-				m.selectedLabIdx = tt.idx % len(tt.labs)
-			}
-			if len(tt.worktrees) > 0 {
-				m.Worktrees = tt.worktrees
-				m.selectedIdx = tt.idx % len(tt.worktrees)
-			}
-
-			updated, cmd := m.handleContextAction(modal.ContextActionGrill)
-			m2, ok := updated.(*Model)
-			require.True(t, ok)
-
-			if tt.wantErr != "" {
-				assert.Contains(t, m2.statusErr, tt.wantErr, "expected error message to contain: %s", tt.wantErr)
-				// clearMsgCmd is returned on non-blocking errors
-				assert.NotNil(t, cmd, "error case should return a Cmd (clearMsg or clearError)")
-			} else {
-				assert.Empty(t, m2.statusErr, "no error expected")
-				assert.NotNil(t, cmd, "expected non-nil context action Cmd")
-
-				// Verify that the request would have had Kind="grilling"
-				// The startGrillingWorkflowCmd is called with a WorkflowLaunchMsg that we can't directly inspect,
-				// but we can verify the statusMsg was set correctly.
-				assert.Contains(t, m2.statusMsg, "grilling session", "status message should mention grilling session")
-			}
-		})
-	}
-}

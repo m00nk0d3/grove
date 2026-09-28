@@ -534,98 +534,42 @@ func (m *MissionModal) renderImplementation() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func (m *MissionModal) field(label, value string) string {
-	return fmt.Sprintf("  %s %s\n", m.mutedStyle().Render(fmt.Sprintf("%-14s", label)), value)
+func (m *MissionModal) chrome() inspectorChrome {
+	return inspectorChrome{theme: m.theme, width: m.width}
 }
 
-func (m *MissionModal) heading(value string) string {
-	return m.accentStyle().Bold(true).Render("◆ " + value)
-}
+func (m *MissionModal) field(label, value string) string { return m.chrome().field(label, value) }
+
+func (m *MissionModal) heading(value string) string { return m.chrome().heading(value) }
 
 func (m *MissionModal) metricCard(label, value string, width int) string {
-	return lipgloss.NewStyle().
-		Width(max(8, width-2)).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(m.accentStyle().GetForeground()).
-		Padding(0, 1).
-		Render(m.mutedStyle().Render(label) + "\n" + m.accentStyle().Bold(true).Render(value))
+	return m.chrome().metricCard(label, value, width)
 }
 
 func (m *MissionModal) sectionPanel(title, content string, width int) string {
-	return lipgloss.NewStyle().
-		Width(max(20, width-4)).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(m.mutedStyle().GetForeground()).
-		Padding(0, 1).
-		Render(m.accentStyle().Bold(true).Render(title) + "\n\n" + content)
+	return m.chrome().sectionPanel(title, content, width)
 }
 
-func (m *MissionModal) contentWidth() int {
-	width := m.width - 12
-	if width < 48 {
-		return 48
-	}
-	if width > 132 {
-		return 132
-	}
-	return width
-}
+func (m *MissionModal) contentWidth() int { return m.chrome().contentWidth() }
 
 func (m *MissionModal) truncate(value string) string {
 	return m.truncateTo(value, m.contentWidth()-18)
 }
 
 func (m *MissionModal) truncateTo(value string, width int) string {
-	if lipgloss.Width(value) <= width {
-		return value
-	}
-	if width <= 1 {
-		return "…"
-	}
-	runes := []rune(value)
-	if len(runes) >= width {
-		runes = runes[:width-1]
-	}
-	return string(runes) + "…"
+	return m.chrome().truncateTo(value, width)
 }
 
-func (m *MissionModal) accentStyle() lipgloss.Style {
-	if m.theme == nil {
-		return lipgloss.NewStyle()
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Accent()))
-}
+func (m *MissionModal) accentStyle() lipgloss.Style { return m.chrome().accentStyle() }
 
-func (m *MissionModal) mutedStyle() lipgloss.Style {
-	if m.theme == nil {
-		return lipgloss.NewStyle()
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Muted()))
-}
+func (m *MissionModal) mutedStyle() lipgloss.Style { return m.chrome().mutedStyle() }
 
-func (m *MissionModal) keyStyle() lipgloss.Style { return m.accentStyle().Bold(true) }
+func (m *MissionModal) keyStyle() lipgloss.Style { return m.chrome().keyStyle() }
 
-func (m *MissionModal) selectedStyle() lipgloss.Style {
-	if m.theme == nil {
-		return lipgloss.NewStyle().Bold(true)
-	}
-	return m.theme.GetStyle("selected-row")
-}
+func (m *MissionModal) selectedStyle() lipgloss.Style { return m.chrome().selectedStyle() }
 
 func (m *MissionModal) statusStyle(status string) lipgloss.Style {
-	if m.theme == nil {
-		return lipgloss.NewStyle()
-	}
-	switch strings.ToLower(status) {
-	case "running", "working":
-		return m.accentStyle()
-	case "succeeded", "done":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Success()))
-	case "failed", "blocked":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Warning()))
-	default:
-		return m.mutedStyle()
-	}
+	return m.chrome().statusStyle(status)
 }
 
 func progressBar(percent, width int) string {

@@ -12,6 +12,7 @@ type Config struct {
 	Herdr      HerdrConfig      `toml:"herdr"`
 	Sandcastle SandcastleConfig `toml:"sandcastle"`
 	Worktrees  WorktreesConfig  `toml:"worktrees"`
+	Lab        LabConfig        `toml:"lab"`
 }
 
 type GitHubConfig struct {
@@ -86,4 +87,12 @@ func (c WorktreesConfig) WorktreePath(repoPath, slug string) string {
 		root = filepath.Join(repoPath, root)
 	}
 	return filepath.Join(filepath.Clean(root), filepath.Base(repoPath), slug)
+}
+
+// LabConfig configures the Lab.
+type LabConfig struct {
+	// Project is the GitHub project board published issues are added to, as
+	// "owner/number". When empty and the repository is linked to exactly one
+	// project, that project is used.
+	Project string `toml:"project"`
 }
