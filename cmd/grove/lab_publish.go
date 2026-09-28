@@ -24,6 +24,9 @@ type labGitHub interface {
 	LinkedProjects(repo string) ([]internalexec.LabProject, error)
 	Project(owner string, number int) (internalexec.LabProject, error)
 	PlaceOnBoard(p internalexec.LabProject, issueURL, status string) error
+	EnsureLabels(repo string, labels []string) error
+	AddSubIssue(repo string, parent, child int) error
+	AddBlockedBy(repo string, issue, blocker int) error
 }
 
 var newLabGitHub = func(repoPath string) labGitHub { return internalexec.NewGitHubWriter(repoPath) }
@@ -34,8 +37,12 @@ var labConfigPath = data.DefaultConfigPath
 // labBacklogStatus is the board status published issues are placed in.
 const labBacklogStatus = "Backlog"
 
-// labIssueDraft is the artifact a shaped bug publishes.
-const labIssueDraft = "issue.md"
+// Labels a publication applies.
+const (
+	labBugLabel    = "bug"
+	labEpicLabel   = "epic"
+	labTicketLabel = "ready-for-agent"
+)
 
 // labPublishRequires lists the artifacts that must be approved before e can be
 // published, or nil when e cannot be published.
@@ -43,10 +50,140 @@ func labPublishRequires(e domain.LabEntry) []string {
 	if e.Archived || e.Status == domain.LabStatusPublished {
 		return nil
 	}
-	if e.Mode == domain.LabModeShape && e.Status == domain.LabStatusShaping {
-		return []string{labIssueDraft}
+	switch {
+	case e.Mode == domain.LabModeShape && e.Status == domain.LabStatusShaping:
+		return []string{domain.LabIssueArtifact}
+	case e.Mode == domain.LabModeGrill && (e.Status == domain.LabStatusSpecced || e.Status == domain.LabStatusTicketed):
+		return []string{domain.LabSpecArtifact, domain.LabTicketsArtifact}
 	}
 	return nil
+}
+
+// labDraft is what an entry publishes, read from its approved artifacts: one
+// issue for a shaped bug, or an epic and its tickets for a grilled idea.
+type labDraft struct {
+	title   string
+	body    string
+	labels  []string
+	tickets []domain.LabTicket
+	// hash identifies every artifact that went into the draft, so publishing
+	// can tell the preview is still current.
+	hash string
+}
+
+// readLabDraft builds e's publication from its approved artifacts.
+func readLabDraft(store *data.LabStore, e domain.LabEntry) (labDraft, error) {
+	required := labPublishRequires(e)
+	if required == nil {
+		return labDraft{}, errors.New("this entry cannot be published")
+	}
+	artifacts, err := store.Artifacts(e.ID)
+	if err != nil {
+		return labDraft{}, err
+	}
+	approved := make(map[string]domain.LabArtifact)
+	for _, path := range required {
+		found := false
+		for _, a := range artifacts {
+			if a.Path != path {
+				continue
+			}
+			found = true
+			if e.ReviewOf(a) != domain.LabReviewApproved {
+				return labDraft{}, fmt.Errorf("approve %s in the inspector before publishing", path)
+			}
+			approved[path] = a
+		}
+		if !found {
+			return labDraft{}, fmt.Errorf("there is no %s to publish yet", path)
+		}
+	}
+
+	var d labDraft
+	var hashes []string
+	if e.Mode == domain.LabModeShape {
+		issue := approved[domain.LabIssueArtifact]
+		d.title, d.body = domain.ParseIssueDraft(issue.Body)
+		d.labels = []string{labBugLabel}
+		hashes = append(hashes, domain.LabContentHash(issue.Body))
+	} else {
+		spec, tickets := approved[domain.LabSpecArtifact], approved[domain.LabTicketsArtifact]
+		d.tickets, err = domain.ParseLabTickets(tickets.Body)
+		if err != nil {
+			return labDraft{}, err
+		}
+		d.title, d.body = domain.ParseIssueDraft(spec.Body)
+		d.labels = []string{labEpicLabel}
+		hashes = append(hashes, domain.LabContentHash(spec.Body), domain.LabContentHash(tickets.Body))
+		// The epic summarises the approved glossary and decision records, so
+		// the agents implementing its tickets have them before they are
+		// committed.
+		var docs []domain.LabArtifact
+		for _, a := range artifacts {
+			if domain.IsLabRepositoryDocument(a.Path) && e.ReviewOf(a) == domain.LabReviewApproved {
+				docs = append(docs, a)
+				hashes = append(hashes, a.Path+":"+domain.LabContentHash(a.Body))
+			}
+		}
+		if section := labGlossarySection(docs); section != "" {
+			d.body = strings.TrimSpace(d.body) + "\n\n" + section
+		}
+	}
+	if d.title == "" {
+		d.title = e.Title()
+	}
+	d.hash = domain.LabContentHash(strings.Join(hashes, "\n"))
+	return d, nil
+}
+
+// labGlossarySection summarises approved repository documents for an epic:
+// each decision record by its title and first paragraph, and each glossary in
+// full, folded.
+func labGlossarySection(docs []domain.LabArtifact) string {
+	var decisions, glossaries []string
+	for _, a := range docs {
+		title, body := domain.ParseIssueDraft(a.Body)
+		switch {
+		case strings.HasSuffix(a.Path, "CONTEXT.md") || a.Path == "CONTEXT-MAP.md":
+			glossaries = append(glossaries, fmt.Sprintf("<details>\n<summary><code>%s</code></summary>\n\n%s\n\n</details>", a.Path, strings.TrimSpace(a.Body)))
+		case strings.Contains(a.Path, "docs/adr/"):
+			if title == "" {
+				title = a.Path
+			}
+			summary, _, _ := strings.Cut(strings.TrimSpace(body), "\n\n")
+			decisions = append(decisions, fmt.Sprintf("- **%s** (`%s`): %s", title, a.Path, strings.TrimSpace(summary)))
+		}
+	}
+	if len(decisions) == 0 && len(glossaries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Glossary and decisions\n\n")
+	b.WriteString("Settled while this epic was grilled, and approved into the repository.\n")
+	if len(decisions) > 0 {
+		b.WriteString("\n### Decisions\n\n")
+		b.WriteString(strings.Join(decisions, "\n"))
+		b.WriteString("\n")
+	}
+	if len(glossaries) > 0 {
+		b.WriteString("\n### Glossary\n\n")
+		b.WriteString(strings.Join(glossaries, "\n\n"))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// labResumeNote describes what an earlier, interrupted publication of e
+// already created, or "" when nothing was.
+func labResumeNote(e domain.LabEntry, d labDraft) string {
+	switch {
+	case e.Mode == domain.LabModeShape && e.Issues.Issue != nil:
+		return fmt.Sprintf("Issue #%d was created by an earlier attempt; it is placed on the board, not created again.", *e.Issues.Issue)
+	case e.Mode == domain.LabModeGrill && e.Issues.Epic != nil:
+		return fmt.Sprintf("Epic #%d and %d of %d tickets were created by an earlier attempt; publishing finishes the rest.",
+			*e.Issues.Epic, len(e.Issues.Published), len(d.tickets))
+	}
+	return ""
 }
 
 // labPendingPublish is a previewed publication waiting for confirmation: what
@@ -54,6 +191,7 @@ func labPublishRequires(e domain.LabEntry) []string {
 type labPendingPublish struct {
 	plan     modal.LabPublishPlan
 	hash     string
+	tickets  []domain.LabTicket
 	projects map[string]internalexec.LabProject
 }
 
@@ -64,31 +202,12 @@ type labPublishPlanMsg struct {
 }
 
 // labPublishedMsg reports a publication. Entries are reloaded even when it
-// failed partway, so an issue that was created is recorded.
+// failed partway, so whatever was created is recorded.
 type labPublishedMsg struct {
 	loaded   labsLoadedMsg
-	number   int
 	boardRef string
 	chosen   bool
 	err      error
-}
-
-// approvedIssueDraft returns e's approved issue draft.
-func approvedIssueDraft(store *data.LabStore, e domain.LabEntry) (domain.LabArtifact, error) {
-	artifacts, err := store.Artifacts(e.ID)
-	if err != nil {
-		return domain.LabArtifact{}, err
-	}
-	for _, a := range artifacts {
-		if a.Path != labIssueDraft {
-			continue
-		}
-		if e.ReviewOf(a) != domain.LabReviewApproved {
-			return domain.LabArtifact{}, fmt.Errorf("approve %s in the inspector before publishing", labIssueDraft)
-		}
-		return a, nil
-	}
-	return domain.LabArtifact{}, fmt.Errorf("there is no %s to publish yet", labIssueDraft)
 }
 
 // prepareLabPublish builds the preview of publishing e.
@@ -106,13 +225,9 @@ func (m *Model) prepareLabPublish(e domain.LabEntry) (tea.Model, tea.Cmd) {
 		if err != nil {
 			return fail(err)
 		}
-		draft, err := approvedIssueDraft(store, e)
+		d, err := readLabDraft(store, e)
 		if err != nil {
 			return fail(err)
-		}
-		title, body := domain.ParseIssueDraft(draft.Body)
-		if title == "" {
-			title = e.Title()
 		}
 		gh := newLabGitHub(repoPath)
 		repo, err := gh.Repo()
@@ -136,17 +251,21 @@ func (m *Model) prepareLabPublish(e domain.LabEntry) (tea.Model, tea.Cmd) {
 		}
 
 		pending := labPendingPublish{
-			hash:     domain.LabContentHash(draft.Body),
+			hash:     d.hash,
+			tickets:  d.tickets,
 			projects: make(map[string]internalexec.LabProject),
 			plan: modal.LabPublishPlan{
-				EntryID:  e.ID,
-				Repo:     repo,
-				Title:    title,
-				Body:     body,
-				Labels:   []string{"bug"},
-				Board:    -1,
-				Existing: e.Issues.Issue,
+				EntryID: e.ID,
+				Repo:    repo,
+				Title:   d.title,
+				Body:    d.body,
+				Labels:  d.labels,
+				Board:   -1,
+				Resume:  labResumeNote(e, d),
 			},
+		}
+		for _, t := range d.tickets {
+			pending.plan.Tickets = append(pending.plan.Tickets, modal.LabPublishTicket{Key: t.Key, Title: t.Title, BlockedBy: t.BlockedBy})
 		}
 		for _, p := range projects {
 			pending.plan.Boards = append(pending.plan.Boards, modal.LabPublishBoard{Ref: p.Ref(), Title: p.Title})
@@ -172,9 +291,146 @@ func (m *Model) handleLabPublishPlan(msg labPublishPlanMsg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
+// labPublication publishes one entry, saving its progress after every step
+// that creates or links something, so an interrupted publication resumes
+// instead of repeating work.
+type labPublication struct {
+	gh      labGitHub
+	store   *data.LabStore
+	entry   domain.LabEntry
+	plan    modal.LabPublishPlan
+	tickets []domain.LabTicket
+	board   *internalexec.LabProject
+}
+
+func (p *labPublication) save() error {
+	p.entry.Updated = time.Now().UTC()
+	return p.store.Put(p.entry)
+}
+
+func (p *labPublication) issueURL(number int) string {
+	return fmt.Sprintf("https://github.com/%s/issues/%d", p.plan.Repo, number)
+}
+
+func (p *labPublication) place(number int) error {
+	if p.board == nil {
+		return nil
+	}
+	if err := p.gh.PlaceOnBoard(*p.board, p.issueURL(number), labBacklogStatus); err != nil {
+		return fmt.Errorf("created #%d, but %w — publish again to retry", number, err)
+	}
+	return nil
+}
+
+// issue publishes a shaped bug as one issue and returns its number.
+func (p *labPublication) issue() (int, error) {
+	if p.entry.Issues.Issue == nil {
+		if err := p.gh.EnsureLabels(p.plan.Repo, p.plan.Labels); err != nil {
+			return 0, err
+		}
+		number, _, err := p.gh.CreateIssue(p.plan.Repo, p.plan.Title, p.plan.Body, p.plan.Labels)
+		if err != nil {
+			return 0, err
+		}
+		p.entry.Issues.Issue = &number
+		if err := p.save(); err != nil {
+			return 0, fmt.Errorf("created issue #%d but could not record it: %w", number, err)
+		}
+	}
+	number := *p.entry.Issues.Issue
+	return number, p.place(number)
+}
+
+// epic publishes a grilled idea: the epic, then its tickets blockers first,
+// each a sub-issue of the epic, then their blocked-by links, then the board.
+func (p *labPublication) epic() (int, error) {
+	if err := p.gh.EnsureLabels(p.plan.Repo, []string{labEpicLabel, labTicketLabel}); err != nil {
+		return 0, err
+	}
+	if p.entry.Issues.Epic == nil {
+		number, _, err := p.gh.CreateIssue(p.plan.Repo, p.plan.Title, p.plan.Body, []string{labEpicLabel})
+		if err != nil {
+			return 0, err
+		}
+		p.entry.Issues.Epic = &number
+		if err := p.save(); err != nil {
+			return 0, fmt.Errorf("created epic #%d but could not record it: %w", number, err)
+		}
+	}
+	epic := *p.entry.Issues.Epic
+	if p.entry.Issues.Published == nil {
+		p.entry.Issues.Published = make(map[string]domain.LabPublishedTicket)
+	}
+	progress := func(done int) error {
+		return fmt.Errorf("epic #%d and %d of %d tickets are published", epic, done, len(p.tickets))
+	}
+
+	for _, t := range p.tickets {
+		if _, ok := p.entry.Issues.Published[t.Key]; ok {
+			continue
+		}
+		number, _, err := p.gh.CreateIssue(p.plan.Repo, t.Title, strings.TrimSpace(t.Body), []string{labTicketLabel})
+		if err != nil {
+			return 0, fmt.Errorf("%w; creating ticket %s failed: %v — publish again to finish", progress(len(p.entry.Issues.Published)), t.Key, err)
+		}
+		p.entry.Issues.Published[t.Key] = domain.LabPublishedTicket{Number: number}
+		p.entry.Issues.Tickets = append(p.entry.Issues.Tickets, number)
+		if err := p.save(); err != nil {
+			return 0, fmt.Errorf("created ticket #%d but could not record it: %w", number, err)
+		}
+	}
+
+	for _, t := range p.tickets {
+		published := p.entry.Issues.Published[t.Key]
+		if !published.SubIssue {
+			if err := p.gh.AddSubIssue(p.plan.Repo, epic, published.Number); err != nil {
+				return 0, fmt.Errorf("every ticket is created, but %w — publish again to finish", err)
+			}
+			published.SubIssue = true
+			p.entry.Issues.Published[t.Key] = published
+			if err := p.save(); err != nil {
+				return 0, err
+			}
+		}
+		for _, blocker := range t.BlockedBy {
+			if containsString(published.BlockedBy, blocker) {
+				continue
+			}
+			if err := p.gh.AddBlockedBy(p.plan.Repo, published.Number, p.entry.Issues.Published[blocker].Number); err != nil {
+				return 0, fmt.Errorf("every ticket is created, but %w — publish again to finish", err)
+			}
+			published.BlockedBy = append(published.BlockedBy, blocker)
+			p.entry.Issues.Published[t.Key] = published
+			if err := p.save(); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	if err := p.place(epic); err != nil {
+		return 0, err
+	}
+	for _, t := range p.tickets {
+		if err := p.place(p.entry.Issues.Published[t.Key].Number); err != nil {
+			return 0, err
+		}
+	}
+	return epic, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
 // publishLabEntry performs a confirmed publication. It holds the entry's lock,
-// publishes exactly what the preview showed, and records the issue the moment
-// it exists so an interrupted publication resumes instead of duplicating it.
+// publishes exactly what the preview showed, and records each issue and link
+// the moment it exists, so an interrupted publication resumes instead of
+// duplicating anything.
 func (m *Model) publishLabEntry(msg modal.LabPublishConfirmedMsg) (tea.Model, tea.Cmd) {
 	m.activeModal = nil
 	pending := m.labPending
@@ -218,47 +474,40 @@ func (m *Model) publishLabEntry(msg modal.LabPublishConfirmedMsg) (tea.Model, te
 		if e.ID == "" {
 			return done(errors.New("the entry no longer exists"), store, "")
 		}
-		draft, err := approvedIssueDraft(store, e)
+		d, err := readLabDraft(store, e)
 		if err != nil {
 			return done(err, store, "")
 		}
-		if domain.LabContentHash(draft.Body) != pending.hash {
-			return done(fmt.Errorf("%s changed after the preview; review it and publish again", labIssueDraft), store, "")
+		if d.hash != pending.hash {
+			return done(errors.New("the drafts changed after the preview; review them and publish again"), store, "")
 		}
 
-		plan := pending.plan
-		gh := newLabGitHub(repoPath)
-		if e.Issues.Issue == nil {
-			number, _, err := gh.CreateIssue(plan.Repo, plan.Title, plan.Body, plan.Labels)
-			if err != nil {
-				return done(err, store, "")
-			}
-			e.Issues.Issue = &number
-			e.Updated = time.Now().UTC()
-			if err := store.Put(e); err != nil {
-				return done(fmt.Errorf("created issue #%d but could not record it: %w", number, err), store, "")
-			}
-		}
-		result.number = *e.Issues.Issue
-
+		pub := &labPublication{gh: newLabGitHub(repoPath), store: store, entry: e, plan: pending.plan, tickets: pending.tickets}
 		if msg.BoardRef != "" {
-			p, ok := pending.projects[msg.BoardRef]
+			board, ok := pending.projects[msg.BoardRef]
 			if !ok {
 				return done(fmt.Errorf("unknown board %s", msg.BoardRef), store, "")
 			}
-			url := fmt.Sprintf("https://github.com/%s/issues/%d", plan.Repo, result.number)
-			if err := gh.PlaceOnBoard(p, url, labBacklogStatus); err != nil {
-				return done(fmt.Errorf("created issue #%d, but %w — publish again to retry the board", result.number, err), store, "")
-			}
+			pub.board = &board
 		}
-
-		e.Status = domain.LabStatusPublished
-		e.Updated = time.Now().UTC()
-		if err := store.Put(e); err != nil {
+		var number int
+		var status string
+		if e.Mode == domain.LabModeShape {
+			number, err = pub.issue()
+			status = fmt.Sprintf("Published %q as #%d in %s", pub.plan.Title, number, pub.plan.Repo)
+		} else {
+			number, err = pub.epic()
+			status = fmt.Sprintf("Published epic %q as #%d with %d tickets in %s", pub.plan.Title, number, len(pub.tickets), pub.plan.Repo)
+		}
+		if err != nil {
 			return done(err, store, "")
 		}
-		closeErr := store.CloseSession(e.ID)
-		return done(closeErr, store, fmt.Sprintf("Published %q as #%d in %s", plan.Title, result.number, plan.Repo))
+
+		pub.entry.Status = domain.LabStatusPublished
+		if err := pub.save(); err != nil {
+			return done(err, store, "")
+		}
+		return done(store.CloseSession(e.ID), store, status)
 	}
 }
 

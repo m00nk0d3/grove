@@ -110,6 +110,17 @@ otherwise the repository's linked board, or a choice among several, which Grove
 remembers. If adding it to the board fails, the created issue is recorded and
 publishing again only retries the board.
 
+A grilled idea publishes once `spec.md` and `tickets.json` are approved. The
+preview lists every ticket and what blocks it. Grove creates the epic from the
+spec, labelled `epic`, with a *Glossary and decisions* section summarising the
+approved `CONTEXT.md` and decision records; then each ticket, blockers first,
+labelled `ready-for-agent`, as a native sub-issue of the epic with native
+blocked-by links to its blockers; then puts them all in `Backlog`. Labels that
+do not exist yet are created; existing ones are left as they are. Every issue
+and link is recorded as it is made, so a publication interrupted part-way —
+by a rate limit, say — finishes on the next attempt without repeating any of
+it.
+
 ### Inspecting an entry
 
 `v` opens the inspector: header cards for stage, elapsed time, artifacts, and

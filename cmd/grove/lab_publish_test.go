@@ -38,6 +38,9 @@ func (g unreachableGitHub) LinkedProjects(string) ([]internalexec.LabProject, er
 func (g unreachableGitHub) Project(string, int) (internalexec.LabProject, error) {
 	return internalexec.LabProject{}, g.fail()
 }
+func (g unreachableGitHub) EnsureLabels(string, []string) error { return g.fail() }
+func (g unreachableGitHub) AddSubIssue(string, int, int) error  { return g.fail() }
+func (g unreachableGitHub) AddBlockedBy(string, int, int) error { return g.fail() }
 func (g unreachableGitHub) PlaceOnBoard(internalexec.LabProject, string, string) error {
 	return g.fail()
 }
@@ -53,11 +56,20 @@ type fakeGitHub struct {
 	nextIssue int
 	placeErr  error
 	createErr error
+	ensured   []string
+	links     []string // "#child ⊂ #parent" and "#issue ⊣ #blocker", in order
+	linkErr   error
+	linkErrAt int
+	// failCreateAt fails the create after that many issues were created.
+	failCreateAt int
 }
 
 func (f *fakeGitHub) Repo() (string, error) { return "m00nk0d3/grove", nil }
 func (f *fakeGitHub) CreateIssue(repo, title, body string, labels []string) (int, string, error) {
-	if f.createErr != nil {
+	if f.createErr != nil || (f.failCreateAt > 0 && len(f.created) == f.failCreateAt) {
+		if f.createErr == nil {
+			return 0, "", errors.New("secondary rate limit")
+		}
 		return 0, "", f.createErr
 	}
 	f.created = append(f.created, title)
@@ -216,8 +228,8 @@ func TestLabPublish_BoardFailureResumesWithoutDuplicating(t *testing.T) {
 		m = step(t, updated.(*Model), cmd)
 	}
 	publish()
-	assert.Contains(t, m.statusErr, "created issue #251, but")
-	assert.Contains(t, m.statusErr, "publish again to retry the board")
+	assert.Contains(t, m.statusErr, "created #251, but project not found")
+	assert.Contains(t, m.statusErr, "publish again to retry")
 	stored, _ := store.Load()
 	require.NotNil(t, stored[0].Issues.Issue, "the created issue is recorded despite the failure")
 	assert.Equal(t, domain.LabStatusShaping, stored[0].Status)
@@ -329,4 +341,212 @@ func TestLabEditorCommand(t *testing.T) {
 
 	t.Setenv("VISUAL", "nvim")
 	assert.Equal(t, []string{"nvim", "/x/issue.md"}, labEditorCommand("/x/issue.md").Args)
+}
+
+func (f *fakeGitHub) EnsureLabels(_ string, labels []string) error {
+	f.ensured = append(f.ensured, labels...)
+	return nil
+}
+
+func (f *fakeGitHub) AddSubIssue(_ string, parent, child int) error {
+	if f.linkErr != nil && f.linkErrAt == len(f.links) {
+		return f.linkErr
+	}
+	f.links = append(f.links, fmt.Sprintf("#%d ⊂ #%d", child, parent))
+	return nil
+}
+
+func (f *fakeGitHub) AddBlockedBy(_ string, issue, blocker int) error {
+	if f.linkErr != nil && f.linkErrAt == len(f.links) {
+		return f.linkErr
+	}
+	f.links = append(f.links, fmt.Sprintf("#%d ⊣ #%d", issue, blocker))
+	return nil
+}
+
+const grilledSpec = "# Offline mode for the dashboard\n\n## Problem Statement\nThe dashboard is empty offline.\n"
+
+const grilledTickets = `{"tickets":[
+	{"key":"01","title":"Cache the last sync","body":"## What to build\nCache it.","blocked_by":[]},
+	{"key":"02","title":"Show data age","body":"## What to build\nShow age.","blocked_by":["01"]},
+	{"key":"03","title":"Sync on reconnect","body":"## What to build\nResync.","blocked_by":["01","02"]}
+]}`
+
+const grilledADR = "# Cache until the next sync\n\nCached data stays until the next sync, because a stale view beats an empty one.\n\nMore detail.\n"
+
+const grilledContext = "# Grove\n\n**Lab entry**:\nAn idea or bug.\n"
+
+// grilledEntry stores a grilled idea whose drafts are written and approved,
+// tickets.json only when approveTickets is set.
+func grilledEntry(t *testing.T, store *data.LabStore, approveTickets bool) domain.LabEntry {
+	t.Helper()
+	e := domain.NewLabEntry(domain.LabKindIdea, "Offline mode", time.Now())
+	e.Mode, e.Status = domain.LabModeGrill, domain.LabStatusTicketed
+	files := map[string]string{
+		"spec.md":                grilledSpec,
+		"tickets.json":           grilledTickets,
+		"docs/adr/0003-cache.md": grilledADR,
+		"CONTEXT.md":             grilledContext,
+	}
+	for path, body := range files {
+		full := filepath.Join(store.ArtifactsDir(e.ID), filepath.FromSlash(path))
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(t, os.WriteFile(full, []byte(body), 0o644))
+		if path != "tickets.json" || approveTickets {
+			e.SetReview(domain.LabArtifact{Path: path, Body: body}, domain.LabReviewApproved)
+		}
+	}
+	require.NoError(t, store.Put(e))
+	return e
+}
+
+func epicModel(t *testing.T, gh *fakeGitHub, approveTickets bool) (*Model, *data.LabStore, domain.LabEntry) {
+	t.Helper()
+	withFakeGitHub(t, gh)
+	store := data.NewLabStore(withLabCommonDir(t))
+	e := grilledEntry(t, store, approveTickets)
+	m := newLabModel(t)
+	m.lab.entries, _ = store.Load()
+	m.lab.setTab(labTabActive)
+	return m, store, e
+}
+
+// publishEpic previews and confirms, as the user would, and returns the model.
+func publishEpic(t *testing.T, m *Model, e domain.LabEntry, boardRef string) *Model {
+	t.Helper()
+	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
+	m = step(t, updated.(*Model), cmd)
+	require.IsType(t, &modal.LabPublishModal{}, m.activeModal, m.statusErr)
+	updated, cmd = m.publishLabEntry(modal.LabPublishConfirmedMsg{EntryID: e.ID, BoardRef: boardRef})
+	return step(t, updated.(*Model), cmd)
+}
+
+var wantEpicLinks = []string{
+	"#252 ⊂ #251",
+	"#253 ⊂ #251", "#253 ⊣ #252",
+	"#254 ⊂ #251", "#254 ⊣ #252", "#254 ⊣ #253",
+}
+
+func TestLabPublishEpic_EpicThenTicketsThenLinksThenBoard(t *testing.T) {
+	gh := &fakeGitHub{boards: []internalexec.LabProject{{ID: "PVT_1", Owner: "m00nk0d3", Number: 3, Title: "Roadmap"}}}
+	m, store, e := epicModel(t, gh, true)
+
+	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
+	m = step(t, updated.(*Model), cmd)
+	publishPreview := m.activeModal.(*modal.LabPublishModal)
+	publishPreview.SetWidth(140)
+	preview := publishPreview.View()
+	assert.Contains(t, preview, "TICKETS  3 sub-issues")
+	assert.Contains(t, preview, "Offline mode for the dashboard")
+	assert.Empty(t, gh.created, "nothing is created before confirmation")
+
+	updated, cmd = m.publishLabEntry(modal.LabPublishConfirmedMsg{EntryID: e.ID, BoardRef: "m00nk0d3/3"})
+	m = step(t, updated.(*Model), cmd)
+	require.Empty(t, m.statusErr)
+
+	assert.Equal(t, []string{"epic", "ready-for-agent"}, gh.ensured, "missing labels are created first")
+	assert.Equal(t, []string{"Offline mode for the dashboard", "Cache the last sync", "Show data age", "Sync on reconnect"}, gh.created,
+		"the epic, then its tickets blockers first")
+	assert.Equal(t, [][]string{{"epic"}, {"ready-for-agent"}, {"ready-for-agent"}, {"ready-for-agent"}}, gh.labels)
+	assert.Equal(t, wantEpicLinks, gh.links, "every ticket is a sub-issue of the epic and linked to its real blockers")
+	assert.Len(t, gh.placed, 4, "the epic and every ticket go to the board")
+	assert.Equal(t, []string{"Backlog", "Backlog", "Backlog", "Backlog"}, gh.statuses)
+
+	epicBody := gh.bodies[0]
+	assert.Contains(t, epicBody, "## Problem Statement")
+	assert.NotContains(t, epicBody, "# Offline mode for the dashboard", "the title is not repeated in the body")
+	assert.Contains(t, epicBody, "## Glossary and decisions")
+	assert.Contains(t, epicBody, "**Cache until the next sync** (`docs/adr/0003-cache.md`): Cached data stays until the next sync")
+	assert.NotContains(t, epicBody, "More detail.", "a decision is summarised by its first paragraph")
+	assert.Contains(t, epicBody, "<summary><code>CONTEXT.md</code></summary>")
+	assert.Equal(t, "## What to build\nCache it.", gh.bodies[1])
+
+	stored, _ := store.Load()
+	got := stored[0]
+	assert.Equal(t, domain.LabStatusPublished, got.Status)
+	require.NotNil(t, got.Issues.Epic)
+	assert.Equal(t, 251, *got.Issues.Epic)
+	assert.Equal(t, []int{252, 253, 254}, got.Issues.Tickets)
+	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "session.close"))
+	assert.Contains(t, m.statusMsg, `Published epic "Offline mode for the dashboard" as #251 with 3 tickets`)
+}
+
+func TestLabPublishEpic_ResumesAfterFailedTicket(t *testing.T) {
+	gh := &fakeGitHub{failCreateAt: 2}
+	m, store, e := epicModel(t, gh, true)
+
+	m = publishEpic(t, m, e, "")
+	assert.Contains(t, m.statusErr, "epic #251 and 1 of 3 tickets are published")
+	assert.Contains(t, m.statusErr, "publish again to finish")
+	stored, _ := store.Load()
+	assert.Equal(t, domain.LabStatusTicketed, stored[0].Status)
+	assert.Equal(t, []int{252}, stored[0].Issues.Tickets)
+
+	gh.failCreateAt = 0
+	m.statusErr = ""
+	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
+	m = step(t, updated.(*Model), cmd)
+	assert.Contains(t, m.activeModal.View(), "Epic #251 and 1 of 3 tickets were created by an earlier attempt")
+	updated, cmd = m.publishLabEntry(modal.LabPublishConfirmedMsg{EntryID: e.ID})
+	m = step(t, updated.(*Model), cmd)
+
+	require.Empty(t, m.statusErr)
+	assert.Equal(t, []string{"Offline mode for the dashboard", "Cache the last sync", "Show data age", "Sync on reconnect"}, gh.created,
+		"the resume creates only what is missing")
+	stored, _ = store.Load()
+	assert.Equal(t, []int{252, 253, 254}, stored[0].Issues.Tickets)
+	assert.Equal(t, domain.LabStatusPublished, stored[0].Status)
+}
+
+func TestLabPublishEpic_ResumesAfterFailedLinkWithoutRepeatingLinks(t *testing.T) {
+	gh := &fakeGitHub{linkErr: errors.New("secondary rate limit"), linkErrAt: 3}
+	m, _, e := epicModel(t, gh, true)
+
+	m = publishEpic(t, m, e, "")
+	assert.Contains(t, m.statusErr, "every ticket is created, but secondary rate limit")
+	assert.Len(t, gh.links, 3)
+
+	gh.linkErr = nil
+	m.statusErr = ""
+	m = publishEpic(t, m, e, "")
+	require.Empty(t, m.statusErr)
+	assert.Equal(t, wantEpicLinks, gh.links, "each link is made exactly once across both attempts")
+	assert.Len(t, gh.created, 4, "nothing is created twice")
+}
+
+func TestLabPublishEpic_NeedsApprovedValidTickets(t *testing.T) {
+	gh := &fakeGitHub{}
+	m, store, e := epicModel(t, gh, false)
+
+	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
+	m = step(t, updated.(*Model), cmd)
+	assert.Contains(t, m.statusErr, "approve tickets.json in the inspector before publishing")
+
+	cyclic := `{"tickets":[{"key":"01","title":"a","blocked_by":["02"]},{"key":"02","title":"b","blocked_by":["01"]}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(store.ArtifactsDir(e.ID), "tickets.json"), []byte(cyclic), 0o644))
+	e.SetReview(domain.LabArtifact{Path: "tickets.json", Body: cyclic}, domain.LabReviewApproved)
+	require.NoError(t, store.Put(e))
+	m.lab.entries, _ = store.Load()
+	m.statusErr = ""
+
+	updated, cmd = m.handleLabAction(modal.ContextActionLabPublish)
+	m = step(t, updated.(*Model), cmd)
+	assert.Contains(t, m.statusErr, "block each other in a cycle")
+	assert.Empty(t, gh.created)
+	assert.Empty(t, gh.ensured, "nothing at all is sent for a draft that cannot be published")
+}
+
+func TestLabPublishRequires(t *testing.T) {
+	grill := domain.LabEntry{Mode: domain.LabModeGrill}
+	for status, want := range map[domain.LabStatus][]string{
+		domain.LabStatusGrilling:  nil,
+		domain.LabStatusSpecced:   {"spec.md", "tickets.json"},
+		domain.LabStatusTicketed:  {"spec.md", "tickets.json"},
+		domain.LabStatusPublished: nil,
+	} {
+		grill.Status = status
+		assert.Equal(t, want, labPublishRequires(grill), string(status))
+	}
+	assert.Equal(t, []string{"issue.md"}, labPublishRequires(domain.LabEntry{Mode: domain.LabModeShape, Status: domain.LabStatusShaping}))
+	assert.Nil(t, labPublishRequires(domain.LabEntry{Mode: domain.LabModeShape, Status: domain.LabStatusShaping, Archived: true}))
 }

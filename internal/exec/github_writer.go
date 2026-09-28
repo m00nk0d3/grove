@@ -223,3 +223,85 @@ func (w *GitHubWriter) PlaceOnBoard(p LabProject, issueURL, status string) error
 	}
 	return nil
 }
+
+// labLabelColors are the colors Grove gives the labels it creates. A label
+// that already exists is left as it is.
+var labLabelColors = map[string]string{
+	"bug":             "d73a4a",
+	"epic":            "5319e7",
+	"ready-for-agent": "0e8a16",
+}
+
+// EnsureLabels creates those of labels that repo does not have yet. Existing
+// labels, and their colors and descriptions, are never changed.
+func (w *GitHubWriter) EnsureLabels(repo string, labels []string) error {
+	out, err := w.runner(w.repoPath, "label", "list", "--repo", repo, "--json", "name", "--limit", "1000")
+	if err != nil {
+		return fmt.Errorf("list labels: %w", err)
+	}
+	var existing []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(out), &existing); err != nil {
+		return fmt.Errorf("list labels: %w", err)
+	}
+	have := make(map[string]bool, len(existing))
+	for _, l := range existing {
+		have[strings.ToLower(l.Name)] = true
+	}
+	for _, label := range labels {
+		if have[strings.ToLower(label)] {
+			continue
+		}
+		args := []string{"label", "create", label, "--repo", repo}
+		if color, ok := labLabelColors[label]; ok {
+			args = append(args, "--color", color)
+		}
+		if _, err := w.runner(w.repoPath, args...); err != nil {
+			return fmt.Errorf("create label %s: %w", label, err)
+		}
+	}
+	return nil
+}
+
+// issueDatabaseID returns the numeric ID the REST API uses for an issue, which
+// is not its number.
+func (w *GitHubWriter) issueDatabaseID(repo string, number int) (int64, error) {
+	out, err := w.runner(w.repoPath, "api", fmt.Sprintf("repos/%s/issues/%d", repo, number), "--jq", ".id")
+	if err != nil {
+		return 0, fmt.Errorf("look up issue #%d: %w", number, err)
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("look up issue #%d: gh returned %q", number, strings.TrimSpace(out))
+	}
+	return id, nil
+}
+
+// AddSubIssue makes issue child a sub-issue of parent, through GitHub's native
+// sub-issue relationship.
+func (w *GitHubWriter) AddSubIssue(repo string, parent, child int) error {
+	id, err := w.issueDatabaseID(repo, child)
+	if err != nil {
+		return err
+	}
+	if _, err := w.runner(w.repoPath, "api", "-X", "POST", fmt.Sprintf("repos/%s/issues/%d/sub_issues", repo, parent),
+		"-F", fmt.Sprintf("sub_issue_id=%d", id)); err != nil {
+		return fmt.Errorf("make #%d a sub-issue of #%d: %w", child, parent, err)
+	}
+	return nil
+}
+
+// AddBlockedBy records that issue is blocked by blocker, through GitHub's
+// native issue dependencies.
+func (w *GitHubWriter) AddBlockedBy(repo string, issue, blocker int) error {
+	id, err := w.issueDatabaseID(repo, blocker)
+	if err != nil {
+		return err
+	}
+	if _, err := w.runner(w.repoPath, "api", "-X", "POST", fmt.Sprintf("repos/%s/issues/%d/dependencies/blocked_by", repo, issue),
+		"-F", fmt.Sprintf("issue_id=%d", id)); err != nil {
+		return fmt.Errorf("mark #%d blocked by #%d: %w", issue, blocker, err)
+	}
+	return nil
+}

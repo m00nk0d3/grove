@@ -185,17 +185,26 @@ Grove and the runtime; the run's *Publish* step shows the draft waiting for it.
 
 1. A preview lists the epic, each ticket, the blocked-by edges, labels, and the
    board. Nothing is written until the user confirms.
-2. The epic is created from the spec, with a *Glossary and decisions* section
-   summarising the approved `CONTEXT.md` terms and ADRs, and labelled `epic`.
-3. Tickets are created in dependency order, labelled `ready-for-agent`, and
-   attached to the epic as native sub-issues.
-4. Blocked-by relationships are set through GitHub's native issue dependencies.
-5. Every issue is added to the project named by `[lab] project` and set to
+2. Labels the publication needs and the repository lacks are created; existing
+   labels are left unchanged.
+3. The epic is created from the spec — title from its first `# ` heading —
+   with a *Glossary and decisions* section summarising the approved
+   `CONTEXT.md` files in full, folded, and each approved ADR by its title and
+   first paragraph, and labelled `epic`.
+4. Tickets are created in dependency order, labelled `ready-for-agent`, and
+   attached to the epic as native sub-issues
+   (`POST /repos/{owner}/{repo}/issues/{epic}/sub_issues`).
+5. Blocked-by relationships are set through GitHub's native issue dependencies
+   (`POST /repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by`). Both take
+   the issue's database ID, which Grove looks up; not its number.
+6. Every issue is added to the project named by `[lab] project` and set to
    `Backlog`. When the key is empty and the repository is linked to exactly one
    project, that project is used; otherwise the user is asked once and the
    answer is saved.
-6. Each issue number is recorded on the entry as soon as it is created, so a
-   failed publish resumes instead of creating duplicates.
+7. The epic's number, each ticket's number, and each sub-issue and blocked-by
+   link are recorded on the entry as soon as they are made, so a failed
+   publication — GitHub rate-limits links made in quick succession — resumes
+   where it stopped instead of creating or linking anything twice.
 
 A shaped bug publishes one issue labelled `bug`, through the same path: the
 title is the draft's first `# ` heading and the body is the rest.

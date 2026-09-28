@@ -89,9 +89,30 @@ func TestLabPublish_NoLinkedBoardIsExplained(t *testing.T) {
 	assert.Equal(t, LabPublishConfirmedMsg{EntryID: "e1"}, publishKey(m, "y"))
 }
 
-func TestLabPublish_ResumeSaysTheIssueExists(t *testing.T) {
+func TestLabPublish_ResumeIsExplained(t *testing.T) {
 	plan := basePlan()
-	existing := 251
-	plan.Existing = &existing
-	assert.Contains(t, newTestPublish(plan).View(), "Issue #251 was created by an earlier attempt")
+	plan.Resume = "Issue #251 was created by an earlier attempt; it is not created again."
+	view := newTestPublish(plan).View()
+	assert.Contains(t, view, "Issue #251 was created by an earlier attempt")
+	assert.NotContains(t, view, "Nothing is sent to GitHub until you confirm")
+}
+
+func TestLabPublish_EpicListsItsTicketsInOrder(t *testing.T) {
+	plan := basePlan()
+	plan.Labels = []string{"epic"}
+	plan.Tickets = []LabPublishTicket{
+		{Key: "01", Title: "Cache the last sync"},
+		{Key: "02", Title: "Show data age", BlockedBy: []string{"01"}},
+	}
+	view := newTestPublish(plan).View()
+	assert.Contains(t, view, "TICKETS  2 sub-issues, labelled ready-for-agent, in this order")
+	assert.Contains(t, view, "can start immediately")
+	assert.Contains(t, view, "blocked by 01")
+}
+
+func TestLabPublish_TicketTitlesStayReadableWhenNarrow(t *testing.T) {
+	plan := basePlan()
+	plan.Tickets = []LabPublishTicket{{Key: "01", Title: "Cache the last sync"}}
+	m := NewLabPublishModal(plan) // no width: the narrowest layout
+	assert.Contains(t, m.View(), "Cache the last sync")
 }

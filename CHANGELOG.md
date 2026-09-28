@@ -44,7 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   *specced* and *ticketed*. Approving a `CONTEXT.md` or decision record copies
   it into the checkout, uncommitted, and refuses a draft that would drop lines
   from an existing file. Drafted tickets are validated and shown in publish
-  order.
+  order. Publishing a grilled idea creates an epic from the spec, with a
+  summary of the approved glossary and decisions, then its tickets blockers
+  first as native sub-issues with native blocked-by links, all in `Backlog`;
+  missing `epic` and `ready-for-agent` labels are created. Every issue and link
+  is recorded as it is made, so an interrupted publication finishes on the next
+  attempt without duplicating anything.
 
 - **A live demo on the website** — the site plays a walk through Grove, from
   mission control to starting a workflow, following it in the inspector,

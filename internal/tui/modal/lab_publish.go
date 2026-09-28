@@ -30,9 +30,18 @@ type LabPublishPlan struct {
 	Boards []LabPublishBoard
 	// Board is the chosen index into Boards, or -1 for no board.
 	Board int
-	// Existing is the issue already created by an earlier, interrupted
-	// publish; it is not created again.
-	Existing *int
+	// Tickets are an epic's tickets, published as its sub-issues in this order.
+	Tickets []LabPublishTicket
+	// Resume describes what an earlier, interrupted publication already
+	// created, which is not created again; empty for a first attempt.
+	Resume string
+}
+
+// LabPublishTicket is a ticket as the preview lists it.
+type LabPublishTicket struct {
+	Key       string
+	Title     string
+	BlockedBy []string
 }
 
 // LabPublishConfirmedMsg confirms publishing with the chosen board.
@@ -143,8 +152,8 @@ func (m *LabPublishModal) View() string {
 	var b strings.Builder
 	b.WriteString(m.accentStyle().Bold(true).Render("◈ LAB // PUBLISH"))
 	b.WriteString("\n")
-	if p.Existing != nil {
-		b.WriteString(m.statusStyle("blocked").Render(fmt.Sprintf("Issue #%d was created by an earlier attempt; it will be placed on the board, not created again.", *p.Existing)))
+	if p.Resume != "" {
+		b.WriteString(m.statusStyle("blocked").Render(p.Resume))
 	} else {
 		b.WriteString(m.mutedStyle().Render("Nothing is sent to GitHub until you confirm."))
 	}
@@ -158,6 +167,20 @@ func (m *LabPublishModal) View() string {
 	b.WriteString(m.field("Labels", labels))
 	b.WriteString(m.field("Board", m.boardLabel()))
 	b.WriteString(m.field("Title", lipgloss.NewStyle().Bold(true).Render(m.truncateTo(p.Title, m.contentWidth()-20))))
+	if len(p.Tickets) > 0 {
+		b.WriteString("\n")
+		b.WriteString(m.heading(fmt.Sprintf("TICKETS  %d sub-issues, labelled ready-for-agent, in this order", len(p.Tickets))))
+		b.WriteString("\n")
+		for _, t := range p.Tickets {
+			blockers := "can start immediately"
+			if len(t.BlockedBy) > 0 {
+				blockers = "blocked by " + strings.Join(t.BlockedBy, ", ")
+			}
+			b.WriteString(fmt.Sprintf("  %s  %s", t.Key, m.truncateTo(t.Title, max(20, m.contentWidth()-34))))
+			b.WriteString(m.mutedStyle().Render("   " + blockers))
+			b.WriteString("\n")
+		}
+	}
 	b.WriteString("\n")
 	b.WriteString(m.mutedStyle().Render(strings.Repeat("─", m.contentWidth())))
 	b.WriteString("\n")

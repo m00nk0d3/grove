@@ -140,3 +140,45 @@ func TestParseProjectRef(t *testing.T) {
 		assert.Error(t, err, bad)
 	}
 }
+
+func TestGitHubWriter_EnsureLabelsCreatesOnlyMissing(t *testing.T) {
+	gh := newFakeGh()
+	gh.replies["label list"] = `[{"name":"bug"},{"name":"Epic"}]`
+	require.NoError(t, gh.writer().EnsureLabels("o/r", []string{"epic", "ready-for-agent"}))
+	require.Len(t, gh.calls, 2, "an existing label, in any case, is left alone")
+	assert.Equal(t, []string{"label", "create", "ready-for-agent", "--repo", "o/r", "--color", "0e8a16"}, gh.calls[1])
+}
+
+// fakeGhByPath answers gh api calls by their endpoint.
+func fakeGhByPath(ids map[string]string) (*fakeGh, func(string, ...string) (string, error)) {
+	gh := newFakeGh()
+	return gh, func(repoPath string, args ...string) (string, error) {
+		gh.calls = append(gh.calls, args)
+		if len(args) >= 2 && args[0] == "api" && strings.HasPrefix(args[1], "repos/") {
+			return ids[args[1]], nil
+		}
+		return "", nil
+	}
+}
+
+func TestGitHubWriter_AddSubIssueUsesDatabaseID(t *testing.T) {
+	gh, run := fakeGhByPath(map[string]string{"repos/o/r/issues/252": "3000252\n"})
+	w := NewGitHubWriterWithRunner("/repo", run)
+	require.NoError(t, w.AddSubIssue("o/r", 251, 252))
+	assert.Equal(t, []string{"api", "-X", "POST", "repos/o/r/issues/251/sub_issues", "-F", "sub_issue_id=3000252"}, gh.calls[1],
+		"the REST API takes the sub-issue's database ID, not its number")
+}
+
+func TestGitHubWriter_AddBlockedByUsesBlockersDatabaseID(t *testing.T) {
+	gh, run := fakeGhByPath(map[string]string{"repos/o/r/issues/252": "3000252"})
+	w := NewGitHubWriterWithRunner("/repo", run)
+	require.NoError(t, w.AddBlockedBy("o/r", 253, 252))
+	assert.Equal(t, []string{"api", "-X", "POST", "repos/o/r/issues/253/dependencies/blocked_by", "-F", "issue_id=3000252"}, gh.calls[1])
+}
+
+func TestGitHubWriter_BadDatabaseIDStopsTheLink(t *testing.T) {
+	gh, run := fakeGhByPath(map[string]string{"repos/o/r/issues/252": "null"})
+	w := NewGitHubWriterWithRunner("/repo", run)
+	assert.ErrorContains(t, w.AddSubIssue("o/r", 251, 252), `gh returned "null"`)
+	assert.Len(t, gh.calls, 1, "no link is attempted without the ID")
+}

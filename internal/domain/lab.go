@@ -48,6 +48,18 @@ type LabIssues struct {
 	Epic    *int  `json:"epic,omitempty"`
 	Tickets []int `json:"tickets,omitempty"`
 	Issue   *int  `json:"issue,omitempty"`
+	// Published records, for an epic, each ticket's issue and links by ticket
+	// key as they are made, so an interrupted publication resumes where it
+	// stopped instead of creating or linking anything twice.
+	Published map[string]LabPublishedTicket `json:"published,omitempty"`
+}
+
+// LabPublishedTicket is the publication progress of one ticket.
+type LabPublishedTicket struct {
+	Number   int  `json:"number"`
+	SubIssue bool `json:"sub_issue,omitempty"`
+	// BlockedBy lists the keys of the blockers already linked.
+	BlockedBy []string `json:"blocked_by,omitempty"`
 }
 
 // Empty reports whether no issue has been published.
