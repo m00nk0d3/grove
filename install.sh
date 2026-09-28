@@ -173,6 +173,7 @@ fi
 
 install_executable "$TMP_DIR/$BINARY" "$INSTALL_DIR/$BINARY"
 install_wrapper grove-sandcastle sandcastle.js
+install_wrapper grove-lab lab-session.js
 install_wrapper imp orchestrator.js
 install_wrapper agent-flow orchestrator.js
 install_wrapper review pr-review.js

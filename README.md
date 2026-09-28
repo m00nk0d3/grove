@@ -161,7 +161,7 @@ Sandcastle runtime under `%LOCALAPPDATA%\grove\`, installs Herdr when it is
 missing, and adds the directory to your user `PATH`. Restart your terminal
 afterwards.
 
-Both installers install the workflow commands `grove-sandcastle`, `imp`
+Both installers install the workflow commands `grove-sandcastle`, `grove-lab`, `imp`
 (alias `agent-flow`), `review`, `address`, `ci`, `resolve`, and `clean`.
 
 ### go install
