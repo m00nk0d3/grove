@@ -2591,6 +2591,10 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
+			if session.PaneID != nil && *session.PaneID != "" {
+				err := navigator.FocusPane(ctx, *session.PaneID)
+				return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
+			}
 			_, err := navigator.OpenWorktree(ctx, herdr.OpenWorktreeRequest{Path: session.WorktreePath})
 			return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
 		}

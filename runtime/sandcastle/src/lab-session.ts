@@ -314,7 +314,7 @@ export interface SessionDeps {
   sleep: (ms: number) => Promise<void>;
   exists: (file: string) => boolean;
   readStage: () => string;
-  report: (report: SessionReport, paneId: string) => void;
+  report: (report: SessionReport, pane: string | null) => void;
   now: () => number;
 }
 
@@ -392,10 +392,20 @@ function gitCommonDir(repo: string): string {
 
 function readStageFile(file: string): string {
   try {
+    if (!fs.statSync(file).isFile()) return "";
     return fs.readFileSync(file, "utf8").trim().toLowerCase();
   } catch {
     return "";
   }
+}
+
+/**
+ * Removes a session marker file, tolerating a stale directory left at its
+ * path (an agent that mistakes `stage` for a directory). `recursive` lets
+ * the same call clear files and directories.
+ */
+function clearMarkerFile(file: string): void {
+  fs.rmSync(file, { force: true, recursive: true });
 }
 
 async function main(kind: LabSessionKind, entryId: string): Promise<void> {
@@ -404,8 +414,8 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
   const paths = labPaths(gitCommonDir(repo), entryId, runId);
   const entry = readLabEntry(paths, entryId);
   fs.mkdirSync(paths.artifactsDir, { recursive: true });
-  fs.rmSync(paths.closeFile, { force: true });
-  fs.rmSync(paths.stageFile, { force: true });
+  clearMarkerFile(paths.closeFile);
+  clearMarkerFile(paths.stageFile);
 
   const title = `${kind === "shape" ? "Shape" : "Grill"}: ${entryTitle(entry)}`;
   updateTrackedWorkflow({ title, current_step: "Starting" });
@@ -441,31 +451,31 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       exists: (file) => fs.existsSync(file),
       readStage: () => readStageFile(paths.stageFile),
-      now: () => Date.now(),
-      report: (report, pane) =>
-        updateTrackedWorkflow({
-          status: report.status,
-          current_step: report.current_step,
-          steps: report.steps,
-          agents: [
-            {
-              id: `${process.env.GROVE_WORKFLOW_RUN_ID ?? agentName}:${kind}`,
-              kind: resolveAgentBackend(),
-              name: agentName,
-              status: report.status === "blocked" ? "blocked" : "working",
-              summary: report.summary,
-              pane_id: pane,
-            },
-          ],
-        }),
+       now: () => Date.now(),
+       report: (report, pane: string | null) =>
+         updateTrackedWorkflow({
+           status: report.status,
+           current_step: report.current_step,
+           steps: report.steps,
+           agents: [
+             {
+               id: `${process.env.GROVE_WORKFLOW_RUN_ID ?? agentName}:${kind}`,
+               kind: resolveAgentBackend(),
+               name: agentName,
+               status: report.status === "blocked" ? "blocked" : "working",
+               summary: report.summary,
+               pane_id: pane,
+             },
+           ],
+         }),
     });
-  } finally {
+    } finally {
     try {
       runCommand("herdr", ["pane", "close", paneId]);
     } catch {
       // The user may have closed the pane already.
     }
-    fs.rmSync(paths.closeFile, { force: true });
+    clearMarkerFile(paths.closeFile);
   }
   const steps = SESSION_STEPS[kind].map((step) => ({ id: step.stage, title: step.title, status: "succeeded" }));
   updateTrackedWorkflow({ current_step: "Closed", steps, agents: [] });

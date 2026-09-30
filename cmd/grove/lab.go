@@ -351,6 +351,9 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 	}
 	// A draft waiting for review is reviewed in Grove, not in the pane.
 	if labPublishRequires(e) != nil && m.lab.draftReady(e) {
+		if e.Mode == domain.LabModeGrill && e.Status == domain.LabStatusTicketed {
+			return m.prepareLabPublish(e)
+		}
 		return m.openLabInspectorOnArtifacts()
 	}
 	if run, ok := m.lab.latestRun(e); ok && run.live() && run.paneID != "" {

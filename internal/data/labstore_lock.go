@@ -112,7 +112,13 @@ func (s *LabStore) CloseSession(id, runID string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("close lab session: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, runID+".close"), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+	closePath := filepath.Join(dir, runID+".close")
+	// A stale directory at the close path (or stage path handled on the
+	// session side) would make WriteFile fail with EISDIR; clear it first.
+	if err := os.RemoveAll(closePath); err != nil {
+		return fmt.Errorf("close lab session: %w", err)
+	}
+	if err := os.WriteFile(closePath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return fmt.Errorf("close lab session: %w", err)
 	}
 	return nil
