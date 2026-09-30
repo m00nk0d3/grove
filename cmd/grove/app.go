@@ -27,8 +27,6 @@ import (
 	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
-	"github.com/m00nk0d3/grove/internal/updater"
-	"github.com/m00nk0d3/grove/internal/version"
 )
 
 // worktreeOpDoneMsg carries the result of an add/remove worktree operation.
@@ -95,12 +93,8 @@ type clearErrorMsg struct{}
 
 // updateCheckedMsg carries the result of the startup version check.
 type updateCheckedMsg struct {
-	info updater.ReleaseInfo
-	err  error
+	err error
 }
-
-// selfUpdateDoneMsg carries the result of a self-update attempt.
-type selfUpdateDoneMsg struct{ err error }
 
 // cleanupLoadedMsg carries cleanup candidates loaded from git.
 type cleanupLoadedMsg struct {
@@ -155,13 +149,10 @@ func clearErrorCmd() tea.Cmd {
 	})
 }
 
-// checkForUpdateCmd fires an async update check on startup.
+// checkForUpdateCmd is a no-op placeholder.
 func checkForUpdateCmd() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		info, err := updater.CheckLatestRelease(ctx)
-		return updateCheckedMsg{info: info, err: err}
+		return updateCheckedMsg{}
 	}
 }
 
@@ -457,16 +448,6 @@ func workflowPaneForIssue(state *domain.MissionControlState, issue domain.Issue)
 	}, fmt.Sprintf("issue #%d", issue.Number))
 }
 
-// selfUpdateCmd runs the self-update in the background.
-func selfUpdateCmd(tagName string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		err := updater.SelfUpdate(ctx, tagName)
-		return selfUpdateDoneMsg{err: err}
-	}
-}
-
 // sessionTickCmd schedules a sessionTickMsg after 3 seconds.
 func sessionTickCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
@@ -730,11 +711,6 @@ type Model struct {
 	// labPending is the publication the preview is showing, until confirmed or
 	// cancelled.
 	labPending *labPendingPublish
-
-	// latestVersion holds the latest release version discovered on startup (empty if check failed).
-	latestVersion string
-	// selfUpdating is true while a self-update is in progress.
-	selfUpdating bool
 
 	// issueTree caches the depth-first-ordered tree built from m.issues.
 	// Rebuilt whenever m.issues is updated (debouncedRenderMsg handler).
@@ -1118,10 +1094,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modal.CleanupConfirmedMsg:
 			m.activeModal = nil
 			return m, m.performCleanupCmd(msg.Worktrees, msg.Branches)
-		case modal.UpdateConfirmedMsg:
-			m.activeModal = nil
-			m.selfUpdating = true
-			return m, selfUpdateCmd(m.latestVersion)
 		case modal.WorkflowLaunchMsg:
 			m.activeModal = nil
 			m.statusMsg = fmt.Sprintf("Starting %s workflow…", msg.Kind)
@@ -1792,30 +1764,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Debug("update check failed", "err", msg.err)
 			return m, nil
 		}
-		newer, err := updater.IsNewer(msg.info.TagName, version.Version)
-		if err != nil || !newer {
-			return m, nil
-		}
-		m.latestVersion = msg.info.TagName
-		m.activeModal = modal.NewUpdateModal(version.Version, msg.info.TagName, msg.info.Body, msg.info.HTMLURL, len(m.sessions))
+		// No-op placeholder - version check is disabled.
 		return m, nil
-
-	case selfUpdateDoneMsg:
-		m.selfUpdating = false
-		if msg.err != nil {
-			var permErr *updater.PermissionError
-			if errors.As(msg.err, &permErr) {
-				m.statusErr = fmt.Sprintf("Update staged — run: %s", permErr.InstallCmd)
-				slog.Info("self-update requires elevated permissions",
-					"staged_path", permErr.StagedPath,
-					"install_cmd", permErr.InstallCmd)
-			} else {
-				m.statusErr = fmt.Sprintf("Update failed: %v", msg.err)
-			}
-			return m, clearErrorCmd()
-		}
-		m.statusMsg = "✓ Updated successfully! Please restart grove to use the new version."
-		return m, clearMsgCmd()
 
 	case cleanupLoadedMsg:
 		if msg.err != nil {
@@ -1929,10 +1879,6 @@ func (m *Model) renderView() string {
 		theme := styles.NewTheme(styles.Themes[m.themeIdx])
 		overlayContent := renderFuzzyOverlay(m.fuzzyInput, m.fuzzyResults, m.fuzzySelIdx, theme, m.fuzzyLoading, w)
 		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, overlayContent)
-	}
-
-	if m.selfUpdating {
-		return overlay("Updating grove", "Downloading and installing update...\n\nPlease wait.")
 	}
 
 	if m.statusErr != "" {
@@ -2591,11 +2537,10 @@ func (m *Model) focusSessionCmd(session domain.Session) tea.Cmd {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if session.PaneID != nil && *session.PaneID != "" {
-				err := navigator.FocusPane(ctx, *session.PaneID)
-				return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
-			}
 			_, err := navigator.OpenWorktree(ctx, herdr.OpenWorktreeRequest{Path: session.WorktreePath})
+			if session.PaneID != nil && *session.PaneID != "" {
+				_ = navigator.FocusPane(ctx, *session.PaneID)
+			}
 			return sessionFocusedMsg{worktreePath: session.WorktreePath, err: err}
 		}
 		pid := 0

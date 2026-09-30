@@ -100,9 +100,6 @@ type ParentWorktreeRequiredMsg struct {
 	ParentNumber int
 }
 
-// UpdateConfirmedMsg is sent when the user confirms the self-update from the update modal.
-type UpdateConfirmedMsg struct{}
-
 const (
 	WorkflowKindImplement = "imp"
 
