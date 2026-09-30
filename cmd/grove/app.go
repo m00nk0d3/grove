@@ -96,9 +96,6 @@ type updateCheckedMsg struct {
 	err  error
 }
 
-// selfUpdateDoneMsg carries the result of a self-update attempt.
-type selfUpdateDoneMsg struct{ err error }
-
 // cleanupLoadedMsg carries cleanup candidates loaded from git.
 type cleanupLoadedMsg struct {
 	candidates []modal.CleanupCandidate
@@ -717,8 +714,6 @@ type Model struct {
 
 	// latestVersion holds the latest release version discovered on startup (empty if check failed).
 	latestVersion string
-	// selfUpdating is true while a self-update is in progress.
-	selfUpdating bool
 
 	// issueTree caches the depth-first-ordered tree built from m.issues.
 	// Rebuilt whenever m.issues is updated (debouncedRenderMsg handler).
@@ -1773,11 +1768,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// No-op placeholder - version check is disabled.
-		return m, nil
-
-	case selfUpdateDoneMsg:
-		// No-op placeholder - self-updates are disabled.
-		m.selfUpdating = false
 		return m, nil
 
 	case cleanupLoadedMsg:
