@@ -93,7 +93,7 @@ type clearErrorMsg struct{}
 
 // updateCheckedMsg carries the result of the startup version check.
 type updateCheckedMsg struct {
-	err  error
+	err error
 }
 
 // cleanupLoadedMsg carries cleanup candidates loaded from git.
