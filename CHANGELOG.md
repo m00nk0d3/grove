@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **Self-update** — Grove no longer checks for new releases on startup or replaces its own binary. The `internal/updater` package has been deleted and the updater import removed from `cmd/grove/main.go`. Users should use the platform installer (`curl -sSL .../install.sh | bash` on Linux/macOS, `irm .../install.ps1 | iex` on Windows) to update to new releases.
+
 ### Added
 
 - **Lab** — a navigation rail tab (`l`) for ideas and bugs before they become

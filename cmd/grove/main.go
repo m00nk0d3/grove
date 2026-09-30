@@ -14,7 +14,6 @@ import (
 	"github.com/m00nk0d3/grove/internal/herdr"
 	"github.com/m00nk0d3/grove/internal/logging"
 	"github.com/m00nk0d3/grove/internal/sandcastle"
-	"github.com/m00nk0d3/grove/internal/updater"
 	"github.com/m00nk0d3/grove/internal/version"
 )
 
@@ -31,8 +30,6 @@ func (herdrExecRunner) Run(name string, args ...string) ([]byte, []byte, error) 
 }
 
 func run() error {
-	// Clean up any leftover .old binary from a previous Windows self-update.
-	updater.CleanupOldBinary()
 	// Initialise structured logger; non-fatal if it fails (falls back to discard).
 	// Sets it as the slog default so any log.slog.Info/Warn/Error calls in the
 	// codebase are automatically routed to the log file.

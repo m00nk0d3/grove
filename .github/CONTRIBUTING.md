@@ -40,7 +40,6 @@ go run ./cmd/grove
 | `internal/tui/styles/` | Themes and shared component styles |
 | `internal/tui/modal/` | Modals: settings, help, mission inspector, worktree creation and deletion, confirmations |
 | `internal/tui/markdown/` | The Markdown renderer used for workflow reports |
-| `internal/updater/` | Checking for and applying self-updates |
 | `runtime/sandcastle/src/` | The workflow runtime: the `imp` orchestrator, `review`, `address`, `ci`, `resolve`, `clean`, specialists, validation, and the `grove-sandcastle` telemetry command |
 | `docs/` | The runbook, the Sandcastle JSON contract, and historical design records |
 | `website/` | The project website, deployed to GitHub Pages |

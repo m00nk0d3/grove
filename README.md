@@ -40,7 +40,6 @@ Modern software development means juggling several things at once: features in f
 - **Settings screen** — `t` opens a fullscreen settings screen with every option, its config key, and a description
 - **23 built-in themes** — 16 dark and 7 light, picked from a list with a live preview
 - **Mouse support** — click the navigation rail, rows, tabs, and actions; scroll with the wheel
-- **Self-update** — Grove checks for a new release on startup and can replace its own binary
 - **Local persistence** — configuration in `~/.grove/config.toml`, a SQLite cache so Grove starts fast
 - **Lab** — `l` opens the Lab, where ideas and bugs live before they become issues. Entries are stored per repository in its git directory, shared by every worktree and never committed.
 
@@ -596,12 +595,27 @@ The Herdr integration is active only when Grove runs inside a Herdr pane.
 
 ## Staying Up to Date
 
-Grove checks for a new release on startup and offers to update. Updating
-replaces the `grove` binary in place; when it lives somewhere you cannot write
-to, the new binary is staged and Grove shows the command that installs it.
-The update replaces only `grove` — re-run the platform installer to update the
-Sandcastle runtime as well.
-`grove --version` prints the installed version.
+Grove does not self-update. Use the platform installer to update:
+
+```bash
+# Linux / macOS
+curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex
+```
+
+These installers detect your OS and architecture, install the appropriate release
+to your system's PATH, and handle dependencies. Set `GROVE_VERSION` to install
+a specific release (e.g., `v1.2.3`). The installed version is shown by running
+`grove --version`.
+
+To update from source:
+
+```bash
+make build              # builds ./grove
+go install ./cmd/grove  # installs to $GOPATH/bin or ~/go/bin
+```
 
 
 ## Troubleshooting
