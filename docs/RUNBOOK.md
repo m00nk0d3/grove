@@ -23,11 +23,11 @@ keybinding reference, see the [README](../README.md).
 
 ## Installing and upgrading
 
-- **Linux / macOS:** `curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash`.
+- **Linux / macOS:** `curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash`.
   Grove goes to `/usr/local/bin` (`GROVE_INSTALL_DIR`), and Node.js, the
   runtime, and Herdr to `~/.local/share/grove` (`GROVE_DATA_DIR`).
   `GROVE_VERSION` installs a specific release.
-- **Windows:** `irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex`.
+- **Windows:** `irm https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.ps1 | iex`.
   Everything goes to `%LOCALAPPDATA%\grove\`, which is added to the user `PATH`.
 
 Grove does not self-update. Use the platform installer to update (see
