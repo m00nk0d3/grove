@@ -712,9 +712,6 @@ type Model struct {
 	// cancelled.
 	labPending *labPendingPublish
 
-	// latestVersion holds the latest release version discovered on startup (empty if check failed).
-	latestVersion string
-
 	// issueTree caches the depth-first-ordered tree built from m.issues.
 	// Rebuilt whenever m.issues is updated (debouncedRenderMsg handler).
 	issueTree []issueTreeRow
