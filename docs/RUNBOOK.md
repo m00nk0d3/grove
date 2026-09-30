@@ -30,10 +30,9 @@ keybinding reference, see the [README](../README.md).
 - **Windows:** `irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex`.
   Everything goes to `%LOCALAPPDATA%\grove\`, which is added to the user `PATH`.
 
-Grove's in-app update replaces only the `grove` binary. To update the runtime,
-re-run the installer (or `make install-runtime` for a source install). A
-runtime and a Grove from different releases may disagree about the JSON
-contract, so upgrade both together.
+Grove does not self-update. Use the platform installer to update (see
+[README](../README.md)). A runtime and a Grove from different releases may
+disagree about the JSON contract, so upgrade both together.
 
 Check the installed version with `grove --version`.
 
