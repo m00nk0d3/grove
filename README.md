@@ -622,6 +622,10 @@ to your system's PATH, and handle dependencies. Set `GROVE_VERSION` to install
 a specific release (e.g., `v1.2.3`). The installed version is shown by running
 `grove --version`.
 
+On startup, if a newer release is available, Grove displays a non-blocking notification
+modal with the installation command. Press `[c]` to copy the command to clipboard, or
+dismiss it with `[q]` or `Esc`. To update immediately, run the install command shown.
+
 To update from source:
 
 ```bash

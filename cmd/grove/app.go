@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"github.com/m00nk0d3/grove/internal/sandcastle"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
+	"github.com/m00nk0d3/grove/internal/version"
 )
 
 // worktreeOpDoneMsg carries the result of an add/remove worktree operation.
@@ -93,7 +95,9 @@ type clearErrorMsg struct{}
 
 // updateCheckedMsg carries the result of the startup version check.
 type updateCheckedMsg struct {
-	err error
+	err     error
+	latest  string // Latest release version from GitHub (e.g., "v2.0.0")
+	command string // Installation command for current platform
 }
 
 // cleanupLoadedMsg carries cleanup candidates loaded from git.
@@ -149,11 +153,62 @@ func clearErrorCmd() tea.Cmd {
 	})
 }
 
-// checkForUpdateCmd is a no-op placeholder.
+// checkForUpdateCmd fetches the latest GitHub release and compares versions.
 func checkForUpdateCmd() tea.Cmd {
 	return func() tea.Msg {
-		return updateCheckedMsg{}
+		latest, cmd, err := fetchAndCompareVersions()
+		return updateCheckedMsg{
+			err:     err,
+			latest:  latest,
+			command: cmd,
+		}
 	}
+}
+
+// fetchAndCompareVersions fetches the latest GitHub release and compares it to the current version.
+func fetchAndCompareVersions() (string, string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get("https://api.github.com/repos/m00nk0d3/grove/releases/latest")
+	if err != nil {
+		return "", "", fmt.Errorf("fetch release: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Silently treat HTTP errors as "no update available" per requirements
+	if resp.StatusCode != http.StatusOK {
+		return "", "", nil
+	}
+
+	var data struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", "", fmt.Errorf("parse release: %w", err)
+	}
+
+	// Normalize versions (strip 'v' prefix if present)
+	current := strings.TrimPrefix(version.Version, "v")
+	latest := strings.TrimPrefix(data.TagName, "v")
+
+	// Suppress notification for dev builds
+	if current == "" || current == "dev" {
+		return latest, "", nil
+	}
+
+	// No update available if versions match or we're ahead
+	if current == latest {
+		return latest, "", nil
+	}
+
+	// Compare semantic versioning - newer means higher string value for simple x.y.z
+	if latest > current {
+		// Platform-specific install command using universal bootstrap script
+		cmd := fmt.Sprintf("curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash")
+		return latest, cmd, nil
+	}
+
+	// Current version is newer or equal
+	return latest, "", nil
 }
 
 func (m *Model) jumpToSelectedMission() (tea.Model, tea.Cmd) {
@@ -1762,9 +1817,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case updateCheckedMsg:
 		if msg.err != nil {
 			slog.Debug("update check failed", "err", msg.err)
+			// Silently continue; treat as no update available
 			return m, nil
 		}
-		// No-op placeholder - version check is disabled.
+
+		// No newer version detected or empty command
+		if msg.latest == "" || msg.command == "" {
+			return m, nil
+		}
+
+		// Show update notification modal
+		m.activeModal = modal.NewUpdateNotificationModal(msg.latest, msg.command)
 		return m, nil
 
 	case cleanupLoadedMsg:
