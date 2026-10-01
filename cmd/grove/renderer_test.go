@@ -2594,4 +2594,3 @@ func TestMissionFinishedAtPrefersTheLastUpdate(t *testing.T) {
 	// One that reported neither is blank rather than the zero date.
 	assert.True(t, missionFinishedAt(dashboardMission{}).IsZero())
 }
-

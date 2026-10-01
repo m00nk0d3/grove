@@ -70,7 +70,7 @@ func TestLabCaptureModal_EscCancels(t *testing.T) {
 func TestLabEditModal_PrefillsAndKeepsID(t *testing.T) {
 	e := domain.LabEntry{ID: "20260928-081530-abcdef", Kind: domain.LabKindBug, Text: "Sync stalls"}
 	m := NewLabEditModal(e)
-	assert.Equal(t, "EDIT LAB ENTRY", m.Title())
+	assert.Equal(t, "EDIT CAPTURE", m.Title())
 	assert.Equal(t, "Sync stalls", m.Value())
 	typeIntoCapture(t, m, " on expiry")
 
@@ -83,4 +83,11 @@ func TestLabEditModal_PrefillsAndKeepsID(t *testing.T) {
 
 func TestNewLabCaptureModal_InvalidKindDefaultsToIdea(t *testing.T) {
 	assert.Equal(t, domain.LabKindIdea, NewLabCaptureModal("").Kind())
+}
+
+func TestLabCaptureModal_ExplainsTheTwoWorkflows(t *testing.T) {
+	view := NewLabCaptureModal(domain.LabKindIdea).View()
+	assert.Contains(t, view, "IDEA  →  GRILL")
+	assert.Contains(t, view, "BUG  →  REPORT")
+	assert.Contains(t, view, "save to Inbox")
 }

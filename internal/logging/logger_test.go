@@ -1,4 +1,4 @@
-﻿package logging_test
+package logging_test
 
 import (
 	"os"

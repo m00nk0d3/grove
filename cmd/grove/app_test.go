@@ -4516,4 +4516,3 @@ func TestRenderPRList_SelectionIsAlwaysInTheWindow(t *testing.T) {
 			"pull request at index %d should be on screen when it is selected", selected)
 	}
 }
-

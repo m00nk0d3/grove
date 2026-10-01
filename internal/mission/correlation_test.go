@@ -25,20 +25,20 @@ func TestWorktreePRLinkedMetadataMatch(t *testing.T) {
 		State:  "OPEN",
 	}
 	worktree := domain.Worktree{
-		Path:       "/repo/grove",
-		Branch:     "feature-xyz",
-		CommitSHA:  "abc123",
-		IsClean:    true,
-		LinkedPR:   &domain.PullRequest{Number: 99},
+		Path:      "/repo/grove",
+		Branch:    "feature-xyz",
+		CommitSHA: "abc123",
+		IsClean:   true,
+		LinkedPR:  &domain.PullRequest{Number: 99},
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{{Number: 42}},
-		PullRequests:      []domain.PullRequest{pr},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{{Number: 42}},
+		PullRequests:       []domain.PullRequest{pr},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -68,12 +68,12 @@ func TestWorktreePRPathFallbackMatch(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{},
-		PullRequests:      []domain.PullRequest{pr},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{},
+		PullRequests:       []domain.PullRequest{pr},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -106,12 +106,12 @@ func TestWorktreePRTiebreakerHighestNumberedWins(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{},
-		PullRequests:      []domain.PullRequest{pr1, pr2},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{},
+		PullRequests:       []domain.PullRequest{pr1, pr2},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -141,12 +141,12 @@ func TestWorktreeIssueByLinkedMetadata(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{issue42},
-		PullRequests:      []domain.PullRequest{},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{issue42},
+		PullRequests:       []domain.PullRequest{},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -171,12 +171,12 @@ func TestWorktreeIssueByBranchPatternIssuePrefix(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{issue42},
-		PullRequests:      []domain.PullRequest{},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{issue42},
+		PullRequests:       []domain.PullRequest{},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -201,12 +201,12 @@ func TestWorktreeIssueByBranchPatternFeatPrefix(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{issue42},
-		PullRequests:      []domain.PullRequest{},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{issue42},
+		PullRequests:       []domain.PullRequest{},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -231,12 +231,12 @@ func TestWorktreeIssueByBranchPatternBareNumber(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{issue42},
-		PullRequests:      []domain.PullRequest{},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{issue42},
+		PullRequests:       []domain.PullRequest{},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -268,12 +268,12 @@ func TestWorktreeIssueByLinkedPRBody(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{issue42},
-		PullRequests:      []domain.PullRequest{pr},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{issue42},
+		PullRequests:       []domain.PullRequest{pr},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -302,12 +302,12 @@ func TestWorktreeIssueByWorkflowMetadata(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:      "/repo/grove",
-		Worktrees:     []domain.Worktree{{Path: "/repo/grove", Branch: "feature-xyz", CommitSHA: "abc123", IsClean: true}},
-		Issues:        []domain.Issue{issue42},
-		PullRequests:  []domain.PullRequest{},
-		Sessions:      []domain.Session{},
-		HerdrSnapshot: nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{{Path: "/repo/grove", Branch: "feature-xyz", CommitSHA: "abc123", IsClean: true}},
+		Issues:             []domain.Issue{issue42},
+		PullRequests:       []domain.PullRequest{},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{workflow}},
 	}
 
@@ -339,7 +339,7 @@ func TestWorkflowMatchesWorktreeByPath(t *testing.T) {
 		PullRequests: []domain.PullRequest{
 			{Number: 1, Title: "PR", Branch: "feature-xyz", State: "OPEN"},
 		},
-		Sessions:          []domain.Session{},
+		Sessions:           []domain.Session{},
 		SandcastleSnapshot: &sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{workflow}},
 	}
 
@@ -366,7 +366,7 @@ func TestWorkflowMatchesWorktreeByRepoAndBranch(t *testing.T) {
 		PullRequests: []domain.PullRequest{
 			{Number: 1, Title: "PR", Branch: "feature-xyz", State: "OPEN"},
 		},
-		Sessions:          []domain.Session{},
+		Sessions:           []domain.Session{},
 		SandcastleSnapshot: &sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{workflow}},
 	}
 
@@ -393,9 +393,9 @@ func TestWorkflowMatchesWorktreeByIssueNumber(t *testing.T) {
 		Worktrees: []domain.Worktree{
 			{Path: "/repo/grove", Branch: "issue-42", CommitSHA: "abc123", IsClean: true},
 		},
-		Issues:            []domain.Issue{issue42},
-		PullRequests:      []domain.PullRequest{},
-		Sessions:          []domain.Session{},
+		Issues:             []domain.Issue{issue42},
+		PullRequests:       []domain.PullRequest{},
+		Sessions:           []domain.Session{},
 		SandcastleSnapshot: &sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{workflow}},
 	}
 
@@ -578,7 +578,7 @@ func TestPartialDataWorkflowsOnlyNoPanic(t *testing.T) {
 		PullRequests: []domain.PullRequest{
 			{Number: 1, Title: "PR", Branch: "feature-xyz", State: "OPEN"},
 		},
-		Sessions:          []domain.Session{},
+		Sessions:           []domain.Session{},
 		SandcastleSnapshot: &sandcastle.Snapshot{Workflows: []domain.WorkflowRunRef{workflow}},
 	}
 
@@ -612,12 +612,12 @@ func TestOneWorktreeTwoPRsSameBranchOneWorkItem(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{worktree},
-		Issues:            []domain.Issue{},
-		PullRequests:      []domain.PullRequest{pr1, pr2},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{worktree},
+		Issues:             []domain.Issue{},
+		PullRequests:       []domain.PullRequest{pr1, pr2},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -636,12 +636,12 @@ func TestUnmatchedIssueStandaloneWorkItem(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{},
-		Issues:            []domain.Issue{issue99},
-		PullRequests:      []domain.PullRequest{},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{},
+		Issues:             []domain.Issue{issue99},
+		PullRequests:       []domain.PullRequest{},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -662,12 +662,12 @@ func TestUnmatchedPRStandaloneWorkItem(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:          "/repo/grove",
-		Worktrees:         []domain.Worktree{},
-		Issues:            []domain.Issue{},
-		PullRequests:      []domain.PullRequest{pr},
-		Sessions:          []domain.Session{},
-		HerdrSnapshot:     nil,
+		RepoPath:           "/repo/grove",
+		Worktrees:          []domain.Worktree{},
+		Issues:             []domain.Issue{},
+		PullRequests:       []domain.PullRequest{pr},
+		Sessions:           []domain.Session{},
+		HerdrSnapshot:      nil,
 		SandcastleSnapshot: &sandcastle.Snapshot{},
 	}
 
@@ -719,11 +719,11 @@ func TestFullIntegrationWorktreePRIssueWorkflowAgentPane(t *testing.T) {
 	}
 
 	input := BuildInput{
-		RepoPath:      "/repo/grove",
-		Worktrees:     []domain.Worktree{worktree},
-		Issues:        []domain.Issue{issue42},
-		PullRequests:  []domain.PullRequest{pr},
-		Sessions:      []domain.Session{},
+		RepoPath:     "/repo/grove",
+		Worktrees:    []domain.Worktree{worktree},
+		Issues:       []domain.Issue{issue42},
+		PullRequests: []domain.PullRequest{pr},
+		Sessions:     []domain.Session{},
 		SandcastleSnapshot: &sandcastle.Snapshot{
 			Workflows: []domain.WorkflowRunRef{workflow},
 			Agents:    []domain.AgentRef{agent},

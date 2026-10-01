@@ -33,10 +33,7 @@ jobs:
       - name: Run tests
         run: make test
 
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-
       - name: Run lint
-        run: make lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0

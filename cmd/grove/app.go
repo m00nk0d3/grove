@@ -2674,7 +2674,7 @@ type sandcastleWorkflowStarter interface {
 func (m *Model) startSandcastleWorkflowCmd(msg modal.WorkflowLaunchMsg) tea.Cmd {
 	starter := m.workflowStarter
 	repoPath := m.RepoPath
-	defaultAgent := m.Config.Sandcastle.DefaultAgent
+	defaultAgent := m.Config.Sandcastle.Agent()
 	if msg.RepoPath != "" {
 		repoPath = msg.RepoPath
 	}
