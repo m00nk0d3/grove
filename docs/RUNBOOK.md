@@ -210,3 +210,4 @@ is pushed:
 - README, this runbook, and the JSON contract match the released behaviour
 - Keybindings in the README and the in-app help match the code
 - New configuration keys are documented with their defaults
+- User-facing features like version notifications are documented
