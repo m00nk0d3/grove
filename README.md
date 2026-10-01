@@ -190,7 +190,7 @@ lock*.
 ### Linux / macOS
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash
 ```
 
 Detects your OS and architecture and installs Grove to `/usr/local/bin`. It also
@@ -202,8 +202,17 @@ locations, and `GROVE_VERSION` to install a specific release.
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.ps1 | iex
 ```
+
+### Windows (CMD batch)
+
+```batch
+@echo off
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap\install.ps1" %*
+```
+
+Save this as `install.bat` and run with `. \install.bat` to bootstrap Grove.
 
 Installs the latest `windows_amd64` release of Grove, a private Node.js, and the
 Sandcastle runtime under `%LOCALAPPDATA%\grove\`, installs Herdr when it is
@@ -599,10 +608,13 @@ Grove does not self-update. Use the platform installer to update:
 
 ```bash
 # Linux / macOS
-curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/m00nk0d3/grove/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.ps1 | iex
+
+# Windows (CMD batch)
+@echo off && powershell.exe -ExecutionPolicy Bypass -File "scripts\bootstrap\install.ps1" %*
 ```
 
 These installers detect your OS and architecture, install the appropriate release

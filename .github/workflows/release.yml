@@ -41,14 +41,14 @@ jobs:
       - name: Validate installers
         shell: pwsh
         run: |
-          bash -n install.sh
+          bash -n scripts/bootstrap/install.sh
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
           $tokens = $null
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path install.ps1),
+            (Resolve-Path scripts/bootstrap/install.ps1),
             [ref]$tokens,
             [ref]$errors
           ) | Out-Null

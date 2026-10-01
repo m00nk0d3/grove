@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
-- **Self-update** — Grove no longer checks for new releases on startup or replaces its own binary. The `internal/updater` package has been deleted and the updater import removed from `cmd/grove/main.go`. Users should use the platform installer (`curl -sSL .../install.sh | bash` on Linux/macOS, `irm .../install.ps1 | iex` on Windows) to update to new releases.
+- **Self-update** — Grove no longer checks for new releases on startup or replaces its own binary. The `internal/updater` package has been deleted and the updater import removed from `cmd/grove/main.go`. Users should use the platform installer (`curl -sSL .../scripts/bootstrap/install.sh | bash` on Linux/macOS, `irm .../scripts/bootstrap/install.ps1 | iex` on Windows) to update to new releases.
 
 ### Added
 
@@ -769,7 +769,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **Ctrl+B cleanup modal for stale worktrees and branches** — press `Ctrl+B` from the TUI to surface a modal listing stale/prunable worktrees and their associated branches. Lets you bulk-delete the mess you left behind. `feat(tui)` (#107) (4d79ec2)
-- **One-liner install scripts** — `install.sh` (Unix) and `install.ps1` (Windows) so you can get grove running without touching `go install` or release assets manually. `feat(install)` (b5835f2)
+- **One-liner install scripts** — `install.sh` (Unix) and `install.ps1` (Windows), now in `scripts/bootstrap/`, so you can get grove running without touching `go install` or release assets manually. `feat(install)` (b5835f2)
 - **GitHub Pages landing site** — grove now has a real homepage with a live demo GIF, install instructions, and a fancy favicon. `feat(website)` (11ec084, 75c5196)
 
 ### Fixed
