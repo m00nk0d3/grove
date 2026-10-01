@@ -137,18 +137,19 @@ missing information rather than inventing it.
 
 The Lab is a navigation rail tab (`l`).
 
-**List.** Styled like the Dashboard's workflow list, with tabs
-`[ ACTIVE / ATTENTION ]`, `[ DRAFTS ]`, `[ PUBLISHED ]`, and `[ ARCHIVED ]`,
-switched with `[` and `]`. Rows take two lines: a state marker, title, and status
-badge; then kind, stage, pane, and age. Keys `1`, `2`, and `3` filter by all,
-ideas, and bugs within the current tab.
+**List.** Styled like the Dashboard's workflow list, with task-oriented lanes
+`[ WORKING ]`, `[ INBOX ]`, `[ ISSUES ]`, and `[ ARCHIVE ]`, switched with `[`
+and `]`. These retain the same lifecycle grouping while using labels that
+describe where users look for work. Rows take two lines: a state marker, title,
+and status badge; then the exact action Enter performs, stage, kind, and age.
+Keys `1`, `2`, and `3` filter by all, ideas, and bugs within the current lane.
 
-**Keys.** `c` captures a new entry. Enter performs the entry's next step: grill
-(or shape, for a bug) a draft, open the pane of a live run, review pending
-artifacts, or open a published entry's epic in the Issues tab. Every other
-operation is in the Actions panel, which lists only what the entry's state
-allows. The Lab defines no other letter keys, so global keys behave the same in
-every view.
+**Keys.** `c` captures a new entry as *Idea → Grill* or *Bug → Report*. Enter
+performs the action printed below the entry: grill or shape a capture, open the
+pane of a live run, review pending artifacts, or open a published entry's issue.
+Every other operation is in the Actions panel, which lists only what the
+entry's state allows. The Lab defines no other letter keys, so global keys
+behave the same in every view.
 
 **Inspector.** `v` opens the inspector for the selected entry: header cards for
 stage, elapsed time, artifacts, and issues, and tabs *Overview*, *Steps*,

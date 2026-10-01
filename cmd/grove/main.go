@@ -57,7 +57,7 @@ func run() error {
 	}
 	sandcastleClient := sandcastle.NewClient(sandcastle.ClientConfig{
 		Binary:       sandcastleBinary,
-		DefaultAgent: m.Config.Sandcastle.DefaultAgent,
+		DefaultAgent: m.Config.Sandcastle.Agent(),
 	}, sandcastle.NewExecCommandRunner())
 	m.healthChecker = &defaultHealthChecker{
 		herdr:      herdrClient,

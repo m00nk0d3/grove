@@ -71,10 +71,10 @@ var keybindingGroups = []bindingGroup{
 		bindings: [][2]string{
 			{"↑/↓  j/k", "Navigate entries"},
 			{"c", "Capture a new idea or bug"},
-			{"Enter", "Next step: shape, grill, review, open a pane or issue"},
-			{"v / V", "Inspect: overview, steps, artifacts, capture"},
+			{"Enter", "Run the next action printed under the entry"},
+			{"v / V", "Inspect progress, artifacts, and original capture"},
 			{"a / A", "Actions: publish, shape, grill, escalate, open issue, end session, archive"},
-			{"[ / ]", "Switch tab: active, drafts, published, archived"},
+			{"[ / ]", "Switch lane: working, inbox, issues, archive"},
 			{"1", "Filter: All entries"},
 			{"2", "Filter: Ideas only"},
 			{"3", "Filter: Bugs only"},

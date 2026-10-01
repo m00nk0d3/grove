@@ -44,6 +44,14 @@ func TestGitHubConfig_SyncInterval(t *testing.T) {
 	}
 }
 
+func TestSandcastleConfig_Agent(t *testing.T) {
+	for _, agent := range []string{"opencode", "pi", "claude"} {
+		assert.Equal(t, agent, (SandcastleConfig{DefaultAgent: agent}).Agent())
+	}
+	assert.Equal(t, "opencode", (SandcastleConfig{DefaultAgent: "herdr"}).Agent())
+	assert.Equal(t, "opencode", (SandcastleConfig{}).Agent())
+}
+
 func TestWorktreesConfig_WorktreePath(t *testing.T) {
 	base := t.TempDir()
 	repo := filepath.Join(base, "src", "grove")

@@ -53,20 +53,22 @@ repository shares it and git never tracks it. The full design, including the
 grilling and publishing flows still being built, is in
 [docs/LAB_DESIGN.md](docs/LAB_DESIGN.md).
 
-The list has four tabs, switched with `[` and `]`: *Active / Attention*,
-*Drafts*, *Published*, and *Archived*. Keys `1`, `2`, and `3` show all entries,
-ideas only, or bugs only within the current tab.
+The list has four task-oriented lanes, switched with `[` and `]`: *Working*
+for live work and anything needing attention, *Inbox* for new captures,
+*Issues* for published work, and *Archive*. Keys `1`, `2`, and `3` show all
+entries, ideas only, or bugs only within the current lane.
 
 | Key | Action |
 |---|---|
 | `c` | Capture a new idea or bug |
-| `Enter` | The selected entry's next step: shape a bug draft, grill an idea draft, review a finished draft, or open the pane of a live session |
-| `v` | Inspect the selected entry |
-| `a` | Actions for the selected entry: inspect, edit, archive, restore, delete |
+| `Enter` | Do the next action printed under the selected entry, such as *Grill this idea*, *Answer the agent*, *Review the drafted bug report*, or *Open issue #123* |
+| `v` | Open progress, artifacts, and original capture details |
+| `a` | Open less-common actions such as edit, archive, restore, and delete |
 
 An entry whose agent is waiting for an answer is marked **WAITING ON YOU** and
-listed first under *Active / Attention*. Each row shows the step the entry has
-reached, such as *Interview 1/4*, and the Herdr pane of its live session.
+listed first under *Working*. Each row shows the action Enter performs, the step
+the entry has reached, such as *Interview 1/4*, and the Herdr pane of its live
+session.
 
 ### Shaping a bug
 
@@ -135,8 +137,9 @@ issues, then four tabs switched with `Tab` or `1`–`4`:
 
 ### Capturing an entry
 
-Press `c`, choose the kind with `Tab`, and write the entry. The first line is
-its title; anything below is the detail. `Ctrl+S` saves and `Esc` cancels.
+Press `c`, choose *Idea → Grill* or *Bug → Report* with `Tab`, and write the
+entry. The first line is its title; anything below is the detail. `Ctrl+S`
+saves it to the Inbox and `Esc` cancels.
 
 ### Escalating a bug
 

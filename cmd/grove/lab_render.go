@@ -17,13 +17,13 @@ const (
 	labRowsPerItem = 2
 )
 
-var labTabShortLabels = [labTabCount]string{"ACTIVE", "DRAFTS", "PUBLISHED", "ARCHIVED"}
+var labTabShortLabels = [labTabCount]string{"WORKING", "INBOX", "ISSUES", "ARCHIVE"}
 
 var labEmptyMessages = [labTabCount]string{
-	"Nothing in progress. Grill or shape a draft to start.",
-	"No drafts. Press c to capture an idea or a bug.",
-	"Nothing published yet.",
-	"No archived entries.",
+	"Nothing needs attention and no agents are working.",
+	"Nothing captured. Press c to add an idea or report a bug.",
+	"No issues created from the Lab yet.",
+	"Nothing archived.",
 }
 
 // labTone is the color family an entry's state is drawn in.
@@ -61,7 +61,10 @@ func labStateOf(v labView, e domain.LabEntry) labState {
 	}
 	switch e.Status {
 	case domain.LabStatusDraft:
-		return labState{"○", "DRAFT", labToneMuted}
+		if e.Kind == domain.LabKindBug {
+			return labState{"○", "BUG TO REPORT", labToneMuted}
+		}
+		return labState{"○", "IDEA TO GRILL", labToneMuted}
 	case domain.LabStatusPublished:
 		return labState{"✓", "PUBLISHED", labToneDone}
 	default:
@@ -101,17 +104,17 @@ func labStageLabel(v labView, e domain.LabEntry) string {
 	return fmt.Sprintf("%s %d/%d", stages[stage-1], stage, len(stages))
 }
 
-// labDetail is the second line of an entry's row: kind, stage, pane, and when
-// it last changed.
+// labDetail is the second line of an entry's row: the primary action followed
+// by compact workflow metadata.
 func labDetail(v labView, e domain.LabEntry, now time.Time) string {
-	parts := []string{string(e.Kind)}
+	parts := []string{"↵ " + labNextAction(v, e)}
 	if stage := labStageLabel(v, e); stage != "" {
 		parts = append(parts, stage)
 	}
 	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
 		parts = append(parts, "Herdr "+run.paneID)
 	}
-	parts = append(parts, formatFinishedAt(e.Updated, now))
+	parts = append(parts, string(e.Kind), formatFinishedAt(e.Updated, now))
 	return strings.Join(parts, "  •  ")
 }
 
@@ -165,7 +168,7 @@ func renderLabFilter(v labView, theme styles.Theme) string {
 		}
 		parts[i] = style.Render(o.key + " " + o.label)
 	}
-	return muted.Render("Kind  ") + strings.Join(parts, muted.Render("  ·  "))
+	return muted.Render("Show  ") + strings.Join(parts, muted.Render("  ·  "))
 }
 
 // renderLab renders the Lab list: lifecycle tabs, the kind filter, and two
@@ -228,7 +231,11 @@ func renderLab(v labView, theme styles.Theme, listInner, panelHeight int, focuse
 		return theme.RenderPanel(st, strings.TrimRight(b.String(), "\n"))
 	}
 	b.WriteString("\n")
-	b.WriteString(muted.Render(truncateStr("c capture  •  ↵ next step  •  v inspect  •  a actions  •  1/2/3 kind  •  [ / ] tab", listInner)))
+	primary := "↵ capture your first item"
+	if e, ok := v.selected(); ok {
+		primary = "↵ " + labNextAction(v, e)
+	}
+	b.WriteString(muted.Render(truncateStr(primary+"  •  c new  •  v details  •  a more  •  [ / ] lane", listInner)))
 	content := clipContent(b.String(), 0, panelHeight)
 	st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	return theme.RenderPanel(st, content)
@@ -272,9 +279,10 @@ func renderLabContext(v labView, e domain.LabEntry, width int, now time.Time) st
 		body = "(no details)"
 	}
 	return fmt.Sprintf(
-		"Context: Lab %s\n%s\n\nStatus: %s%s\nCaptured: %s\nUpdated: %s\nIssues: %s\n\n%s",
+		"Lab %s\n%s\n\nNEXT\n%s\n\nStatus: %s%s\nCaptured: %s\nUpdated: %s\nIssues: %s\n\n%s",
 		e.Kind,
 		wrapText(e.Title(), width),
+		wrapText(labNextAction(v, e), width),
 		status,
 		session,
 		formatFinishedAt(e.Created, now),

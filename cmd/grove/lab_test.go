@@ -328,20 +328,23 @@ func TestRenderLab_ShowsTabsCountsAndRows(t *testing.T) {
 	v.setTab(labTabDrafts)
 	out := renderLab(v, styles.NewTheme(styles.Themes[0]), 110, 0, true)
 
-	assert.Contains(t, out, "[ DRAFTS 02 ]")
-	assert.Contains(t, out, "[ PUBLISHED 01 ]")
+	assert.Contains(t, out, "[ INBOX 02 ]")
+	assert.Contains(t, out, "[ ISSUES 01 ]")
 	assert.Contains(t, out, "Plugin API")
 	assert.Contains(t, out, "Sync stalls")
 	assert.NotContains(t, out, "Shipped", "other tabs' entries are not listed")
 	assert.NotContains(t, out, "details", "the list shows titles, not bodies")
-	assert.Contains(t, out, "DRAFT")
+	assert.Contains(t, out, "IDEA TO GRILL")
+	assert.Contains(t, out, "BUG TO REPORT")
+	assert.Contains(t, out, "↵ Grill this idea")
+	assert.Contains(t, out, "↵ Shape this bug into a report")
 }
 
 func TestRenderLab_EmptyTabExplainsWhatToDo(t *testing.T) {
 	v := newLabView()
 	v.setTab(labTabDrafts)
 	out := renderLab(v, styles.NewTheme(styles.Themes[0]), 110, 0, true)
-	assert.Contains(t, out, "Press c to capture")
+	assert.Contains(t, out, "Press c to add")
 }
 
 func TestRenderLab_FitsPanelHeight(t *testing.T) {
@@ -363,8 +366,9 @@ func TestRenderLabContext(t *testing.T) {
 	e.Issues = domain.LabIssues{Epic: &epic, Tickets: []int{252, 253}}
 	out := renderLabContext(newLabView(), e, 40, time.Now())
 
-	assert.Contains(t, out, "Context: Lab idea")
+	assert.Contains(t, out, "Lab idea")
 	assert.Contains(t, out, "Plugin API")
+	assert.Contains(t, out, "NEXT\nOpen issue #251")
 	assert.Contains(t, out, "Status: PUBLISHED")
 	assert.Contains(t, out, "Issues: #251 + 2 tickets")
 	assert.Contains(t, out, "Let users extend views.")
@@ -378,8 +382,41 @@ func TestRenderFull_LabContextPanelShowsEntryNotWorktree(t *testing.T) {
 	m.lab.setTab(labTabDrafts)
 
 	out := m.View()
-	assert.Contains(t, out, "Context: Lab bug")
+	assert.Contains(t, out, "Lab bug")
 	assert.NotContains(t, out, "feature-branch", "the Lab's context panel describes the entry")
+}
+
+func TestLabNextAction_ExplainsWhatEnterWillDo(t *testing.T) {
+	now := time.Now()
+	viewOf := func(e domain.LabEntry, runs map[string]string) labView {
+		v := newLabView()
+		v.entries = []domain.LabEntry{e}
+		v.setMission(labMissionState(runs))
+		return v
+	}
+
+	idea := entryAt(now, "idea", domain.LabKindIdea, domain.LabStatusDraft, "Idea")
+	assert.Equal(t, "Grill this idea", labNextAction(viewOf(idea, nil), idea))
+
+	bug := entryAt(now, "bug", domain.LabKindBug, domain.LabStatusDraft, "Bug")
+	assert.Equal(t, "Shape this bug into a report", labNextAction(viewOf(bug, nil), bug))
+
+	working := entryAt(now, "working", domain.LabKindIdea, domain.LabStatusGrilling, "Working")
+	working.Runs = []string{"run-1"}
+	assert.Equal(t, "Answer the agent", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowBlocked}), working))
+	assert.Equal(t, "Open the agent session", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowRunning}), working))
+
+	review := entryAt(now, "review", domain.LabKindBug, domain.LabStatusShaping, "Review")
+	review.Mode = domain.LabModeShape
+	assert.Equal(t, "Review the drafted bug report", labNextAction(viewOf(review, nil), review))
+
+	issue := 42
+	published := entryAt(now, "published", domain.LabKindBug, domain.LabStatusPublished, "Published")
+	published.Issues.Issue = &issue
+	assert.Equal(t, "Open issue #42", labNextAction(viewOf(published, nil), published))
+
+	idea.Archived = true
+	assert.Equal(t, "Restore from Actions to continue", labNextAction(viewOf(idea, nil), idea))
 }
 
 // The Lab lives in the git common directory, so a linked worktree reads the
@@ -423,10 +460,12 @@ func TestLab_WorktreesShareOneLab(t *testing.T) {
 func labMissionState(runs map[string]string) *domain.MissionControlState {
 	state := &domain.MissionControlState{}
 	for id, status := range runs {
+		paneID := "pane-" + id
 		state.WorkflowRuns = append(state.WorkflowRuns, domain.WorkflowRunRef{
 			RunID: id, Kind: "grill", Status: status, CurrentStep: "Spec", StartedAt: time.Now().Add(-time.Hour),
 		})
-		state.Agents = append(state.Agents, domain.AgentRef{AgentID: "agent-" + id, WorkflowRunID: id, PaneID: "pane-" + id})
+		state.Agents = append(state.Agents, domain.AgentRef{AgentID: "agent-" + id, WorkflowRunID: id, PaneID: paneID})
+		state.Panes = append(state.Panes, domain.PaneRef{PaneID: paneID})
 	}
 	return state
 }
@@ -467,6 +506,26 @@ func TestLabView_FinishedRunDoesNotOverrideStatus(t *testing.T) {
 	assert.Equal(t, "TICKETED", labStateOf(v, e).badge)
 	assert.Equal(t, "Tickets 3/4", labStageLabel(v, e))
 	assert.NotContains(t, labDetail(v, e, time.Now()), "Herdr", "a finished run's pane is not offered")
+}
+
+func TestLabView_StalePaneDoesNotKeepSessionLive(t *testing.T) {
+	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusGrilling, "Entry")
+	e.Mode = domain.LabModeGrill
+	e.Runs = []string{"run-1"}
+	state := labMissionState(map[string]string{"run-1": domain.WorkflowBlocked})
+	state.Panes = nil
+
+	v := newLabView()
+	v.entries = []domain.LabEntry{e}
+	v.setMission(state)
+
+	run, ok := v.latestRun(e)
+	require.True(t, ok)
+	assert.Empty(t, run.paneID)
+	assert.False(t, v.hasLiveSession(e), "Sandcastle telemetry cannot keep a session live after its Herdr pane is gone")
+	assert.True(t, v.canGrill(e))
+	assert.Equal(t, "Resume grilling this idea", labNextAction(v, e))
+	assert.NotContains(t, labDetail(v, e, time.Now()), "Herdr")
 }
 
 func TestLab_MissionUpdateRefreshesRowsAndInspector(t *testing.T) {

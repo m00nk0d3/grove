@@ -26,7 +26,7 @@ const (
 	labTabCount
 )
 
-var labTabLabels = [labTabCount]string{"ACTIVE / ATTENTION", "DRAFTS", "PUBLISHED", "ARCHIVED"}
+var labTabLabels = [labTabCount]string{"WORKING", "INBOX", "ISSUES", "ARCHIVE"}
 
 // labTabOf returns the tab that lists e.
 func labTabOf(e domain.LabEntry) labTab {
@@ -72,8 +72,10 @@ func (r labRun) waiting() bool {
 // live reports whether the run has not finished.
 func (r labRun) live() bool {
 	switch strings.ToLower(r.workflow.Status) {
-	case domain.WorkflowQueued, domain.WorkflowRunning, domain.WorkflowBlocked:
+	case domain.WorkflowQueued:
 		return true
+	case domain.WorkflowRunning, domain.WorkflowBlocked:
+		return r.paneID != ""
 	}
 	return false
 }
@@ -88,6 +90,10 @@ func (v *labView) setMission(state *domain.MissionControlState) {
 	if state == nil {
 		return
 	}
+	livePanes := make(map[string]struct{}, len(state.Panes))
+	for _, pane := range state.Panes {
+		livePanes[pane.PaneID] = struct{}{}
+	}
 	for _, workflow := range state.WorkflowRuns {
 		id := firstNonEmptyString(workflow.RunID, workflow.WorkflowID)
 		if id == "" {
@@ -95,7 +101,7 @@ func (v *labView) setMission(state *domain.MissionControlState) {
 		}
 		run := labRun{workflow: workflow}
 		for _, agent := range agentsForWorkflow(state, id) {
-			if agent.PaneID != "" {
+			if _, ok := livePanes[agent.PaneID]; ok {
 				run.paneID = agent.PaneID
 				break
 			}
@@ -638,7 +644,7 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 	}
 	starter := m.workflowStarter
 	repoPath := m.RepoPath
-	agent := m.Config.Sandcastle.DefaultAgent
+	agent := m.Config.Sandcastle.Agent()
 	m.statusMsg = fmt.Sprintf("Starting a %s session for %q…", verb, e.Title())
 	return m, func() tea.Msg {
 		fail := func(err error) tea.Msg { return labSessionStartedMsg{loaded: labsLoadedMsg{err: err}} }
@@ -741,6 +747,48 @@ func (v labView) draftReady(e domain.LabEntry) bool {
 		return true
 	}
 	return strings.EqualFold(run.workflow.CurrentStep, "Publish")
+}
+
+// labNextAction describes the primary action Enter performs for an entry.
+// Keeping this beside labNextStep makes the list and context panel explain the
+// actual workflow instead of exposing lifecycle states the user must decode.
+func labNextAction(v labView, e domain.LabEntry) string {
+	switch {
+	case e.Archived:
+		return "Restore from Actions to continue"
+	case e.Status == domain.LabStatusPublished:
+		if issue := labPrimaryIssue(e); issue != nil {
+			return fmt.Sprintf("Open issue #%d", *issue)
+		}
+		return "Open published issues"
+	case labPublishRequires(e) != nil && v.draftReady(e):
+		if e.Mode == domain.LabModeGrill && e.Status == domain.LabStatusTicketed {
+			return "Review and publish the epic"
+		}
+		return "Review the drafted bug report"
+	}
+	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
+		if run.waiting() {
+			return "Answer the agent"
+		}
+		return "Open the agent session"
+	}
+	switch {
+	case v.canShape(e):
+		if e.Status == domain.LabStatusDraft {
+			return "Shape this bug into a report"
+		}
+		return "Resume shaping the bug report"
+	case v.canGrill(e):
+		if e.Status == domain.LabStatusDraft {
+			return "Grill this idea"
+		}
+		return "Resume grilling this idea"
+	case e.Editable():
+		return "Edit this capture"
+	default:
+		return "Inspect progress"
+	}
 }
 
 // openLabInspectorOnArtifacts opens the inspector on the selected entry's

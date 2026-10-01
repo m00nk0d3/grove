@@ -46,6 +46,21 @@ type SandcastleConfig struct {
 	DefaultAgent string `toml:"default_agent"`
 }
 
+// Agent returns a Sandcastle-supported agent, falling back to Grove's default
+// when an older or externally edited config contains an unsupported value.
+func (c SandcastleConfig) Agent() string {
+	switch strings.ToLower(strings.TrimSpace(c.DefaultAgent)) {
+	case "opencode":
+		return "opencode"
+	case "pi":
+		return "pi"
+	case "claude":
+		return "claude"
+	default:
+		return "opencode"
+	}
+}
+
 type WorktreesConfig struct {
 	BaseBranch   string `toml:"base_branch"`
 	WorktreeRoot string `toml:"worktree_root"`

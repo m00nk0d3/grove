@@ -72,9 +72,9 @@ func (m *LabCaptureModal) Init() tea.Cmd { return nil }
 // Title returns the modal title.
 func (m *LabCaptureModal) Title() string {
 	if m.id != "" {
-		return "EDIT LAB ENTRY"
+		return "EDIT CAPTURE"
 	}
-	return "CAPTURE"
+	return "NEW LAB ITEM"
 }
 
 // SetWidth sizes the editor to the terminal width.
@@ -138,14 +138,19 @@ func (m *LabCaptureModal) View() string {
 		warning = warning.Foreground(lipgloss.Color(m.theme.Warning()))
 	}
 	option := func(kind domain.LabKind) string {
-		if kind == m.kind {
-			return accent.Render("● " + string(kind))
+		label := "IDEA  →  GRILL"
+		if kind == domain.LabKindBug {
+			label = "BUG  →  REPORT"
 		}
-		return muted.Render("○ " + string(kind))
+		if kind == m.kind {
+			return accent.Render("● " + label)
+		}
+		return muted.Render("○ " + label)
 	}
 
 	var b strings.Builder
-	b.WriteString("Kind  " + option(domain.LabKindIdea) + "   " + option(domain.LabKindBug))
+	b.WriteString("What are you bringing to the Lab?\n")
+	b.WriteString(option(domain.LabKindIdea) + "     " + option(domain.LabKindBug))
 	b.WriteString("\n\n")
 	b.WriteString(m.editor.View())
 	b.WriteString("\n")
@@ -153,6 +158,6 @@ func (m *LabCaptureModal) View() string {
 		b.WriteString(warning.Render(m.err))
 	}
 	b.WriteString("\n")
-	b.WriteString(muted.Render("Ctrl+S save  ·  Tab switch kind  ·  Enter new line  ·  Esc cancel"))
+	b.WriteString(muted.Render("Tab choose  ·  Ctrl+S save to Inbox  ·  Enter new line  ·  Esc cancel"))
 	return b.String()
 }
