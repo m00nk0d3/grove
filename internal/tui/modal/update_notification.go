@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	updateNotificationWidth = 70
+	updateNotificationWidth  = 70
 	updateNotificationHeight = 14
 )
 
@@ -79,19 +79,19 @@ func escapeForPowerShell(s string) string {
 // View renders the update notification modal content.
 func (m *UpdateNotificationModal) View() string {
 	var (
-		borderSt   = lipgloss.NewStyle().
-			Width(updateNotificationWidth).
-			Padding(1, 0).
-			BorderStyle(lipgloss.RoundedBorder()).
-			Border(lipgloss.Border{
+		borderSt = lipgloss.NewStyle().
+				Width(updateNotificationWidth).
+				Padding(1, 0).
+				BorderStyle(lipgloss.RoundedBorder()).
+				Border(lipgloss.Border{
 				TopLeft: "─", TopRight: "─", BottomLeft: "─", BottomRight: "─"},
 			)
 
-		headerSt   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("208"))
-		bodySt     = lipgloss.NewStyle()
-		footerSt   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-		infoSt     = lipgloss.NewStyle().MarginBottom(1)
-		cmdSt      = lipgloss.NewStyle().Background(lipgloss.Color("33")).Padding(0, 2)
+		headerSt = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("208"))
+		bodySt   = lipgloss.NewStyle()
+		footerSt = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+		infoSt   = lipgloss.NewStyle().MarginBottom(1)
+		cmdSt    = lipgloss.NewStyle().Background(lipgloss.Color("33")).Padding(0, 2)
 	)
 
 	var b strings.Builder

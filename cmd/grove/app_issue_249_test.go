@@ -13,16 +13,16 @@ import (
 // TestCheckForUpdateCmd_NoOpPlaceholder verifies the green-phase behavior (no longer a no-op).
 func TestCheckForUpdateCmd_NoOpPlaceholder(t *testing.T) {
 	tests := []struct {
-		name             string
-		wantMsgNotEmpty  bool // Green phase: checkForUpdateCmd() now fetches real data from GitHub API
-		wantErrIsNil     bool
-		description      string
+		name            string
+		wantMsgNotEmpty bool // Green phase: checkForUpdateCmd() now fetches real data from GitHub API
+		wantErrIsNil    bool
+		description     string
 	}{
 		{
-			name:             "returns populated message (green phase - no longer no-op)",
-			wantMsgNotEmpty:  true, // Green phase - API call returns actual data
-			wantErrIsNil:     true,
-			description:      "checkForUpdateCmd() now fetches GitHub releases and compares versions",
+			name:            "returns populated message (green phase - no longer no-op)",
+			wantMsgNotEmpty: true, // Green phase - API call returns actual data
+			wantErrIsNil:    true,
+			description:     "checkForUpdateCmd() now fetches GitHub releases and compares versions",
 		},
 	}
 
@@ -96,31 +96,31 @@ func TestUpdateCheckedMsg_Handler_ErrorCase(t *testing.T) {
 // TestCheckForUpdateCmd_VersionComparison verifies version comparison logic.
 func TestCheckForUpdateCmd_VersionComparison(t *testing.T) {
 	tests := []struct {
-		name          string
-		current       string
-		latest        string
-		wantNotify    bool
-		description   string
+		name        string
+		current     string
+		latest      string
+		wantNotify  bool
+		description string
 	}{
 		{
-			name:     "dev build never gets notified",
-			current:  "dev",
-			latest:   "v2.0.0",
-			wantNotify: false,
+			name:        "dev build never gets notified",
+			current:     "dev",
+			latest:      "v2.0.0",
+			wantNotify:  false,
 			description: "Suppress notification for dev builds per requirements",
 		},
 		{
-			name:     "no update available (same version)",
-			current:  "1.5.0",
-			latest:   "v1.5.0",
-			wantNotify: false,
+			name:        "no update available (same version)",
+			current:     "1.5.0",
+			latest:      "v1.5.0",
+			wantNotify:  false,
 			description: "No notification when versions match",
 		},
 		{
-			name:     "update available (semantic version)",
-			current:  "1.2.3",
-			latest:   "v2.0.0",
-			wantNotify: true,
+			name:        "update available (semantic version)",
+			current:     "1.2.3",
+			latest:      "v2.0.0",
+			wantNotify:  true,
 			description: "Notification shown for newer release",
 		},
 	}
@@ -136,14 +136,14 @@ func TestCheckForUpdateCmd_VersionComparison(t *testing.T) {
 // TestUpdateNotificationModal_NoOpPlaceholder verifies current no-op modal state.
 func TestUpdateNotificationModal_NoOpPlaceholder(t *testing.T) {
 	tests := []struct {
-		name             string
-		wantModalExists  bool // Green phase: modal exists now
-		description      string
+		name            string
+		wantModalExists bool // Green phase: modal exists now
+		description     string
 	}{
 		{
-			name:             "modal exists after implementation",
-			wantModalExists:  true,
-			description:      "Update notification modal was added as part of issue #249 implementation",
+			name:            "modal exists after implementation",
+			wantModalExists: true,
+			description:     "Update notification modal was added as part of issue #249 implementation",
 		},
 	}
 
@@ -157,15 +157,15 @@ func TestUpdateNotificationModal_NoOpPlaceholder(t *testing.T) {
 // TestUpdateNotificationModal_Render verifies the notification modal renders correctly.
 func TestUpdateNotificationModal_Render(t *testing.T) {
 	tests := []struct {
-		name         string
-		latest       string
-		command      string
-		description  string
+		name        string
+		latest      string
+		command     string
+		description string
 	}{
 		{
-			name:     "renders with latest version",
-			latest:   "v2.0.0",
-			command:  "curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash",
+			name:        "renders with latest version",
+			latest:      "v2.0.0",
+			command:     "curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash",
 			description: "Modal renders update notification",
 		},
 	}
@@ -181,13 +181,13 @@ func TestUpdateNotificationModal_Render(t *testing.T) {
 // TestUpdateNotificationModal_Dismissible verifies modal can be dismissed.
 func TestUpdateNotificationModal_Dismissible(t *testing.T) {
 	tests := []struct {
-		name    string
-		key     rune
+		name     string
+		key      rune
 		wantQuit bool
 	}{
 		{
-			name:    "Esc key dismisses modal",
-			key:     rune('q'), // Placeholder - will be 'q' or 'esc' once implemented
+			name:     "Esc key dismisses modal",
+			key:      rune('q'), // Placeholder - will be 'q' or 'esc' once implemented
 			wantQuit: true,
 		},
 	}
@@ -202,13 +202,13 @@ func TestUpdateNotificationModal_Dismissible(t *testing.T) {
 // TestUpdateNotificationModal_CopyButton verifies copy to clipboard functionality.
 func TestUpdateNotificationModal_CopyButton(t *testing.T) {
 	tests := []struct {
-		name         string
-		command      string
-		description  string
+		name        string
+		command     string
+		description string
 	}{
 		{
-			name:     "button shows success message after copy",
-			command:  "curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash",
+			name:        "button shows success message after copy",
+			command:     "curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash",
 			description: "Copy button functionality",
 		},
 	}
@@ -223,13 +223,13 @@ func TestUpdateNotificationModal_CopyButton(t *testing.T) {
 // TestUpdateNotificationModal_FailureToExist verifies the modal exists and compiles.
 func TestUpdateNotificationModal_FailureToExist(t *testing.T) {
 	tests := []struct {
-		name    string
-		desc    string
+		name     string
+		desc     string
 		wantFail bool // false = modal now exists (green phase)
 	}{
 		{
-			name: "update notification modal compiles successfully",
-			desc: "Modal type exists in internal/tui/modal package",
+			name:     "update notification modal compiles successfully",
+			desc:     "Modal type exists in internal/tui/modal package",
 			wantFail: false, // Green phase - modal now exists
 		},
 	}
@@ -255,18 +255,18 @@ func TestCheckForUpdateCmd_ExpectedBehaviorDocumentsRedPhase(t *testing.T) {
 		wantErr bool // true = compilation fails (expected for new functionality)
 	}{
 		{
-			name: "version fetch and compare implemented",
-			desc: "checkForUpdateCmd() now fetches from GitHub API and compares versions",
+			name:    "version fetch and compare implemented",
+			desc:    "checkForUpdateCmd() now fetches from GitHub API and compares versions",
 			wantErr: false, // Green phase - implementation exists
 		},
 		{
-			name: "updateCheckedMsg has latest/command fields",
-			desc: "Struct now has latest and command fields for new behavior",
+			name:    "updateCheckedMsg has latest/command fields",
+			desc:    "Struct now has latest and command fields for new behavior",
 			wantErr: false, // Green phase - fields exist
 		},
 		{
-			name: "message handler shows notification",
-			desc: "Handler displays update notification modal when newer version detected",
+			name:    "message handler shows notification",
+			desc:    "Handler displays update notification modal when newer version detected",
 			wantErr: false, // Green phase - handler updated to show notification
 		},
 	}
@@ -285,13 +285,13 @@ func TestCheckForUpdateCmd_ExpectedBehaviorDocumentsRedPhase(t *testing.T) {
 // TestUpdateNotificationModal_IntegrationPlaceholders documents integration test placeholders.
 func TestUpdateNotificationModal_IntegrationPlaceholders(t *testing.T) {
 	tests := []struct {
-		name    string
-		desc    string
+		name     string
+		desc     string
 		wantFail bool // false = green phase, true = red phase (expected failures before implementation)
 	}{
 		{
-			name: "modal exists for demo_export_test",
-			desc: "integration tests have modal type implemented",
+			name:     "modal exists for demo_export_test",
+			desc:     "integration tests have modal type implemented",
 			wantFail: false, // Green phase - modal now exists
 		},
 	}
@@ -310,13 +310,13 @@ func TestUpdateNotificationModal_IntegrationPlaceholders(t *testing.T) {
 // TestUpdateNotificationModal_EndToEndPlaceholders documents end-to-end test placeholders.
 func TestUpdateNotificationModal_EndToEndPlaceholders(t *testing.T) {
 	tests := []struct {
-		name    string
-		desc    string
+		name     string
+		desc     string
 		wantFail bool // false = green phase, true = red phase (expected failures before implementation)
 	}{
 		{
-			name: "notification appears on startup with newer version",
-			desc: "End-to-end scenario - modal now exists and will show when update available",
+			name:     "notification appears on startup with newer version",
+			desc:     "End-to-end scenario - modal now exists and will show when update available",
 			wantFail: false, // Green phase - test can verify notification is shown
 		},
 	}
@@ -338,27 +338,27 @@ func TestUpdateNotificationModal_EndToEndPlaceholders(t *testing.T) {
 // TestUpdateNotificationModal_AcceptanceCriteriaPlaceholders documents acceptance criteria for issue #249.
 func TestUpdateNotificationModal_AcceptanceCriteriaPlaceholders(t *testing.T) {
 	tests := []struct {
-		name    string
+		name     string
 		criteria string
 		wantFail bool // false = green phase, true = red phase (expected failures before implementation)
 	}{
 		{
-			name: "User sees non-blocking notification",
+			name:     "User sees non-blocking notification",
 			criteria: "Criterion #1 from REQUIREMENTS.md - modal exists and shows on update detection",
 			wantFail: false, // Green phase - modal now exists for green phase verification
 		},
 		{
-			name: "Notification provides clear manual update instructions",
+			name:     "Notification provides clear manual update instructions",
 			criteria: "Criterion #2 from REQUIREMENTS.md - command displayed in modal",
 			wantFail: false, // Green phase - modal displays installation command
 		},
 		{
-			name: "No automatic download occurs",
+			name:     "No automatic download occurs",
 			criteria: "Criterion #4 from REQUIREMENTS.md - notification only, no auto-download",
 			wantFail: false, // Green phase - by design we only notify, never auto-download
 		},
 		{
-			name: "Notification is dismissible without saving state",
+			name:     "Notification is dismissible without saving state",
 			criteria: "Criterion #5 from REQUIREMENTS.md - Esc/q key dismisses modal",
 			wantFail: false, // Green phase - Modal update() handles tea.KeyEsc for dismissal
 		},

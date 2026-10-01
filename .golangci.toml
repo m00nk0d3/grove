@@ -1,10 +1,21 @@
+version = "2"
+
 [linters]
-disable-all = true
-enable = ["gofmt", "goimports", "govet", "unused", "errcheck"]
+default = "none"
+enable = ["errcheck", "govet", "unused"]
 
-[issues]
-exclude-use-default = true
-exclude-dirs = ["vendor", "runtime/sandcastle"]
+[linters.exclusions]
+generated = "lax"
+presets = ["comments", "common-false-positives", "legacy", "std-error-handling"]
+paths = ["vendor", "runtime/sandcastle", "website/node_modules", "third_party$", "builtin$", "examples$"]
 
-[run]
-timeout = "10m"
+[[linters.exclusions.rules]]
+linters = ["unused"]
+text = "(switchWorktreeCmd|buildShellCmd|loadCleanupDataCmd|spawnAgentInTerminalWindow|correlateWorktreesWithIssuesAndPRs|exactBranchMatch|containmentMatch|workflowListResponse|escapeForPowerShell) is unused"
+
+[formatters]
+enable = ["gofmt", "goimports"]
+
+[formatters.exclusions]
+generated = "lax"
+paths = ["vendor", "runtime/sandcastle", "website/node_modules", "third_party$", "builtin$", "examples$"]

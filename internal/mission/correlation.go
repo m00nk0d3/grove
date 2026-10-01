@@ -3,6 +3,7 @@ package mission
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/m00nk0d3/grove/internal/domain"
@@ -316,8 +317,10 @@ func issueByBranchPattern(wt *domain.Worktree, issues []domain.Issue) *domain.Is
 	if match == nil {
 		return nil
 	}
-	var num int
-	fmt.Sscanf(match[1], "%d", &num)
+	num, err := strconv.Atoi(match[1])
+	if err != nil {
+		return nil
+	}
 	for i := range issues {
 		if issues[i].Number == num {
 			return &issues[i]
@@ -335,8 +338,10 @@ func issueByLinkedPR(pr *domain.PullRequest, issues []domain.Issue) *domain.Issu
 	if match == nil {
 		return nil
 	}
-	var num int
-	fmt.Sscanf(match[1], "%d", &num)
+	num, err := strconv.Atoi(match[1])
+	if err != nil {
+		return nil
+	}
 	for i := range issues {
 		if issues[i].Number == num {
 			return &issues[i]

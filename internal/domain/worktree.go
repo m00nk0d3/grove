@@ -7,12 +7,12 @@ import (
 
 // Worktree represents a git worktree managed by Nexus
 type Worktree struct {
-	Path       string
-	Branch     string
-	CommitSHA  string
-	IsClean    bool
-	IsLocked   bool
-	LinkedPR   *PullRequest
+	Path        string
+	Branch      string
+	CommitSHA   string
+	IsClean     bool
+	IsLocked    bool
+	LinkedPR    *PullRequest
 	LinkedIssue *Issue
 }
 
@@ -27,29 +27,29 @@ type OpenWorktreeResult struct {
 		PaneID        string `json:"pane_id"`
 	} `json:"root_pane"`
 	Tab struct {
-		AgentStatus   string `json:"agent_status"`
-		Focused       bool   `json:"focused"`
-		Label         string `json:"label"`
-		Number        int    `json:"number"`
-		PaneCount     int    `json:"pane_count"`
-		TabID         string `json:"tab_id"`
-		WorkspaceID   string `json:"workspace_id"`
+		AgentStatus string `json:"agent_status"`
+		Focused     bool   `json:"focused"`
+		Label       string `json:"label"`
+		Number      int    `json:"number"`
+		PaneCount   int    `json:"pane_count"`
+		TabID       string `json:"tab_id"`
+		WorkspaceID string `json:"workspace_id"`
 	} `json:"tab"`
 	Worktree struct {
-		Branch            string `json:"branch"`
-		IsBare            bool   `json:"is_bare"`
-		IsDetached        bool   `json:"is_detached"`
-		IsLinkedWorktree  bool   `json:"is_linked_worktree"`
-		IsPrunable        bool   `json:"is_prunable"`
-		Label             string `json:"label"`
-		OpenWorkspaceID   string `json:"open_workspace_id"`
-		Path              string `json:"path"`
+		Branch           string `json:"branch"`
+		IsBare           bool   `json:"is_bare"`
+		IsDetached       bool   `json:"is_detached"`
+		IsLinkedWorktree bool   `json:"is_linked_worktree"`
+		IsPrunable       bool   `json:"is_prunable"`
+		Label            string `json:"label"`
+		OpenWorkspaceID  string `json:"open_workspace_id"`
+		Path             string `json:"path"`
 	} `json:"worktree"`
 }
 
 // CreateWorktreeResult represents the response from herdr worktree create.
 type CreateWorktreeResult struct {
-	Type string `json:"type"`
+	Type     string `json:"type"`
 	RootPane struct {
 		AgentStatus   string `json:"agent_status"`
 		CWD           string `json:"cwd"`
@@ -57,50 +57,50 @@ type CreateWorktreeResult struct {
 		ForegroundCwd string `json:"foreground_cwd"`
 		PaneID        string `json:"pane_id"`
 		Revision      int    `json:"revision"`
-		Scroll struct {
+		Scroll        struct {
 			MaxOffsetFromBottom int `json:"max_offset_from_bottom"`
 			OffsetFromBottom    int `json:"offset_from_bottom"`
 			ViewportRows        int `json:"viewport_rows"`
 		} `json:"scroll"`
-		TabID          string `json:"tab_id"`
-		TerminalID     string `json:"terminal_id"`
-		WorkspaceID    string `json:"workspace_id"`
+		TabID       string `json:"tab_id"`
+		TerminalID  string `json:"terminal_id"`
+		WorkspaceID string `json:"workspace_id"`
 	} `json:"root_pane"`
 	Tab struct {
-		AgentStatus   string `json:"agent_status"`
-		Focused       bool   `json:"focused"`
-		Label         string `json:"label"`
-		Number        int    `json:"number"`
-		PaneCount     int    `json:"pane_count"`
-		TabID         string `json:"tab_id"`
-		WorkspaceID   string `json:"workspace_id"`
+		AgentStatus string `json:"agent_status"`
+		Focused     bool   `json:"focused"`
+		Label       string `json:"label"`
+		Number      int    `json:"number"`
+		PaneCount   int    `json:"pane_count"`
+		TabID       string `json:"tab_id"`
+		WorkspaceID string `json:"workspace_id"`
 	} `json:"tab"`
 	Workspace struct {
-		ActiveTabID     string `json:"active_tab_id"`
-		AgentStatus     string `json:"agent_status"`
-		Focused         bool   `json:"focused"`
-		Label           string `json:"label"`
-		Number          int    `json:"number"`
-		PaneCount       int    `json:"pane_count"`
-		TabCount        int    `json:"tab_count"`
-		WorkspaceID     string `json:"workspace_id"`
-		Worktree struct {
-			CheckoutPath   string `json:"checkout_path"`
-			IsLinkedWorktree bool `json:"is_linked_worktree"`
-			RepoKey        string `json:"repo_key"`
-			RepoName       string `json:"repo_name"`
-			RepoRoot       string `json:"repo_root"`
+		ActiveTabID string `json:"active_tab_id"`
+		AgentStatus string `json:"agent_status"`
+		Focused     bool   `json:"focused"`
+		Label       string `json:"label"`
+		Number      int    `json:"number"`
+		PaneCount   int    `json:"pane_count"`
+		TabCount    int    `json:"tab_count"`
+		WorkspaceID string `json:"workspace_id"`
+		Worktree    struct {
+			CheckoutPath     string `json:"checkout_path"`
+			IsLinkedWorktree bool   `json:"is_linked_worktree"`
+			RepoKey          string `json:"repo_key"`
+			RepoName         string `json:"repo_name"`
+			RepoRoot         string `json:"repo_root"`
 		} `json:"worktree"`
 	} `json:"workspace"`
 	Worktree struct {
-		Branch            string `json:"branch"`
-		IsBare            bool   `json:"is_bare"`
-		IsDetached        bool   `json:"is_detached"`
-		IsLinkedWorktree  bool   `json:"is_linked_worktree"`
-		IsPrunable        bool   `json:"is_prunable"`
-		Label             string `json:"label"`
-		OpenWorkspaceID   string `json:"open_workspace_id"`
-		Path              string `json:"path"`
+		Branch           string `json:"branch"`
+		IsBare           bool   `json:"is_bare"`
+		IsDetached       bool   `json:"is_detached"`
+		IsLinkedWorktree bool   `json:"is_linked_worktree"`
+		IsPrunable       bool   `json:"is_prunable"`
+		Label            string `json:"label"`
+		OpenWorkspaceID  string `json:"open_workspace_id"`
+		Path             string `json:"path"`
 	} `json:"worktree"`
 }
 
@@ -108,9 +108,9 @@ type CreateWorktreeResult struct {
 type FocusPaneResult struct {
 	Type  string `json:"type"`
 	Focus struct {
-		Changed      bool   `json:"changed"`
+		Changed       bool   `json:"changed"`
 		FocusedPaneID string `json:"focused_pane_id"`
-		SourcePaneID string `json:"source_pane_id"`
+		SourcePaneID  string `json:"source_pane_id"`
 	} `json:"focus"`
 	Layout struct {
 		Area struct {
@@ -131,8 +131,8 @@ type FocusPaneResult struct {
 			} `json:"rect"`
 		} `json:"panes"`
 		Splits []struct {
-			Direction string `json:"direction"`
-			ID        string `json:"id"`
+			Direction string  `json:"direction"`
+			ID        string  `json:"id"`
 			Ratio     float64 `json:"ratio"`
 			Rect      struct {
 				Height int `json:"height"`
