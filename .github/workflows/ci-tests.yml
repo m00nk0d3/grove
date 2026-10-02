@@ -7,6 +7,31 @@ on:
     branches: [main]
 
 jobs:
+  installer-tests:
+    name: Installer (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test Unix installer
+        if: runner.os == 'Linux'
+        run: bash scripts/bootstrap/test-install.sh
+
+      - name: Test Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/bootstrap/test-install.ps1
+
   test:
     name: Run Tests
     runs-on: ubuntu-latest

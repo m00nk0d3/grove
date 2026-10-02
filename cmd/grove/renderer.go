@@ -133,7 +133,7 @@ func renderSessionBlock(s *domain.Session) string {
 // renderFull builds the complete 3-pane TUI layout.
 // termWidth is the terminal column count; 0 falls back to defaultTermWidth.
 // termHeight is the terminal row count; 0 disables explicit panel height.
-func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, sessions []domain.Session, lab labView, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, selections ...int) string {
+func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, themeIdx int, view activeView, termWidth, termHeight int, syncing bool, lastSynced time.Time, syncErr error, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int, focused focusedPanel, ctxScroll int, sessions []domain.Session, lab labView, herdrIntegration *domain.ExternalIntegration, sandcastleIntegration *domain.ExternalIntegration, missionState *domain.MissionControlState, dismissed map[string]bool, availableUpdate string, selections ...int) string {
 	if termWidth <= 0 {
 		termWidth = defaultTermWidth
 	}
@@ -220,7 +220,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 		}
 	}
 
-	header := renderHeader(repoPath, theme, headerInner, countActiveSessions(sessions), herdrStatus, sandcastleStatus, githubStatus)
+	header := renderHeader(repoPath, theme, headerInner, countActiveSessions(sessions), herdrStatus, sandcastleStatus, githubStatus, availableUpdate)
 	nav := renderNavRail(theme, panelHeight, view, focused == panelNav)
 
 	var list string
@@ -908,7 +908,7 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSessions int, herdrStatus, sandcastleStatus, githubStatus string) string {
+func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSessions int, herdrStatus, sandcastleStatus, githubStatus, availableUpdate string) string {
 	if repoPath == "" {
 		repoPath = "./"
 	}
@@ -920,6 +920,9 @@ func renderHeader(repoPath string, theme styles.Theme, innerWidth int, activeSes
 		text += fmt.Sprintf(" | %d active session(s)", activeSessions)
 	}
 	text += fmt.Sprintf(" | Herdr: %s | Sandcastle: %s | GitHub: %s", herdrStatus, sandcastleStatus, githubStatus)
+	if availableUpdate != "" {
+		text += fmt.Sprintf(" | Update: %s [u] details", availableUpdate)
+	}
 	return theme.RenderPanel(theme.GetStyle("header").Width(innerWidth), text)
 }
 

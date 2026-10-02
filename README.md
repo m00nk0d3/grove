@@ -193,14 +193,15 @@ lock*.
 ### Linux / macOS
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash
 ```
 
 Detects your OS and architecture and installs Grove to `/usr/local/bin`. It also
 installs a private Node.js 22 and Grove's Sandcastle runtime under
 `~/.local/share/grove`. If Herdr is not on `PATH`, the latest Herdr release is
 installed there too. Set `GROVE_INSTALL_DIR` or `GROVE_DATA_DIR` to change those
-locations, and `GROVE_VERSION` to install a specific release.
+locations, and `GROVE_VERSION` to install a specific release (with or without
+the leading `v`, such as `v1.9.3` or `1.9.3`).
 
 ### Windows (PowerShell)
 
@@ -211,11 +212,11 @@ irm https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/inst
 ### Windows (CMD batch)
 
 ```batch
-@echo off
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap\install.ps1" %*
+curl.exe -fsSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.bat -o "%TEMP%\grove-install.bat" && call "%TEMP%\grove-install.bat"
 ```
 
-Save this as `install.bat` and run with `. \install.bat` to bootstrap Grove.
+The batch bootstrap downloads and invokes the PowerShell installer, so it does
+not depend on a repository checkout.
 
 Installs the latest `windows_amd64` release of Grove, a private Node.js, and the
 Sandcastle runtime under `%LOCALAPPDATA%\grove\`, installs Herdr when it is
@@ -611,23 +612,28 @@ Grove does not self-update. Use the platform installer to update:
 
 ```bash
 # Linux / macOS
-curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash
 
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.ps1 | iex
 
 # Windows (CMD batch)
-@echo off && powershell.exe -ExecutionPolicy Bypass -File "scripts\bootstrap\install.ps1" %*
+curl.exe -fsSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.bat -o "%TEMP%\grove-install.bat" && call "%TEMP%\grove-install.bat"
 ```
 
 These installers detect your OS and architecture, install the appropriate release
 to your system's PATH, and handle dependencies. Set `GROVE_VERSION` to install
 a specific release (e.g., `v1.2.3`). The installed version is shown by running
-`grove --version`.
+`grove --version`. Release archives are verified against their published SHA-256
+checksums. Before replacing runtime files, the installer validates an existing
+`~/.grove/config.toml`; it also verifies that configuration, database, session,
+and dismissed-workflow state under `~/.grove` is unchanged by the installation.
 
-On startup, if a newer release is available, Grove displays a non-blocking notification
-modal with the installation command. Press `[c]` to copy the command to clipboard, or
-dismiss it with `[q]` or `Esc`. To update immediately, run the install command shown.
+On startup, if a newer release is available, Grove adds a non-blocking update
+badge to the header. Press `[u]` to open the update details, then `[c]` to copy
+the platform-specific install command. Clipboard failures are shown in the
+details instead of being reported as success. On Windows, exit Grove before
+running the copied installer command.
 
 To update from source:
 
