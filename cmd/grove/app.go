@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
 	"github.com/m00nk0d3/grove/internal/version"
+	"golang.org/x/mod/semver"
 )
 
 // worktreeOpDoneMsg carries the result of an add/remove worktree operation.
@@ -96,6 +98,7 @@ type clearErrorMsg struct{}
 // updateCheckedMsg carries the result of the startup version check.
 type updateCheckedMsg struct {
 	err     error
+	current string // Current Grove version
 	latest  string // Latest release version from GitHub (e.g., "v2.0.0")
 	command string // Installation command for current platform
 }
@@ -156,9 +159,10 @@ func clearErrorCmd() tea.Cmd {
 // checkForUpdateCmd fetches the latest GitHub release and compares versions.
 func checkForUpdateCmd() tea.Cmd {
 	return func() tea.Msg {
-		latest, cmd, err := fetchAndCompareVersions()
+		current, latest, cmd, err := fetchAndCompareVersions()
 		return updateCheckedMsg{
 			err:     err,
+			current: current,
 			latest:  latest,
 			command: cmd,
 		}
@@ -166,49 +170,65 @@ func checkForUpdateCmd() tea.Cmd {
 }
 
 // fetchAndCompareVersions fetches the latest GitHub release and compares it to the current version.
-func fetchAndCompareVersions() (string, string, error) {
+func fetchAndCompareVersions() (string, string, string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get("https://api.github.com/repos/m00nk0d3/grove/releases/latest")
+	return fetchAndCompareVersionsWith(client, "https://api.github.com/repos/m00nk0d3/grove/releases/latest", version.Version, runtime.GOOS)
+}
+
+func fetchAndCompareVersionsWith(client *http.Client, releaseURL, currentVersion, goos string) (string, string, string, error) {
+	resp, err := client.Get(releaseURL)
 	if err != nil {
-		return "", "", fmt.Errorf("fetch release: %w", err)
+		return currentVersion, "", "", fmt.Errorf("fetch release: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Silently treat HTTP errors as "no update available" per requirements
 	if resp.StatusCode != http.StatusOK {
-		return "", "", nil
+		return currentVersion, "", "", nil
 	}
 
 	var data struct {
 		TagName string `json:"tag_name"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return "", "", fmt.Errorf("parse release: %w", err)
+		return currentVersion, "", "", fmt.Errorf("parse release: %w", err)
 	}
 
-	// Normalize versions (strip 'v' prefix if present)
-	current := strings.TrimPrefix(version.Version, "v")
-	latest := strings.TrimPrefix(data.TagName, "v")
-
-	// Suppress notification for dev builds
-	if current == "" || current == "dev" {
-		return latest, "", nil
+	if !isNewerRelease(currentVersion, data.TagName) {
+		return currentVersion, data.TagName, "", nil
 	}
+	return currentVersion, data.TagName, installCommand(goos), nil
+}
 
-	// No update available if versions match or we're ahead
-	if current == latest {
-		return latest, "", nil
+var gitDescribeVersionRx = regexp.MustCompile(`^v?\d+\.\d+\.\d+-\d+-g[0-9a-f]+(?:-dirty)?$`)
+
+func canonicalVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "dev" || strings.HasSuffix(v, "-dirty") {
+		return ""
 	}
-
-	// Compare semantic versioning - newer means higher string value for simple x.y.z
-	if latest > current {
-		// Platform-specific install command using universal bootstrap script
-		cmd := fmt.Sprintf("curl -sSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash")
-		return latest, cmd, nil
+	if gitDescribeVersionRx.MatchString(v) {
+		return ""
 	}
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	if !semver.IsValid(v) {
+		return ""
+	}
+	return v
+}
 
-	// Current version is newer or equal
-	return latest, "", nil
+func isNewerRelease(current, latest string) bool {
+	current = canonicalVersion(current)
+	latest = canonicalVersion(latest)
+	return current != "" && latest != "" && semver.Compare(latest, current) > 0
+}
+
+func installCommand(goos string) string {
+	if goos == "windows" {
+		return "irm https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.ps1 | iex"
+	}
+	return "curl -fsSL https://raw.githubusercontent.com/m00nk0d3/grove/main/scripts/bootstrap/install.sh | bash"
 }
 
 func (m *Model) jumpToSelectedMission() (tea.Model, tea.Cmd) {
@@ -784,6 +804,7 @@ type Model struct {
 	// dismissedWorkflows tracks succeeded workflows the user has marked as
 	// done. The key is the workflow RunID (or WorkflowID).
 	dismissedWorkflows map[string]bool
+	availableUpdate    *updateCheckedMsg
 
 	// healthChecker fetches runtime snapshots for Herdr/Sandcastle session
 	// health checks. nil when not initialised (tests, standalone mode).
@@ -1357,6 +1378,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "?":
 				m.activeModal = modal.NewHelpModal()
 				return m, nil
+			case "u", "U":
+				if m.availableUpdate != nil {
+					m.activeModal = modal.NewUpdateNotificationModal(
+						m.availableUpdate.current,
+						m.availableUpdate.latest,
+						m.availableUpdate.command,
+					)
+					return m, nil
+				}
 			case "j":
 				m.moveDown()
 				return m, m.maybeLazyLoadCmd()
@@ -1826,8 +1856,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Show update notification modal
-		m.activeModal = modal.NewUpdateNotificationModal(msg.latest, msg.command)
+		// Keep update availability visible without interrupting keyboard focus.
+		update := msg
+		m.availableUpdate = &update
 		return m, nil
 
 	case cleanupLoadedMsg:
@@ -1903,7 +1934,12 @@ func (m *Model) renderView() string {
 			return &m.sandcastleSnapshot.Integration
 		}
 		return nil
-	}(), m.missionState, m.dismissedWorkflows, actionIdx, m.selectedMissionIdx, int(m.dashboardTab))
+	}(), m.missionState, m.dismissedWorkflows, func() string {
+		if m.availableUpdate != nil {
+			return m.availableUpdate.latest
+		}
+		return ""
+	}(), actionIdx, m.selectedMissionIdx, int(m.dashboardTab))
 
 	w, h := m.width, m.height
 	if w <= 0 {

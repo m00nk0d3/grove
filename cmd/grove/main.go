@@ -102,6 +102,18 @@ func main() {
 		fmt.Printf("grove version %s\n", version.Version)
 		return
 	}
+	if len(os.Args) > 2 && os.Args[1] == "config" && os.Args[2] == "validate" {
+		path := data.DefaultConfigPath()
+		if len(os.Args) > 3 {
+			path = os.Args[3]
+		}
+		if _, err := data.LoadConfig(path); err != nil {
+			fmt.Fprintln(os.Stderr, "invalid Grove configuration:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Grove configuration is valid:", path)
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

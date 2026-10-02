@@ -9,7 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
-- **Self-update** — Grove no longer checks for new releases on startup or replaces its own binary. The `internal/updater` package has been deleted and the updater import removed from `cmd/grove/main.go`. Users should use the platform installer (`curl -sSL .../scripts/bootstrap/install.sh | bash` on Linux/macOS, `irm .../scripts/bootstrap/install.ps1 | iex` on Windows) to update to new releases.
+- **Self-update** — Grove no longer downloads or replaces its own binary. The
+  `internal/updater` package has been deleted; users update through the platform
+  installer instead.
+
+### Changed
+
+- **Update notifications and installers** — startup release checks use semantic
+  versions and expose a non-blocking header badge with platform-specific update
+  instructions and real clipboard error handling. Bootstrap installers now
+  accept pinned versions with or without `v`, verify Grove release checksums,
+  validate existing configuration, preserve `~/.grove` state across reinstalls,
+  atomically refresh the bundled runtime, and validate installed commands. The
+  CMD bootstrap is standalone, and Linux and Windows reinstall behavior runs in
+  CI.
 
 ### Added
 

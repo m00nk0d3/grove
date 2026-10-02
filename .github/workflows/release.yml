@@ -56,6 +56,10 @@ jobs:
             $errors | ForEach-Object { Write-Error $_ }
             exit 1
           }
+          bash scripts/bootstrap/test-install.sh
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Build Sandcastle runtime
         run: make runtime-build

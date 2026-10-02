@@ -34,7 +34,7 @@ esac
 
 # Fetch latest release version unless a pinned version was provided.
 if [ -n "${GROVE_VERSION:-}" ]; then
-  VERSION="$GROVE_VERSION"
+  VERSION="${GROVE_VERSION#v}"
 else
   echo "Fetching latest Grove release..."
   VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
@@ -42,8 +42,8 @@ else
     | sed -E 's/.*"v([^"]+)".*/\1/')
 fi
 
-if [ -z "$VERSION" ]; then
-  echo "Failed to fetch latest version. Check your internet connection."
+if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+  echo "Invalid Grove version: ${GROVE_VERSION:-$VERSION}"
   exit 1
 fi
 
@@ -51,13 +51,54 @@ echo "Installing grove v$VERSION for $OS/$ARCH..."
 
 ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
 URL="${GROVE_ARCHIVE_URL:-https://github.com/$REPO/releases/download/v${VERSION}/${ARCHIVE}}"
+CHECKSUMS_URL="${GROVE_CHECKSUMS_URL:-https://github.com/$REPO/releases/download/v${VERSION}/checksums.txt}"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
 
-curl -fsSL "$URL" -o "$TMP_DIR/$ARCHIVE"
+download() {
+  source="$1"
+  destination="$2"
+  if [ -f "$source" ]; then
+    cp "$source" "$destination"
+  else
+    curl -fsSL "$source" -o "$destination"
+  fi
+}
+
+download "$URL" "$TMP_DIR/$ARCHIVE"
+download "$CHECKSUMS_URL" "$TMP_DIR/checksums.txt"
+expected_checksum=$(awk -v archive="$ARCHIVE" '$2 == archive { print $1; exit }' "$TMP_DIR/checksums.txt")
+if [ -z "$expected_checksum" ]; then
+  echo "Release checksum is missing for $ARCHIVE."
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  actual_checksum=$(sha256sum "$TMP_DIR/$ARCHIVE" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  actual_checksum=$(shasum -a 256 "$TMP_DIR/$ARCHIVE" | awk '{print $1}')
+else
+  echo "A SHA-256 utility (sha256sum or shasum) is required."
+  exit 1
+fi
+if [ "$actual_checksum" != "$expected_checksum" ]; then
+  echo "Grove release checksum verification failed."
+  exit 1
+fi
 tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR"
+
+STATE_DIR="$HOME/.grove"
+state_manifest() {
+  if [ -d "$STATE_DIR" ]; then
+    LC_ALL=C find "$STATE_DIR" -type f -exec cksum {} + | LC_ALL=C sort
+  fi
+}
+state_manifest >"$TMP_DIR/state.before"
+
+if [ -f "$STATE_DIR/config.toml" ]; then
+  "$TMP_DIR/$BINARY" config validate "$STATE_DIR/config.toml"
+fi
 
 install_executable() {
   src="$1"
@@ -72,10 +113,12 @@ install_executable() {
     fi
   fi
   if [ -w "$dest_dir" ]; then
-    install -m 755 "$src" "$dest"
+    install -m 755 "$src" "$dest.new"
+    mv -f "$dest.new" "$dest"
   else
     echo "Installing to $dest_dir (may require sudo)..."
-    sudo install -m 755 "$src" "$dest"
+    sudo install -m 755 "$src" "$dest.new"
+    sudo mv -f "$dest.new" "$dest"
   fi
 }
 
@@ -135,21 +178,31 @@ if [ ! -d "$TMP_DIR/runtime/sandcastle" ]; then
   exit 1
 fi
 echo "Installing private Grove Sandcastle runtime..."
-mkdir -p "$RUNTIME_PREFIX"
-# npm treats a package whose version has not changed as already satisfied, so
-# an upgrade that keeps the runtime version leaves the previously installed
-# files in place. Remove the installed package first, so every run delivers the
-# runtime it is installing rather than reporting success over a stale copy.
-rm -rf "$RUNTIME_PREFIX/node_modules/@grove/sandcastle-runtime"
+runtime_new="$RUNTIME_PREFIX.new"
+rm -rf "$runtime_new"
 PATH="$NODE_HOME/bin:$PATH" "$NODE_HOME/bin/npm" install \
-  --prefix "$RUNTIME_PREFIX" \
+  --prefix "$runtime_new" \
   --omit=dev \
   --install-links \
   --no-audit \
   --no-fund \
   "$TMP_DIR/runtime/sandcastle"
-if [ ! -f "$RUNTIME_PREFIX/node_modules/@grove/sandcastle-runtime/dist/sandcastle.js" ]; then
+if [ ! -f "$runtime_new/node_modules/@grove/sandcastle-runtime/dist/sandcastle.js" ]; then
   echo "Sandcastle runtime installation is incomplete."
+  exit 1
+fi
+runtime_old="$RUNTIME_PREFIX.old"
+rm -rf "$runtime_old"
+if [ -d "$RUNTIME_PREFIX" ]; then
+  mv "$RUNTIME_PREFIX" "$runtime_old"
+fi
+if mv "$runtime_new" "$RUNTIME_PREFIX"; then
+  rm -rf "$runtime_old"
+else
+  if [ -d "$runtime_old" ]; then
+    mv "$runtime_old" "$RUNTIME_PREFIX"
+  fi
+  echo "Failed to activate the new Sandcastle runtime."
   exit 1
 fi
 
@@ -181,6 +234,21 @@ install_wrapper resolve conflict-resolver.js
 install_wrapper ci ci-fix.js
 install_wrapper clean cleanup.js
 install_wrapper address address-review.js
+
+"$INSTALL_DIR/$BINARY" --version | grep -F "grove version $VERSION" >/dev/null
+for command in grove-sandcastle grove-lab imp agent-flow review resolve ci clean address; do
+  if [ ! -x "$INSTALL_DIR/$command" ]; then
+    echo "Installed command is missing or not executable: $command"
+    exit 1
+  fi
+done
+
+state_manifest >"$TMP_DIR/state.after"
+if ! cmp -s "$TMP_DIR/state.before" "$TMP_DIR/state.after"; then
+  echo "Grove user state changed during installation; refusing to report success."
+  diff -u "$TMP_DIR/state.before" "$TMP_DIR/state.after" || true
+  exit 1
+fi
 
 echo ""
 echo "✓ grove v$VERSION installed to $INSTALL_DIR/$BINARY"
