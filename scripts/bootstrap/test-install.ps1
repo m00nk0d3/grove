@@ -108,3 +108,5 @@ finally {
     $env:Path = $oldPath
     Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 }
+
+exit 0
