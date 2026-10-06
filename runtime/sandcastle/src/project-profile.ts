@@ -406,6 +406,23 @@ function readExecutable(
   ) {
     fail(`${where} needs args to be an array of strings.`);
   }
+  // One entry is one argument, which is why the same rule COMMAND_PATTERN keeps
+  // for the executable is kept for what follows it: spawnSync passes no shell, so
+  // `["mod tidy"]` arrives as the single token "mod tidy" and go answers
+  // `go mod tidy: unknown command` — a failure that names a subcommand the
+  // author never asked for and reads as a broken toolchain rather than a
+  // mistyped field. Refusing it here costs a regeneration; allowing it costs a
+  // whole validation-repair cycle that no amount of editing can fix, because the
+  // implementer is handed the failure and told to repair the tree.
+  for (const arg of candidate.args as string[]) {
+    if (/\s/.test(arg)) {
+      fail(
+        `${where} has an arg written as a line: ${JSON.stringify(arg)}. ` +
+          "Each entry in 'args' is one argument as it would be typed, so " +
+          "'go mod tidy' is written as command \"go\" with args [\"mod\", \"tidy\"].",
+      );
+    }
+  }
   return { command: candidate.command, args: candidate.args as string[] };
 }
 

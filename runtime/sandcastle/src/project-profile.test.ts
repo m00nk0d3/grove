@@ -569,6 +569,26 @@ test("a command is read without a claim about a run that never happened", () => 
     shelled.projects[0].setup = { command: "npm ci && npm run build", args: [] };
     write(shelled);
     assert.throws(() => readProfileDraft(draftPath, detected, []), /not a single executable/);
+
+    // So is each of its arguments, one token at a time. A whole subcommand
+    // written as a single entry is the mistake a prompt engineer actually makes,
+    // and it is invisible until the gate runs it: go answers `go mod tidy:
+    // unknown command` and the implementer is sent to repair a tree that is fine.
+    const shelledArgs = base();
+    shelledArgs.projects[0].setup = { command: "go", args: ["mod tidy"] };
+    write(shelledArgs);
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, []),
+      /has an arg written as a line: "mod tidy"/,
+    );
+
+    const shelledTestArgs = base();
+    shelledTestArgs.projects[0].test = command("go", ["mod tidy"]);
+    write(shelledTestArgs);
+    assert.throws(
+      () => readProfileDraft(draftPath, detected, []),
+      /has an arg written as a line: "mod tidy"/,
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

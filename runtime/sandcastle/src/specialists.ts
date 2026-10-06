@@ -295,6 +295,12 @@ ${IMPLEMENTATION_PROMPTS.CSHARP}
    - Each command is one executable and its arguments, never a shell line. They
      are run without a shell, so an operator such as && or | inside a command
      will be read as part of the program's name and will fail.
+   - Each entry in 'args' is one argument on its own, exactly as it would be
+     typed after the program name. There is no quoting and nothing re-splits an
+     entry, so "mod tidy" written as one entry is passed as one argument named
+     "mod tidy" and the program answers that it has no such command. 'go mod
+     tidy' is command "go" with args ["mod", "tidy"]; 'cargo clippy --all-targets'
+     is command "cargo" with args ["clippy", "--all-targets"].
    - Report the command this repository already uses. Prefer what its CI or its
      manifest scripts run over anything you would choose yourself.
    - The setup command is not run, so it carries no 'verified' and no 'evidence'.
