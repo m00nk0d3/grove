@@ -138,6 +138,7 @@ const (
 	ContextActionLabOpenIssue = "lab-open-issue"
 	ContextActionLabClearLock = "lab-clear-lock"
 	ContextActionLabEnd       = "lab-end-session"
+	ContextActionLabClose     = "lab-close"
 	ContextActionLabPublish   = "lab-publish"
 	ContextActionLabEdit      = "lab-edit"
 	ContextActionLabArchive   = "lab-archive"
