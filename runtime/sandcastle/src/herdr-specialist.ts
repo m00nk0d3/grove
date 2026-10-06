@@ -322,6 +322,32 @@ export function promptAgent(
   }
 }
 
+// An assignment names its artifacts the way the orchestrator does — relative to
+// the worktree, as `.agent/issue-<n>/…` — but OpenCode's write tool only takes
+// absolute paths, so the specialist has to invent the absolute form itself. A
+// git worktree and the checkout it was cut from are one OpenCode project, and
+// the invented path is the one rooted at that project's main checkout: the
+// artifact lands outside the worktree, the completion check that reads the
+// worktree finds nothing, and OpenCode's external-directory prompt pushes the
+// model to escape with `../../../` anyway. Resolve every relative artifact path
+// against the worktree here so the model is never left to guess one.
+//
+// The lookbehind keeps an already-absolute path intact: only a `.agent/` that
+// starts a token (after whitespace, a quote, a bracket, or the start of the
+// assignment) is relative.
+const RELATIVE_AGENT_ARTIFACT = /(?<![A-Za-z0-9_/.-])\.agent\//g;
+
+export function resolveAgentArtifactPaths(
+  promptText: string,
+  targetDir: string,
+): string {
+  const agentRoot = path
+    .join(targetDir, ".agent")
+    .replaceAll("\\", "/")
+    .replace(/\/$/, "");
+  return promptText.replace(RELATIVE_AGENT_ARTIFACT, () => `${agentRoot}/`);
+}
+
 interface SpecialistOptions {
   role: string;
   promptText: string;
@@ -372,7 +398,7 @@ export function runSpecialistInPane(options: SpecialistOptions): void {
     "in that worktree. Do not substitute another checkout.\n" +
     "This step may be resuming after an interruption. Inspect and preserve " +
     "valid existing work, then continue from the current state.\n" +
-    promptText;
+    resolveAgentArtifactPaths(promptText, targetDir);
   if (launch.backend === "opencode") {
     effectivePrompt = effectivePrompt + `
 

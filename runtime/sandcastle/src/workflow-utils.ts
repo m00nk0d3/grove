@@ -115,7 +115,6 @@ export interface AgentLaunchConfig {
 
 const DEFAULT_PI_PROVIDER = "lm-studio";
 const DEFAULT_PI_MODEL = "qwen/qwen3.5-9b";
-const DEFAULT_OPENCODE_MODEL = "lmstudio/qwen/qwen3.5-9b";
 const DEFAULT_CLAUDE_PERMISSION_MODE = "acceptEdits";
 // PowerShell is a separate tool from Bash on Windows, and a specialist working in
 // a .NET or Windows repository reaches for it unprompted. Leaving it out does not
@@ -288,22 +287,25 @@ export function getAgentLaunchConfig(
       needsLmStudioEnv: false,
     };
   }
-  const model = env.AGENT_FLOW_OPENCODE_MODEL ?? DEFAULT_OPENCODE_MODEL;
+  // An unset AGENT_FLOW_OPENCODE_MODEL means OpenCode decides: leave --model
+  // off and let it read the model from opencode.json. Forcing a model here
+  // overrides the user's own config, and a model OpenCode does not know about
+  // fails outright with "not valid source" — the specialist never starts.
+  const model = env.AGENT_FLOW_OPENCODE_MODEL;
+  const args = ["--", "--pure"];
+  if (model) {
+    args.push("--model", model);
+  }
+  args.push("--agent", env.AGENT_FLOW_OPENCODE_AGENT ?? "build", "--auto");
   return {
     backend,
     kind: "opencode",
-    label: model.startsWith("lmstudio/")
-      ? "OpenCode + LM Studio"
-      : `OpenCode (${model})`,
-    args: [
-      "--",
-      "--pure",
-      "--model",
-      model,
-      "--agent",
-      env.AGENT_FLOW_OPENCODE_AGENT ?? "build",
-      "--auto",
-    ],
+    label: model
+      ? model.startsWith("lmstudio/")
+        ? "OpenCode + LM Studio"
+        : `OpenCode (${model})`
+      : "OpenCode",
+    args,
     needsLmStudioEnv: false,
   };
 }

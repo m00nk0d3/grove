@@ -347,18 +347,30 @@ test("getAgentLaunchConfig defaults to OpenCode with a Pi override", () => {
   assert.deepEqual(getAgentLaunchConfig({}), {
     backend: "opencode",
     kind: "opencode",
-    label: "OpenCode + LM Studio",
-    args: [
-      "--",
-      "--pure",
-      "--model",
-      "lmstudio/qwen/qwen3.5-9b",
-      "--agent",
-      "build",
-      "--auto",
-    ],
+    label: "OpenCode",
+    args: ["--", "--pure", "--agent", "build", "--auto"],
     needsLmStudioEnv: false,
   });
+  assert.deepEqual(
+    getAgentLaunchConfig({
+      AGENT_FLOW_OPENCODE_MODEL: "lmstudio/openai/gpt-oss-20b",
+    }),
+    {
+      backend: "opencode",
+      kind: "opencode",
+      label: "OpenCode + LM Studio",
+      args: [
+        "--",
+        "--pure",
+        "--model",
+        "lmstudio/openai/gpt-oss-20b",
+        "--agent",
+        "build",
+        "--auto",
+      ],
+      needsLmStudioEnv: false,
+    },
+  );
   assert.equal(
     getAgentLaunchConfig({
       AGENT_FLOW_OPENCODE_MODEL: "opencode/mimo-v2.5-free",
