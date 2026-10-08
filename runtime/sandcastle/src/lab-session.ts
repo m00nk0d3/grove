@@ -156,7 +156,7 @@ export function buildShapePrompt(entry: LabEntry, repo: string, paths: LabPaths)
  * the installed package; see skills/mattpocock/README.md.
  */
 export function bundledSkillsDir(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "skills", "mattpocock");
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "skills", "opencode"));
 }
 
 export function buildGrillPrompt(
