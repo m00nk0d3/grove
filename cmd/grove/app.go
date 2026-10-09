@@ -1240,6 +1240,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case modal.LabCaptureSubmittedMsg:
 			return m.handleLabCaptureSubmitted(msg)
+		case modal.LabAnswerSubmittedMsg:
+			return m.handleLabAnswerSubmitted(msg)
+		case modal.LabRequestSubmittedMsg:
+			return m.handleLabRequestSubmitted(msg)
 		case modal.LabArchiveConfirmedMsg:
 			return m.handleLabArchiveConfirmed(msg)
 		case modal.LabDeleteConfirmedMsg:
@@ -1582,6 +1586,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.lab.entries = msg.labs
 				m.lab.locks = msg.labLocks
+				m.lab.talks = msg.labTalks
 				m.lab.clamp()
 			}
 			// Always use the main worktree (first entry) as the canonical repo path
@@ -1756,7 +1761,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				inspector.SetWorkflow(workflow, agentsForWorkflow(m.missionState, inspector.RunID()))
 			}
 		}
-		return m, m.syncLabStatusesCmd()
+		return m, tea.Batch(m.syncLabStatusesCmd(), loadLabTalksCmd(m.RepoPath, m.lab.entries))
+
+	case labTalksLoadedMsg:
+		m.lab.talks = msg.talks
+		return m, nil
+
+	case labAnswerRecordedMsg:
+		return m.handleLabAnswerRecorded(msg)
+
+	case labRequestSentMsg:
+		return m.handleLabRequestSent(msg)
 
 	case sessionFocusedMsg:
 		// Focus is best-effort; show a friendly toast regardless of outcome.
@@ -2978,6 +2993,7 @@ type worktreesRefreshedMsg struct {
 	labs      []domain.LabEntry
 	labsErr   error
 	labLocks  map[string]data.LabLockOwner
+	labTalks  map[string]labTalk
 	err       error
 }
 
@@ -2993,6 +3009,7 @@ func (m *Model) refreshWorktreesCmd() tea.Cmd {
 			msg.labs, msg.labsErr = loadLabs(repoPath)
 			if store, err := labStoreFor(repoPath); err == nil {
 				msg.labLocks, _ = store.Locks()
+				msg.labTalks = loadLabTalks(store, msg.labs)
 			}
 		}
 		return msg

@@ -403,8 +403,9 @@ func TestLabNextAction_ExplainsWhatEnterWillDo(t *testing.T) {
 
 	working := entryAt(now, "working", domain.LabKindIdea, domain.LabStatusGrilling, "Working")
 	working.Runs = []string{"run-1"}
-	assert.Equal(t, "Answer the agent", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowBlocked}), working))
-	assert.Equal(t, "Open the agent session", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowRunning}), working))
+	assert.Equal(t, "Answer the agent in its pane", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowBlocked}), working),
+		"a session waiting on something Grove has no card for is answered in the pane")
+	assert.Equal(t, "Watch the agent", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowRunning}), working))
 
 	review := entryAt(now, "review", domain.LabKindBug, domain.LabStatusShaping, "Review")
 	review.Mode = domain.LabModeShape

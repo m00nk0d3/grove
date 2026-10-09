@@ -56,6 +56,8 @@ type labView struct {
 	runs map[string]labRun
 	// locks are the entries' held session locks, by entry ID.
 	locks map[string]data.LabLockOwner
+	// talks holds what each entry's session has asked the user, by entry ID.
+	talks map[string]labTalk
 }
 
 // labRun is a Sandcastle run as the Lab shows it.
@@ -229,10 +231,12 @@ type labsLoadedMsg struct {
 	// locks, when locksLoaded, are the entries' held session locks.
 	locks       map[string]data.LabLockOwner
 	locksLoaded bool
-	entries     []domain.LabEntry
-	selectID    string
-	status      string
-	err         error
+	// talks, when locksLoaded, are the entries' protocol files.
+	talks    map[string]labTalk
+	entries  []domain.LabEntry
+	selectID string
+	status   string
+	err      error
 }
 
 // labStoreFor returns the Lab store of the repository at repoPath.
@@ -265,7 +269,8 @@ func labChangeCmd(repoPath, selectID, status string, change func(*data.LabStore)
 		}
 		entries, err := store.Load()
 		locks, lockErr := store.Locks()
-		return labsLoadedMsg{entries: entries, locks: locks, locksLoaded: lockErr == nil, selectID: selectID, status: status, err: err}
+		talks := loadLabTalks(store, entries)
+		return labsLoadedMsg{entries: entries, locks: locks, locksLoaded: lockErr == nil, talks: talks, selectID: selectID, status: status, err: err}
 	}
 }
 
@@ -278,6 +283,7 @@ func (m *Model) handleLabsLoaded(msg labsLoadedMsg) (tea.Model, tea.Cmd) {
 	m.lab.entries = msg.entries
 	if msg.locksLoaded {
 		m.lab.locks = msg.locks
+		m.lab.talks = msg.talks
 	}
 	if msg.selectID != "" {
 		m.lab.selectID(msg.selectID)
@@ -361,6 +367,10 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 			return m.prepareLabPublish(e)
 		}
 		return m.openLabInspectorOnArtifacts()
+	}
+	// What the session asks is answered in Grove; the pane is only watched.
+	if m.openLabAsk(e) {
+		return m, nil
 	}
 	if run, ok := m.lab.latestRun(e); ok && run.live() && run.paneID != "" {
 		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
@@ -767,11 +777,15 @@ func labNextAction(v labView, e domain.LabEntry) string {
 		}
 		return "Review the drafted bug report"
 	}
+	if action := labAskAction(v, e); action != "" {
+		return action
+	}
 	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
 		if run.waiting() {
-			return "Answer the agent"
+			// Waiting on something Grove has no card for.
+			return "Answer the agent in its pane"
 		}
-		return "Open the agent session"
+		return "Watch the agent"
 	}
 	switch {
 	case v.canShape(e):

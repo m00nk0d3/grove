@@ -303,21 +303,28 @@ func TestLabReview_ApproveAndDiscardFollowContent(t *testing.T) {
 	assert.Equal(t, domain.LabReviewApproved, stored[0].ReviewOf(domain.LabArtifact{Path: "issue.md", Body: shapedDraft}), "a stale decision is not applied")
 }
 
-func TestLabReview_ChangesOpenTheLivePane(t *testing.T) {
+func TestLabReview_ChangesAreRequestedInGrove(t *testing.T) {
 	navigator := &fakeHerdrNavigator{}
-	m, _, e := publishModel(t, false)
+	m, store, e := publishModel(t, false)
 	m.herdrNavigator = navigator
 	e.Runs = []string{"run-1"}
 	m.lab.entries = []domain.LabEntry{e}
 	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowBlocked}))
 
-	_, cmd := m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: "issue.md", Action: modal.LabReviewChanges})
-	require.NotNil(t, cmd)
-	cmd()
-	assert.Equal(t, "pane-run-1", navigator.focusedPane)
+	updated, _ := m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: "issue.md", Action: modal.LabReviewChanges})
+	m = updated.(*Model)
+	require.IsType(t, &modal.LabMessageModal{}, m.activeModal, "the change request is written in Grove")
+	assert.Empty(t, navigator.focusedPane, "the pane is not opened")
+	m = typeInto(t, m, "Mention the proxy")
+	m, cmd := press(t, m, "ctrl+s")
+	m = feed(t, m, cmd, 2)
+	assert.Equal(t, "Change request sent to the agent", m.statusMsg)
+	raw, err := os.ReadFile(filepath.Join(store.EntryDir(e.ID), "requests", "001.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "issue.md: Mention the proxy")
 
 	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowSucceeded}))
-	updated, _ := m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: "issue.md", Action: modal.LabReviewChanges})
+	updated, _ = m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: "issue.md", Action: modal.LabReviewChanges})
 	assert.Contains(t, updated.(*Model).statusErr, "resume it to ask the agent for changes")
 }
 

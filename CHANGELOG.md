@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Lab question cards** — Lab sessions are now conducted in Grove rather than
+  in the agent's Herdr pane, as the first slice of the Lab redesign in
+  `docs/LAB_DESIGN.md`. The agent asks each question as a card in the entry's
+  `questions/` directory, with options and a recommended answer; `Enter` on the
+  entry opens the card, and the answer is written for the session runtime to
+  deliver once every waiting card has one. Invalid cards are repaired with a
+  prompt naming the exact error before they reach the user. A turn that ends
+  without a card opens a reply showing the agent's last output, permission
+  prompts are allowed or denied in Grove, and asking for changes to a draft is
+  written in Grove instead of in the pane. Claude Code runs Lab sessions in
+  `dontAsk` mode, limited to reading the repository, read-only git commands,
+  and writing under the entry, so sessions do not stop on permission prompts.
+  A resumed session replays the questions asked so far.
 - **Lab** — a navigation rail tab (`l`) for ideas and bugs before they become
   issues, rebuilt to the design in `docs/LAB_DESIGN.md`. Entries are stored in
   `<git-common-dir>/grove-lab/`, shared by every worktree and never committed,

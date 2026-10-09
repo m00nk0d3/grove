@@ -590,9 +590,8 @@ func (m *Model) handleLabArtifactReview(msg modal.LabArtifactReviewMsg) (tea.Mod
 			m.statusErr = "The session has ended; resume it to ask the agent for changes"
 			return m, clearErrorCmd()
 		}
-		m.activeModal = nil
-		m.statusMsg = fmt.Sprintf("Tell the agent what to change in %s", msg.Path)
-		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
+		m.activeModal = modal.NewLabChangeModal(e.ID, msg.Path)
+		return m, nil
 	case modal.LabReviewEdit:
 		store, err := labStoreFor(m.RepoPath)
 		if err != nil {
