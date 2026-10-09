@@ -101,17 +101,6 @@ func (v labView) latestRun(e domain.LabEntry) (labRun, bool) {
 	return labRun{}, false
 }
 
-// entryRuns returns the entry's runs that mission control knows, oldest first.
-func (v labView) entryRuns(e domain.LabEntry) []labRun {
-	var out []labRun
-	for _, id := range e.Runs {
-		if run, ok := v.runs[id]; ok {
-			out = append(out, run)
-		}
-	}
-	return out
-}
-
 // waiting reports whether the entry's agent is waiting for the user.
 func (v labView) waiting(e domain.LabEntry) bool {
 	run, ok := v.latestRun(e)
