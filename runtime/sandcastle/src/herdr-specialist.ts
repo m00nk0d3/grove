@@ -418,7 +418,15 @@ export function runSpecialistInPane(options: SpecialistOptions): void {
     effectivePrompt = effectivePrompt + `
 
 IMPORTANT: All required artifacts must be written to absolute filesystem paths.
-For OpenCode agents, use bash commands like: echo '{"..."}' > "/absolute/path/to/file.json"
+Write each artifact with one heredoc per file, using its absolute path:
+  cat > "/absolute/path/to/file.json" <<'EOF'\\n<content, with \\n for every line break>\\nEOF
+Tool calls are structured data, not a terminal: NEVER emit a raw line break
+inside a tool call. Type backslash-n (\\n) wherever the file needs a new line;
+it arrives as a real line break, while a raw line break is a syntax error and
+the write fails silently. The quoted heredoc delimiter disables expansion, so
+$, backticks and quotes in the content are safe. Never use echo for multi-line
+content. Then verify every file: ls -l "<path>" && wc -l "<path>". A file you
+have not verified does not exist; never report it as written.
 `;
   } else if (launch.backend === "claude") {
     effectivePrompt = effectivePrompt + `
