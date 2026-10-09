@@ -26,6 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Lab stages and prompts** — the second slice of the Lab redesign. A grill
+  session now runs four stages, *Scout*, *Interview*, *Spec*, and *Tickets*,
+  each with a fresh agent and its own prompt; a shaping session runs *Shape*.
+  The prompts are Grove's own, in `runtime/sandcastle/prompts/lab/`, written
+  for small local models as well as hosted ones, and a repository can replace
+  any of them under `.grove/lab/prompts/`; the pinned mattpocock skills are
+  removed. Grove builds a map of the repository for every session, from the
+  tracked files and within `[lab] repo_map_tokens` (8,000 by default), and the
+  Scout stage reads the code an entry concerns before the interview, whose
+  questions must cite it. The interview tracks topic coverage in
+  `coverage.json`. Each stage's output is checked and sent back to the agent
+  with the exact problems, and the spec, tickets, and bug report wait for
+  approval in Grove before the session moves on. `npm run lab-eval` in the
+  runtime scores the prompts against a chosen agent and model on fixture
+  entries.
 - **Lab question cards** — Lab sessions are now conducted in Grove rather than
   in the agent's Herdr pane, as the first slice of the Lab redesign in
   `docs/LAB_DESIGN.md`. The agent asks each question as a card in the entry's

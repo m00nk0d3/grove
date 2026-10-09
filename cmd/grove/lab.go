@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -655,6 +656,7 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 	starter := m.workflowStarter
 	repoPath := m.RepoPath
 	agent := m.Config.Sandcastle.Agent()
+	mapTokens := m.Config.Lab.RepoMapTokens
 	m.statusMsg = fmt.Sprintf("Starting a %s session for %q…", verb, e.Title())
 	return m, func() tea.Msg {
 		fail := func(err error) tea.Msg { return labSessionStartedMsg{loaded: labsLoadedMsg{err: err}} }
@@ -670,6 +672,13 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 			return fail(err)
 		}
 		defer release()
+
+		// Every stage of the session reads the repository map for the
+		// checkout's commit. Without one the agent explores unaided, so a
+		// failure to build it does not stop the session.
+		if err := ensureLabRepoMap(store, repoPath, mapTokens); err != nil {
+			slog.Warn("lab: could not build the repository map", "err", err)
+		}
 
 		// Escalating hands the entry from its shape session to a grill. The
 		// shape run is told to close first; its close file is its own, so the
@@ -710,7 +719,7 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 			loaded: labsLoadedMsg{
 				entries:  entries,
 				selectID: e.ID,
-				status:   fmt.Sprintf("%s %q — answer the agent in its Herdr pane", strings.ToUpper(verb[:1])+verb[1:], e.Title()),
+				status:   fmt.Sprintf("%s %q — its questions appear here in the Lab", strings.ToUpper(verb[:1])+verb[1:], e.Title()),
 				err:      err,
 			},
 		}
@@ -824,6 +833,7 @@ func (v labView) hasLiveSession(e domain.LabEntry) bool {
 // grillStepStatus is the entry status a grill session has reached at each of
 // its run's steps.
 var grillStepStatus = map[string]domain.LabStatus{
+	"Scout":     domain.LabStatusGrilling,
 	"Interview": domain.LabStatusGrilling,
 	"Spec":      domain.LabStatusSpecced,
 	"Tickets":   domain.LabStatusTicketed,

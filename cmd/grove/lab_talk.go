@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
+	internalexec "github.com/m00nk0d3/grove/internal/exec"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 )
 
@@ -68,7 +69,11 @@ const (
 	labAskQuestion
 	labAskReply
 	labAskPermission
+	labAskReview
 )
+
+// labStagePublish is the session step that waits for Grove to publish.
+const labStagePublish = "publish"
 
 // ask reports what e's live session is waiting for. A question card is
 // answerable as soon as it appears; a reply or a permission decision only
@@ -93,6 +98,12 @@ func (v labView) ask(e domain.LabEntry) (labAsk, labTalk) {
 		return labAskReply, t
 	case domain.LabPhasePermission:
 		return labAskPermission, t
+	case domain.LabPhaseReview:
+		// A draft waiting between stages. Once every draft is approved the
+		// session waits at Publish, which the Lab handles as publishing.
+		if t.session.Stage != labStagePublish {
+			return labAskReview, t
+		}
 	}
 	return labAskNone, t
 }
@@ -112,6 +123,14 @@ func labAskAction(v labView, e domain.LabEntry) string {
 		return "Reply to the agent"
 	case labAskPermission:
 		return "Allow or deny a command"
+	case labAskReview:
+		switch t.session.Stage {
+		case "spec":
+			return "Review the spec"
+		case "tickets":
+			return "Review the tickets"
+		}
+		return "Review the drafted bug report"
 	}
 	return ""
 }
@@ -132,6 +151,10 @@ func (m *Model) openLabAsk(e domain.LabEntry) bool {
 		m.activeModal = modal.NewLabReplyModal(e.ID, t.session.Output)
 	case labAskPermission:
 		m.activeModal = modal.NewLabPermissionModal(e.ID, t.session.Output)
+	case labAskReview:
+		inspector := modal.NewLabInspectorModal(m.labInspectorState(e))
+		inspector.ShowArtifacts()
+		m.activeModal = inspector
 	default:
 		return false
 	}
@@ -235,4 +258,22 @@ func (m *Model) handleLabRequestSent(msg labRequestSentMsg) (tea.Model, tea.Cmd)
 		m.statusMsg = "Reply sent to the agent"
 	}
 	return m, clearMsgCmd()
+}
+
+// ensureLabRepoMap builds the repository map for the checkout's commit,
+// unless it exists. Tests replace it.
+var ensureLabRepoMap = buildLabRepoMap
+
+func buildLabRepoMap(store *data.LabStore, checkout string, tokens int) error {
+	git := internalexec.NewGitCommand(checkout)
+	commit, err := git.HeadCommit()
+	if err != nil {
+		return err
+	}
+	files, err := git.TrackedFiles()
+	if err != nil {
+		return err
+	}
+	_, err = store.EnsureRepoMap(checkout, files, commit, tokens)
+	return err
 }

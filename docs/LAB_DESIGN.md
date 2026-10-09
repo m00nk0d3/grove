@@ -176,7 +176,8 @@ instruction-following can be compared across models. `session.json` also
 holds the session's phase — `working`, `question`, `fallback`,
 `permission`, or `review` — and, for `fallback` and `permission`, the
 agent's recent output, so Grove shows the session without reading the pane
-itself.
+itself. For a draft presented for review with problems the agent did not
+repair, it lists those problems.
 
 ## Question protocol
 
@@ -222,7 +223,6 @@ kind of its own.
   "id": 3,
   "choices": [0],
   "text": "Admins can still force-unlock.",
-  "via": "grove",
   "answered_at": "2026-10-09T10:14:00Z",
   "revisions": []
 }
@@ -235,8 +235,9 @@ When the runtime delivers an answer it writes the receipt `NNN.sent`:
 ```
 
 `revision` is the number of revisions the delivered answer had, so a revised
-answer is delivered again. `via` is `grove` for an answer given in Grove and
-`pane` for a question the agent moved past without one (below).
+answer is delivered again. `via` is `grove` for an answer given in Grove,
+`pane` for a question the agent moved past without one (below), and
+`skipped` for a question still open when the user ended the interview.
 
 ### Delivery
 
@@ -738,9 +739,12 @@ answer the same question twice; the second is told it was already answered.
 The prompts are measured, not judged by reading. `npm run lab-eval -- --agent
 <backend> --model <name>` in `runtime/sandcastle` runs a set of fixture entries
 — a clear feature idea, a vague idea, a bug, and an escalation — against a
-small pinned fixture repository. A scripted user answers each card with its
-recommendation, or with a set override for chosen questions so revisions are
-exercised, and approves each draft.
+small pinned fixture repository, `runtime/sandcastle/evals/fixtures/repo`, from
+a Herdr pane. A scripted user answers each card with its recommendation, or
+with a set override for chosen questions, revises an earlier answer so
+revisions are exercised, and approves each draft. The fixture's repository map
+is kept beside it as `repo-map.md`; a Go test keeps it identical to the map
+Grove builds, so the harness needs no Grove binary.
 
 Each run reports:
 

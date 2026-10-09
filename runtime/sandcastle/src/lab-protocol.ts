@@ -43,7 +43,8 @@ export interface LabAnswer {
 export interface Receipt {
   /** For an answer, how many revisions it had when delivered. */
   revision: number;
-  via: "grove" | "pane";
+  /** "skipped" closes a card left open when the user ended the interview. */
+  via: "grove" | "pane" | "skipped";
   sent_at: string;
 }
 
@@ -188,7 +189,7 @@ function readReceipt(file: string): Receipt | undefined {
   if (!isObject(value) || typeof value.revision !== "number") return undefined;
   return {
     revision: value.revision,
-    via: value.via === "pane" ? "pane" : "grove",
+    via: value.via === "pane" || value.via === "skipped" ? value.via : "grove",
     sent_at: typeof value.sent_at === "string" ? value.sent_at : "",
   };
 }
@@ -273,7 +274,7 @@ export function isPending(record: QuestionRecord): boolean {
 export function needsDelivery(record: QuestionRecord): boolean {
   if (!record.answer || !record.question) return false;
   if (!record.receipt) return true;
-  if (record.receipt.via === "pane") return false;
+  if (record.receipt.via !== "grove") return false;
   return record.receipt.revision < (record.answer.revisions?.length ?? 0);
 }
 
@@ -336,6 +337,16 @@ export function buildAnswersPrompt(records: QuestionRecord[], nextCardPath: stri
   return lines.join("\n");
 }
 
+/** Asks the agent to fix a stage output that failed validation. */
+export function buildDraftRepairPrompt(problems: string[], stage: string, doneFile: string): string {
+  return [
+    "What you wrote has problems:",
+    ...problems.map((problem) => `- ${problem}`),
+    "",
+    `Fix every one of them in place, then write ${stage} to ${doneFile} and stop.`,
+  ].join("\n");
+}
+
 export function buildRepairPrompt(record: QuestionRecord): string {
   return [
     `${path.basename(record.file)} is invalid: ${record.error}.`,
@@ -343,31 +354,37 @@ export function buildRepairPrompt(record: QuestionRecord): string {
   ].join("\n");
 }
 
+/** Where a request is delivered: the stage and the files it finishes with. */
+export interface RequestTarget {
+  stage: string;
+  doneFile: string;
+  draftsDir: string;
+  coverageFile: string;
+  /** Whether the stage asks the user through question cards. */
+  asks: boolean;
+}
+
 /** Delivers a request other than a permission, which is answered by keys. */
-export function buildRequestPrompt(
-  request: LabRequest,
-  nextCardPath: string,
-  finish: string,
-  draftsDir: string,
-  stageFile: string,
-): string {
+export function buildRequestPrompt(request: LabRequest, nextCardPath: string, finish: string, target: RequestTarget): string {
   const text = request.text?.trim() ?? "";
   switch (request.kind) {
     case "reply":
       return [`The user replies: "${text}"`, "", nextStepLine(nextCardPath, finish)].join("\n");
     case "change":
       return [
-        `The user asks for changes to the drafts in ${draftsDir}:`,
+        `The user asks for changes to the drafts in ${target.draftsDir}:`,
         "<<<",
         text,
         ">>>",
-        "Revise the drafts in place. If a change needs a decision from the user, ask it with a question card first.",
-        `When the drafts are revised, write drafted to ${stageFile} and stop.`,
+        target.asks
+          ? "Revise the drafts in place. If a change needs a decision from the user, ask it with one question card first."
+          : "Revise the drafts in place with the smallest change that does what the user asks. Record anything you cannot decide as an open question in the draft.",
+        `When the drafts are revised, write ${target.stage} to ${target.doneFile} and stop.`,
       ].join("\n");
     case "finish_interview":
       return [
         "The user has ended the interview. Ask no more questions.",
-        "Record anything still undecided as an open question in the drafts, and continue with the next step of your instructions.",
+        `Set every topic that is not settled to "open" in ${target.coverageFile}, then write ${target.stage} to ${target.doneFile} and stop.`,
       ].join("\n");
     case "permission":
       return "";
@@ -385,62 +402,11 @@ export function buildInterviewSoFar(records: QuestionRecord[]): string {
       lines.push(`Q${record.number}. ${question.question} → ${describeAnswer(question, answer)}${note ? ` (${note})` : ""}`);
     } else if (receipt?.via === "pane") {
       lines.push(`Q${record.number}. ${question.question} → answered in the pane; the answer was not recorded.`);
+    } else if (receipt?.via === "skipped") {
+      lines.push(`Q${record.number}. ${question.question} → not answered: the user ended the interview.`);
     } else {
       lines.push(`Q${record.number}. ${question.question} → still waiting for the user. Do not write another question until it is answered.`);
     }
   }
   return lines.join("\n");
-}
-
-/**
- * The protocol section of a session brief: how to ask the user anything. It
- * is the same for every session, so a model meets one set of rules.
- */
-export function buildProtocolSection(questionsDir: string, firstCardPath: string): string {
-  const example = path.join(questionsDir, "003.json");
-  return [
-    "HOW TO ASK THE USER — read this carefully.",
-    "",
-    "The user does not read this pane. They answer in Grove. You ask a question by writing a question card file, never by writing the question in your reply.",
-    "",
-    "Procedure for every question:",
-    `1. Write one JSON file to ${questionsDir}, named after the question number with three digits: 001.json, 002.json, 003.json, …`,
-    `   Your first question goes to ${firstCardPath}. Each answer you receive names the path for the next one.`,
-    "2. End your turn immediately after writing the file. Write nothing else, do not wait, do not continue the work.",
-    "3. Grove sends you the user's answer as your next message. Then continue.",
-    "",
-    "The card format:",
-    "{",
-    '  "id": 3,                          the question number, the same as the file name',
-    '  "kind": "choice",                 "choice" (pick one), "multi" (pick any), or "text" (free answer)',
-    '  "question": "…",                  one question, one sentence',
-    '  "context": "…",                   what you found that makes the question necessary; name the file, or say why the code cannot answer it',
-    '  "options": ["…", "…"],            2 to 4 short options for "choice" and "multi"; leave this field out for "text"',
-    '  "recommended": 0,                 "choice": the index of your recommended option, counting from 0',
-    '                                    "multi": a list of indices, such as [0, 2]',
-    '                                    "text": your suggested answer, as a string',
-    '  "why": "…"                        one sentence on why you recommend it',
-    "}",
-    "",
-    `Example — ${example}:`,
-    "{",
-    '  "id": 3,',
-    '  "kind": "choice",',
-    '  "question": "Should an archived entry keep its live session running?",',
-    '  "context": "lab.go starts sessions per entry, and nothing stops a run when the entry is archived.",',
-    '  "options": ["Stop the session when archiving", "Keep it running", "Ask the user each time"],',
-    '  "recommended": 2,',
-    '  "why": "Stopping loses work in progress, and keeping it running hides an agent that is still working."',
-    "}",
-    "",
-    "Rules:",
-    "1. Ask exactly one question per turn.",
-    "2. Never ask in prose. A question that is not in a card file is never seen by the user.",
-    "3. Never ask what you can find out by reading the repository. Read first, then ask only what the code cannot answer.",
-    "4. Always give a recommendation. A yes-or-no question is a \"choice\" with two options.",
-    '5. The user can always add a note to any answer, so do not add an "Other" option.',
-    "6. Write valid JSON: double quotes, no comments, no trailing commas.",
-    "",
-    "Before writing a card, check: Is the file named with the right number? Does \"id\" match it? Does \"recommended\" point to an option that exists? Does \"context\" name a file or say why the code cannot answer?",
-  ].join("\n");
 }

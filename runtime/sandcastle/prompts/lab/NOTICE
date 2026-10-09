@@ -1,3 +1,11 @@
+The Lab stage prompts in this directory are Grove's own. Their interview, spec,
+glossary, decision record, and ticket disciplines draw on Matt Pocock's skills,
+https://github.com/mattpocock/skills, at commit
+c55ee46073ed923f86ce59a5eb3b6d895095d1b7, which are used under the following
+license.
+
+---
+
 MIT License
 
 Copyright (c) 2026 Matt Pocock

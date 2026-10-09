@@ -25,9 +25,10 @@ import (
 func withLabCommonDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	orig := gitCommonDir
+	orig, origMap := gitCommonDir, ensureLabRepoMap
 	gitCommonDir = func(string) (string, error) { return dir, nil }
-	t.Cleanup(func() { gitCommonDir = orig })
+	ensureLabRepoMap = func(*data.LabStore, string, int) error { return nil }
+	t.Cleanup(func() { gitCommonDir, ensureLabRepoMap = orig, origMap })
 	return dir
 }
 
@@ -736,7 +737,7 @@ func TestLab_EnterOnBugDraftStartsShapingSession(t *testing.T) {
 	assert.Equal(t, []string{"run-shape-1"}, stored[0].Runs)
 	assert.Equal(t, labTabActive, m.lab.tab, "the list follows the entry into Active")
 	assert.NoFileExists(t, filepath.Join(store.EntryDir(e.ID), "session.lock"), "the lock is released after the start")
-	assert.Contains(t, m.statusMsg, "answer the agent in its Herdr pane")
+	assert.Contains(t, m.statusMsg, "its questions appear here in the Lab")
 }
 
 func TestLab_ShapeRefusedWhileAnotherGroveHoldsTheEntry(t *testing.T) {

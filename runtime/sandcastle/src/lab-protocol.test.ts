@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import {
   buildAnswersPrompt,
   buildInterviewSoFar,
-  buildProtocolSection,
   describeAnswer,
   isPending,
   needsDelivery,
@@ -119,14 +118,4 @@ test("an answers prompt ends with the exact next step", () => {
   const records: QuestionRecord[] = [{ number: 1, file: "", raw: "", question: choice, answer: { id: 1, choices: [1] } }];
   const prompt = buildAnswersPrompt(records, path.join("q", "002.json"), "continue.");
   assert.equal(prompt, `Answer to question 1: "No" (option 2).\n\nNext: write question 2 to ${path.join("q", "002.json")} and stop, or, continue.`);
-});
-
-test("the protocol section shows the format, an example, and the first path", () => {
-  const section = buildProtocolSection("/lab/questions", "/lab/questions/001.json");
-  assert.match(section, /Your first question goes to \/lab\/questions\/001\.json/);
-  assert.match(section, /End your turn immediately after writing the file/);
-  assert.match(section, /Never ask in prose/);
-  const start = section.indexOf("{", section.indexOf("Example"));
-  const example = section.slice(start, section.indexOf("}\n\nRules") + 1);
-  assert.ok(validateQuestion(example, 3).ok, "the example card in the instructions is itself valid");
 });

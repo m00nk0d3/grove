@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
-// A Lab session: an agent working through a Lab entry in a Herdr pane, with
-// the user answering it in Grove. The agent asks through question cards;
-// Grove writes the answers; this process delivers them to the agent, reports
-// the session's state to Grove, and closes the pane when Grove says the
-// session is over. See docs/LAB_DESIGN.md.
+// A Lab session: an entry taken through its stages — scout, interview, spec,
+// and tickets for an idea; shape for a bug — by one fresh agent per stage, in
+// a Herdr pane, with the user answering in Grove. The agent asks through
+// question cards; Grove writes the answers and approvals; this process starts
+// each stage's agent, delivers what Grove writes, checks what the agent
+// writes, reports the session's state to Grove, and closes the pane when
+// Grove says the session is over. See docs/LAB_DESIGN.md.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -16,9 +18,20 @@ import {
   startAgentWithReadinessRecovery,
 } from "./herdr-specialist.js";
 import {
+  checkCoverage,
+  isApproved,
+  nextAdrNumber,
+  readIfExists,
+  validateIssue,
+  validateScout,
+  validateSpec,
+  validateTickets,
+} from "./lab-drafts.js";
+import { buildStagePrompt, NONE, type LabStage, type PromptValues } from "./lab-prompts.js";
+import {
   buildAnswersPrompt,
+  buildDraftRepairPrompt,
   buildInterviewSoFar,
-  buildProtocolSection,
   buildRepairPrompt,
   buildRequestPrompt,
   cardFileName,
@@ -60,8 +73,10 @@ export interface LabPaths {
   labDir: string;
   entryDir: string;
   artifactsDir: string;
-  /** The agent writes its progress marker here, one word. */
+  /** The runtime writes the active stage here, for Grove. */
   stageFile: string;
+  /** The agent writes its stage's name here when the stage is finished. */
+  doneFile: string;
   /**
    * Grove writes this file to end the session. It is named for the run, so
    * ending one session never ends, or is undone by, another of the same entry.
@@ -73,6 +88,8 @@ export interface LabPaths {
   requestsDir: string;
   /** The live session's phase and recent output, for Grove. */
   sessionFile: string;
+  scoutFile: string;
+  coverageFile: string;
 }
 
 const ENTRY_ID = /^[A-Za-z0-9_-]+$/;
@@ -88,10 +105,13 @@ export function labPaths(commonDir: string, entryId: string, runId = "session"):
     entryDir,
     artifactsDir: path.join(entryDir, "artifacts"),
     stageFile: path.join(entryDir, "stage"),
+    doneFile: path.join(entryDir, "done"),
     closeFile: path.join(entryDir, `${runId}.close`),
     questionsDir: path.join(entryDir, "questions"),
     requestsDir: path.join(entryDir, "requests"),
     sessionFile: path.join(entryDir, "session.json"),
+    scoutFile: path.join(entryDir, "scout.md"),
+    coverageFile: path.join(entryDir, "coverage.json"),
   };
 }
 
@@ -122,180 +142,63 @@ export function readLabEntry(paths: LabPaths, entryId: string): LabEntry {
   return entry;
 }
 
-/** The steps a session's run reports, and the stage marker each one starts at. */
-export const SESSION_STEPS: Record<LabSessionKind, { title: string; stage: string }[]> = {
-  shape: [
-    { title: "Shape", stage: "shape" },
-    { title: "Publish", stage: "drafted" },
-  ],
+/** A step of a session's run: a stage with an agent, or waiting to publish. */
+export type SessionStep = LabStage | "publish";
+
+/** The stages of each kind of session, in order. */
+export const SESSION_STAGES: Record<LabSessionKind, LabStage[]> = {
+  grill: ["scout", "interview", "spec", "tickets"],
+  shape: ["shape"],
+};
+
+/** The draft the user approves before a stage's session moves on. */
+export const REVIEWED_DRAFT: Partial<Record<LabStage, string>> = {
+  spec: "spec.md",
+  tickets: "tickets.json",
+  shape: "issue.md",
+};
+
+/** The stages that ask the user through question cards. */
+const ASKING_STAGES: readonly LabStage[] = ["interview", "shape"];
+
+/** The steps a session's run reports. A shaped report is reviewed in its own step. */
+export const SESSION_STEPS: Record<LabSessionKind, { id: string; title: string }[]> = {
   grill: [
-    { title: "Interview", stage: "interview" },
-    { title: "Spec", stage: "spec" },
-    { title: "Tickets", stage: "tickets" },
-    { title: "Publish", stage: "drafted" },
+    { id: "scout", title: "Scout" },
+    { id: "interview", title: "Interview" },
+    { id: "spec", title: "Spec" },
+    { id: "tickets", title: "Tickets" },
+    { id: "publish", title: "Publish" },
+  ],
+  shape: [
+    { id: "shape", title: "Shape" },
+    { id: "review", title: "Review" },
+    { id: "publish", title: "Publish" },
   ],
 };
 
-/**
- * How the agent asks the user anything, and, for a resumed session, the
- * questions already asked. Every brief carries it.
- */
-export function buildConversationSection(paths: LabPaths, records: QuestionRecord[]): string {
-  const next = path.join(paths.questionsDir, cardFileName(nextQuestionNumber(records)));
-  const lines = [buildProtocolSection(paths.questionsDir, next)];
-  const soFar = buildInterviewSoFar(records);
-  if (soFar !== "") {
-    lines.push(
-      "",
-      "This session resumes an earlier one. These questions were already asked; do not ask them again:",
-      "<<<",
-      soFar,
-      ">>>",
-    );
-  }
-  return lines.join("\n");
-}
-
-/** What the agent does instead of asking another question, by session kind. */
-export function finishHint(kind: LabSessionKind, paths: LabPaths): string {
-  return kind === "shape"
-    ? `if the report needs nothing more from the user, write ${path.join(paths.artifactsDir, "issue.md")}, then write drafted to ${paths.stageFile} and stop.`
-    : "if you need nothing more from the user right now, continue with the next step of your instructions.";
-}
-
-export function buildShapePrompt(
-  entry: LabEntry,
-  repo: string,
-  paths: LabPaths,
-  records: QuestionRecord[] = [],
-): string {
-  const issuePath = path.join(paths.artifactsDir, "issue.md");
-  return [
-    "You are shaping a bug report for the Grove Lab.",
-    "",
-    `Repository: ${repo}`,
-    `Entry: ${entryTitle(entry)}`,
-    "",
-    "The bug as the user captured it:",
-    "<<<",
-    entry.text,
-    ">>>",
-    "",
-    "Turn it into a clear, actionable GitHub bug report.",
-    "",
-    "How to work:",
-    "- You may read the repository to name the component involved. Do not diagnose a root cause beyond what the evidence shows, and do not change any file in the repository.",
-    "- When the report needs something the captured text does not say — steps to reproduce, expected or actual behaviour, environment — ask the user with a question card, one question per turn. Never invent details.",
-    "",
-    buildConversationSection(paths, records),
-    "",
-    "Output: write exactly one file, at this absolute path:",
-    `  ${issuePath}`,
-    "with this structure:",
-    "  # <a concise title>",
-    "  ## Summary",
-    "  ## Steps to reproduce",
-    "  ## Expected behaviour",
-    "  ## Actual behaviour",
-    "  ## Environment",
-    "  ## Notes",
-    'Write "Unknown" under a heading only when the user has confirmed it is unknown.',
-    "If that file already exists, it is the draft from an earlier session: read it and continue from it rather than starting over.",
-    "",
-    `Progress: overwrite ${paths.stageFile} with a single word —`,
-    "  shape    when you begin",
-    "  drafted  once issue.md is written and complete",
-    "",
-    "After writing drafted, stop. Grove shows the draft to the user.",
-    "If the user asks for changes, you receive them as a message: revise issue.md and write drafted again.",
-    "",
-    "Do not publish. Do not create issues or run any command that changes anything on GitHub; Grove publishes once the user approves the draft.",
-  ].join("\n");
+export function nextStep(kind: LabSessionKind, step: SessionStep): SessionStep {
+  const stages = SESSION_STAGES[kind];
+  const at = stages.indexOf(step as LabStage);
+  return at >= 0 && at + 1 < stages.length ? stages[at + 1] : "publish";
 }
 
 /**
- * The bundled skills, copied from mattpocock/skills. They ship beside dist/ in
- * the installed package; see skills/mattpocock/README.md.
+ * Where a session picks up, from what the entry's files show: the first
+ * stage whose work is not finished. A stage the agent finished just before
+ * the session stopped is recorded in the done file.
  */
-export function bundledSkillsDir(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "skills", "mattpocock");
-}
-
-export function buildGrillPrompt(
-  entry: LabEntry,
-  repo: string,
-  paths: LabPaths,
-  skillsDir: string,
-  shapedReport?: string,
-  records: QuestionRecord[] = [],
-): string {
-  const skill = (...parts: string[]) => path.join(skillsDir, ...parts);
-  const artifact = (...parts: string[]) => path.join(paths.artifactsDir, ...parts);
-  return [
-    "You are running a Grove Lab grilling session with the user.",
-    "",
-    `Repository: ${repo}`,
-    `Entry: ${entryTitle(entry)}`,
-    "",
-    "The idea as the user captured it:",
-    "<<<",
-    entry.text,
-    ">>>",
-    "",
-    ...(shapedReport
-      ? [
-          "This entry began as a bug and was shaped into the report below. It turned out bigger than one issue; start the interview from what the report already establishes rather than from a blank page.",
-          "<<<",
-          shapedReport.trim(),
-          ">>>",
-          "",
-        ]
-      : []),
-    "Work through three skills, in order, as one continuous session with the user. When you reach each one, read its files in full and follow them, except where the Grove rules below say otherwise.",
-    "",
-    "1. Interview (grill-with-docs) — follow both:",
-    `   ${skill("grilling", "SKILL.md")}`,
-    `   ${skill("domain-modeling", "SKILL.md")}  (with CONTEXT-FORMAT.md and ADR-FORMAT.md beside it)`,
-    `2. Spec — ${skill("to-spec", "SKILL.md")}`,
-    `3. Tickets — ${skill("to-tickets", "SKILL.md")}`,
-    "",
-    "Move from one step to the next only when the user agrees the current one is done: ask with a \"choice\" question card.",
-    "",
-    "GROVE RULES — these override the skills.",
-    "",
-    buildConversationSection(paths, records),
-    "",
-    "The skills sometimes tell you to ask several questions at once, to present a list for the user to react to, or to check something with the user. Do every one of these through question cards, one question per turn.",
-    "",
-    "Where files go:",
-    "- Never create or change a file in the repository. Read it as much as you need.",
-    `- Write every document the skills would write into the repository to the same repository-relative path under ${paths.artifactsDir}.`,
-    `  For example: CONTEXT.md goes to ${artifact("CONTEXT.md")}, and a decision record to ${artifact("docs", "adr", "0003-<slug>.md")}.`,
-    "  Grove copies each one into the repository when the user approves it.",
-    "- When the repository already has the CONTEXT.md you would write (at the root, or where CONTEXT-MAP.md points), copy it to its artifacts path first and extend it there, so the draft keeps every existing term.",
-    `- Number a new ADR after the highest number in both the repository's docs/adr/ and ${artifact("docs", "adr")}.`,
-    "",
-    "Nothing is published:",
-    "- There is no issue tracker to configure; ignore any instruction about /setup-matt-pocock-skills.",
-    "- Do not create issues, labels, or comments, and run no command that changes anything on GitHub. Grove publishes once the user approves the drafts.",
-    `- to-spec: instead of publishing, write the spec to ${artifact("spec.md")}. Its first line is "# <title of the epic>", followed by the template's sections.`,
-    `- to-tickets: once the user approves the breakdown, write it to ${artifact("tickets.json")} instead of publishing, as:`,
-    '    {"tickets": [{"key": "01", "title": "…", "body": "…", "blocked_by": []}]}',
-    '  key: "01", "02", … in dependency order, blockers first.',
-    '  body: Markdown with the issue template\'s "## What to build" and "## Acceptance criteria" sections only; Grove adds the parent and blocking links itself.',
-    "  blocked_by: the keys of the tickets that block this one.",
-    "",
-    `Progress: overwrite ${paths.stageFile} with a single word as you go —`,
-    "  interview  when the interview starts",
-    "  spec       when you start the spec",
-    "  tickets    when you start the tickets",
-    "  drafted    once spec.md and tickets.json are written",
-    "",
-    "After writing drafted, stop. Grove shows the drafts to the user.",
-    "If the user asks for changes, you receive them as a message: revise the files and write drafted again.",
-    "",
-    `If ${paths.artifactsDir} already holds drafts, this session resumes an earlier one: read them and continue from where the work stopped rather than starting over.`,
-  ].join("\n");
+export function resumeStep(kind: LabSessionKind, paths: LabPaths, entryId: string): SessionStep {
+  const approved = (name: string) =>
+    isApproved(paths.labDir, entryId, name, readIfExists(path.join(paths.artifactsDir, name)));
+  const done = readMarker(paths.doneFile);
+  if (kind === "shape") return approved("issue.md") ? "publish" : "shape";
+  if (approved("tickets.json")) return "publish";
+  if (approved("spec.md")) return "tickets";
+  if (readIfExists(path.join(paths.artifactsDir, "spec.md")) !== null || done === "interview") return "spec";
+  const scout = readIfExists(paths.scoutFile);
+  if (scout === null || (validateScout(scout).length > 0 && done !== "scout")) return "scout";
+  return "interview";
 }
 
 export type AgentState = "working" | "idle" | "blocked" | "done" | "unknown" | "gone";
@@ -331,7 +234,8 @@ export function parseAgentState(output: string): AgentState {
 
 /**
  * What a session reports to Grove. `question` is a card waiting for an
- * answer; `fallback` is a turn that ended without one.
+ * answer; `fallback` is a turn that ended without one; `review` is a draft
+ * waiting for approval, or a session waiting to be published.
  */
 export type SessionPhase = "starting" | "working" | "question" | "fallback" | "permission" | "review";
 
@@ -344,19 +248,31 @@ export interface SessionReport {
   summary: string;
 }
 
+const REVIEW_SUMMARY: Partial<Record<SessionStep, string>> = {
+  spec: "The spec is ready to review in Grove's Lab",
+  tickets: "The tickets are ready to review in Grove's Lab",
+  shape: "The bug report is ready to review in Grove's Lab",
+  publish: "Ready to publish from Grove's Lab",
+};
+
+/** The id of the run step a stage and phase are reported as. */
+function stepId(kind: LabSessionKind, step: SessionStep, phase: SessionPhase): string {
+  return kind === "shape" && step === "shape" && phase === "review" ? "review" : step;
+}
+
 /**
- * Derives the run's steps and status from the session's phase and the stage
- * the agent reported. Every phase that waits on the user blocks the run.
+ * Derives the run's steps and status from the session's step and phase.
+ * Every phase that waits on the user blocks the run.
  */
 export function sessionReport(
   kind: LabSessionKind,
   phase: SessionPhase,
-  stage: string,
+  step: SessionStep,
   startedAt: string,
   pending: number[] = [],
 ): SessionReport {
   const steps = SESSION_STEPS[kind];
-  let current = steps.findIndex((step) => step.stage === stage);
+  let current = steps.findIndex((s) => s.id === stepId(kind, step, phase));
   if (current < 0) current = 0;
   const blocked = BLOCKED_PHASES.includes(phase);
   const summary = {
@@ -365,15 +281,15 @@ export function sessionReport(
     question: `Question ${pending[0] ?? ""} is waiting for you in Grove`.replace("  ", " "),
     fallback: "The agent replied without a question card; reply in Grove",
     permission: "The agent needs a permission decision; answer it in Grove",
-    review: "The draft is ready to review in Grove's Lab",
+    review: REVIEW_SUMMARY[step] ?? "The draft is ready to review in Grove's Lab",
   }[phase];
   return {
     status: blocked ? "blocked" : "running",
     current_step: steps[current].title,
     summary,
-    steps: steps.map((step, index) => ({
-      id: step.stage,
-      title: step.title,
+    steps: steps.map((s, index) => ({
+      id: s.id,
+      title: s.title,
       status:
         index < current ? "succeeded" : index === current ? (blocked ? "blocked" : "running") : "queued",
       ...(index === current ? { summary, started_at: startedAt } : {}),
@@ -381,22 +297,33 @@ export function sessionReport(
   };
 }
 
+/** Repairs and fallbacks, counted for comparing models. */
+export interface SessionCounts {
+  repairs: number;
+  fallbacks: number;
+}
+
 /** The session state Grove reads from session.json. */
 export interface SessionState {
   phase: SessionPhase;
-  stage: string;
+  /** The active step: a stage, or publish. */
+  stage: SessionStep;
   pane_id: string;
   agent: string;
   /** Numbers of the valid cards waiting for an answer. */
   pending: number[];
   /** The agent's recent output, for a fallback or permission card. */
   output?: string;
-  counts: { repairs: number; fallbacks: number };
+  /** Problems the draft under review still has after the agent's repairs. */
+  problems?: string[];
+  counts: SessionCounts;
+  stage_counts: Partial<Record<LabStage, SessionCounts>>;
   updated_at: string;
 }
 
-export interface SessionContext {
+export interface StageContext {
   kind: LabSessionKind;
+  stage: LabStage;
   agentName: string;
   paneId: string;
   /** The backend and model, recorded for comparing models. */
@@ -407,10 +334,15 @@ export interface SessionContext {
 export interface SessionDeps {
   runner: CommandRunner;
   sleep: (ms: number) => Promise<void>;
-  exists: (file: string) => boolean;
-  readStage: () => string;
-  report: (report: SessionReport, pane: string | null) => void;
   now: () => number;
+  closed: () => boolean;
+  readDone: () => string;
+  clearDone: () => void;
+  /** Problems with what the stage wrote, phrased for the agent. */
+  checkStage: (finishRequested: boolean, answered: number) => string[];
+  /** Whether the user approved the stage's draft as it is now. */
+  approved: () => boolean;
+  report: (report: SessionReport, pane: string | null) => void;
   scanQuestions: () => QuestionRecord[];
   scanRequests: () => RequestRecord[];
   writeQuestionReceipt: (number: number, receipt: Receipt) => void;
@@ -420,11 +352,11 @@ export interface SessionDeps {
 
 /** How long an agent may be missing before the session gives up on it. */
 const AGENT_GONE_GRACE_MS = 30_000;
-/** How long after the brief an idle agent is taken to have not started yet. */
+/** How long after its brief an idle agent is taken to have not started yet. */
 const START_GRACE_MS = 60_000;
 /** How long after a later prompt an idle agent is taken to not have picked it up. */
 const PROMPT_GRACE_MS = 20_000;
-/** Repair prompts sent for one card before its turn counts as a fallback. */
+/** Repair prompts sent for one card or one draft before moving on without it. */
 export const MAX_REPAIRS = 2;
 /** Lines of agent output shown on a fallback or permission card. */
 const OUTPUT_LINES = 30;
@@ -435,20 +367,89 @@ export function permissionKeys(allow: boolean): string[] {
   return allow ? ["enter"] : ["esc"];
 }
 
+/** What the agent does instead of asking another question, by stage. */
+export function finishHint(stage: LabStage, paths: LabPaths): string {
+  switch (stage) {
+    case "interview":
+      return `if the interview is complete, update ${paths.coverageFile}, then write interview to ${paths.doneFile} and stop.`;
+    case "shape":
+      return `if the report needs nothing more from the user, write ${path.join(paths.artifactsDir, "issue.md")}, then write shape to ${paths.doneFile} and stop.`;
+    default:
+      return `when your work is complete, write ${stage} to ${paths.doneFile} and stop.`;
+  }
+}
+
 /**
- * Runs the session until Grove closes it. Each poll reads the agent's state
- * and the protocol files; whenever the agent is idle, it delivers what Grove
- * has written — requests first, then repairs of invalid cards, then answers
- * once every waiting card has one — and otherwise reports what the session
- * is waiting for.
+ * Tracks a session's counts and publishes its state, to the run and to
+ * session.json, whenever it changes.
  */
-export async function watchSession(ctx: SessionContext, deps: SessionDeps): Promise<void> {
-  const { kind, agentName, paneId, paths } = ctx;
-  const startedAt = new Date(deps.now()).toISOString();
+export class SessionReporter {
+  readonly counts: SessionCounts = { repairs: 0, fallbacks: 0 };
+  readonly stageCounts: Partial<Record<LabStage, SessionCounts>> = {};
+  private last = "";
+  private readonly startedAt: string;
+
+  constructor(
+    private readonly kind: LabSessionKind,
+    private readonly agent: string,
+    private readonly deps: Pick<SessionDeps, "report" | "writeSession" | "now">,
+  ) {
+    this.startedAt = new Date(deps.now()).toISOString();
+  }
+
+  count(stage: LabStage, what: keyof SessionCounts): void {
+    this.counts[what]++;
+    const forStage = (this.stageCounts[stage] ??= { repairs: 0, fallbacks: 0 });
+    forStage[what]++;
+  }
+
+  publish(
+    phase: SessionPhase,
+    step: SessionStep,
+    paneId: string | null,
+    extra: { pending?: number[]; output?: string; problems?: string[] } = {},
+  ): void {
+    const pending = extra.pending ?? [];
+    const key = JSON.stringify([phase, step, paneId, pending, extra.output ?? "", extra.problems ?? [], this.counts]);
+    if (key === this.last) return;
+    this.last = key;
+    this.deps.report(sessionReport(this.kind, phase, step, this.startedAt, pending), paneId);
+    this.deps.writeSession({
+      phase,
+      stage: step,
+      pane_id: paneId ?? "",
+      agent: this.agent,
+      pending,
+      ...(extra.output !== undefined ? { output: extra.output } : {}),
+      ...(extra.problems && extra.problems.length > 0 ? { problems: extra.problems } : {}),
+      counts: { ...this.counts },
+      stage_counts: JSON.parse(JSON.stringify(this.stageCounts)) as SessionState["stage_counts"],
+      updated_at: new Date(this.deps.now()).toISOString(),
+    });
+  }
+}
+
+/**
+ * Runs one stage until it is finished or Grove closes the session. Each poll
+ * reads the agent's state and the protocol files; whenever the agent is
+ * idle, it delivers what Grove has written — requests first, then repairs of
+ * invalid cards, then answers once every waiting card has one. When the
+ * agent marks the stage done, its output is checked, repaired at most twice,
+ * and, for a reviewed draft, held until the user approves it.
+ */
+export async function watchStage(
+  ctx: StageContext,
+  deps: SessionDeps,
+  reporter: SessionReporter,
+): Promise<"finished" | "closed"> {
+  const { stage, agentName, paneId, paths } = ctx;
   const promptedAt = deps.now();
-  const finish = finishHint(kind, paths);
-  const counts = { repairs: 0, fallbacks: 0 };
-  const repairs = new Map<number, { count: number; raw: string }>();
+  const finish = finishHint(stage, paths);
+  const reviewed = REVIEWED_DRAFT[stage] !== undefined;
+  const asks = ASKING_STAGES.includes(stage);
+  const cardRepairs = new Map<number, { count: number; raw: string }>();
+  let draftRepairs = 0;
+  let finishRequested = false;
 
   let seenWorking = false;
   let goneSince: number | null = null;
@@ -459,7 +460,6 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
   let turnPrompted = false;
   let waitingAtTurnStart: number[] = [];
   let fallbackOutput: string | null = null;
-  let lastPublished = "";
 
   const stamp = () => new Date(deps.now()).toISOString();
   const readOutput = (): string => {
@@ -474,25 +474,11 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
     awaitingTurn = true;
     awaitingSince = deps.now();
   };
-  const publish = (phase: SessionPhase, stage: string, pending: number[] = [], output?: string) => {
-    const key = JSON.stringify([phase, stage, pending, output ?? "", counts]);
-    if (key === lastPublished) return;
-    lastPublished = key;
-    deps.report(sessionReport(kind, phase, stage, startedAt, pending), paneId);
-    deps.writeSession({
-      phase,
-      stage,
-      pane_id: paneId,
-      agent: ctx.agent,
-      pending,
-      ...(output !== undefined ? { output } : {}),
-      counts: { ...counts },
-      updated_at: stamp(),
-    });
-  };
+  const publish = (phase: SessionPhase, extra: { pending?: number[]; output?: string; problems?: string[] } = {}) =>
+    reporter.publish(phase, stage, paneId, extra);
 
-  publish("starting", "");
-  while (!deps.exists(paths.closeFile)) {
+  publish("starting");
+  while (!deps.closed()) {
     let state: AgentState;
     try {
       state = parseAgentState(deps.runner("herdr", ["agent", "get", agentName]));
@@ -509,8 +495,8 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
     }
     goneSince = null;
 
-    const stage = deps.readStage();
     let records = deps.scanQuestions();
+    const done = () => deps.readDone() === stage;
 
     if (state === "working") {
       if (!turnActive) {
@@ -521,12 +507,12 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
       awaitingTurn = false;
       seenWorking = true;
       fallbackOutput = null;
-      publish("working", stage);
+      publish("working");
       await deps.sleep(POLL_MS);
       continue;
     }
-    if (!seenWorking && deps.now() - promptedAt < START_GRACE_MS && !records.some(isPending)) {
-      publish("starting", stage);
+    if (!seenWorking && deps.now() - promptedAt < START_GRACE_MS && !records.some(isPending) && !done()) {
+      publish("starting");
       await deps.sleep(POLL_MS);
       continue;
     }
@@ -538,8 +524,7 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
       // there, and are closed so the session cannot wait on them forever.
       if (!turnPrompted && waitingAtTurnStart.length > 0) {
         const highest = Math.max(...waitingAtTurnStart);
-        const movedOn =
-          stage === "drafted" || records.some((record) => record.number > highest && record.question !== undefined);
+        const movedOn = done() || records.some((record) => record.number > highest && record.question !== undefined);
         if (movedOn) {
           for (const record of records) {
             if (waitingAtTurnStart.includes(record.number) && isPending(record)) {
@@ -564,16 +549,16 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
         await deps.sleep(POLL_MS);
         continue;
       }
-      publish("permission", stage, [], readOutput());
+      publish("permission", { output: readOutput() });
       await deps.sleep(POLL_MS);
       continue;
     }
 
     // The agent is idle. A prompt it has not picked up yet is given time,
-    // unless the agent has already answered it with a card or a draft.
+    // unless the agent has already answered it with a card or by finishing.
     const pending = records.filter(isPending);
     if (awaitingTurn) {
-      const answered = pending.length > 0 || stage === "drafted";
+      const answered = pending.length > 0 || done();
       const grace = seenWorking ? PROMPT_GRACE_MS : START_GRACE_MS;
       if (!answered && deps.now() - awaitingSince < grace) {
         await deps.sleep(POLL_MS);
@@ -590,7 +575,26 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
     const nextCard = path.join(paths.questionsDir, cardFileName(nextQuestionNumber(records)));
     const request = requests.find((r) => r.request && r.request.kind !== "permission" && !r.receipt);
     if (request?.request) {
-      prompt(buildRequestPrompt(request.request, nextCard, finish, paths.artifactsDir, paths.stageFile));
+      const target = {
+        stage,
+        doneFile: paths.doneFile,
+        draftsDir: paths.artifactsDir,
+        coverageFile: paths.coverageFile,
+        asks,
+      };
+      if (request.request.kind === "change" || request.request.kind === "finish_interview") {
+        // The agent finishes again once it has done what was asked.
+        deps.clearDone();
+        draftRepairs = 0;
+      }
+      if (request.request.kind === "finish_interview") {
+        finishRequested = true;
+        // Cards still open are not going to be answered.
+        for (const record of records.filter(isPending)) {
+          deps.writeQuestionReceipt(record.number, { revision: 0, via: "skipped", sent_at: stamp() });
+        }
+      }
+      prompt(buildRequestPrompt(request.request, nextCard, finish, target));
       deps.writeRequestReceipt(request.number, { revision: 0, via: "grove", sent_at: stamp() });
       await deps.sleep(POLL_MS);
       continue;
@@ -598,10 +602,10 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
 
     const broken = records.filter((record) => record.error !== undefined && !record.answer && !record.receipt).at(-1);
     if (broken) {
-      const tried = repairs.get(broken.number);
+      const tried = cardRepairs.get(broken.number);
       if (!tried || (tried.raw !== broken.raw && tried.count < MAX_REPAIRS)) {
-        repairs.set(broken.number, { count: (tried?.count ?? 0) + 1, raw: broken.raw });
-        counts.repairs++;
+        cardRepairs.set(broken.number, { count: (tried?.count ?? 0) + 1, raw: broken.raw });
+        reporter.count(stage, "repairs");
         prompt(buildRepairPrompt(broken));
         await deps.sleep(POLL_MS);
         continue;
@@ -609,7 +613,7 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
     }
 
     if (pending.length > 0) {
-      publish("question", stage, pending.map((record) => record.number));
+      publish("question", { pending: pending.map((record) => record.number) });
       await deps.sleep(POLL_MS);
       continue;
     }
@@ -628,17 +632,130 @@ export async function watchSession(ctx: SessionContext, deps: SessionDeps): Prom
       continue;
     }
 
-    if (stage === "drafted") {
-      publish("review", stage);
-    } else {
-      if (fallbackOutput === null) {
-        counts.fallbacks++;
-        fallbackOutput = readOutput();
+    if (done()) {
+      const answeredCount = records.filter((record) => record.answer || record.receipt?.via === "pane").length;
+      const problems = deps.checkStage(finishRequested, answeredCount);
+      if (problems.length > 0 && draftRepairs < MAX_REPAIRS) {
+        draftRepairs++;
+        reporter.count(stage, "repairs");
+        deps.clearDone();
+        prompt(buildDraftRepairPrompt(problems, stage, paths.doneFile));
+        await deps.sleep(POLL_MS);
+        continue;
       }
-      publish("fallback", stage, [], fallbackOutput);
+      if (!reviewed || deps.approved()) return "finished";
+      publish("review", { problems });
+      await deps.sleep(POLL_MS);
+      continue;
     }
+
+    if (fallbackOutput === null) {
+      reporter.count(stage, "fallbacks");
+      fallbackOutput = readOutput();
+    }
+    publish("fallback", { output: fallbackOutput });
     await deps.sleep(POLL_MS);
   }
+  return "closed";
+}
+
+/** Checks what a stage wrote, phrased for the agent. */
+export function checkStageOutput(
+  stage: LabStage,
+  paths: LabPaths,
+  finishRequested: boolean,
+  answered: number,
+): string[] {
+  const draft = (name: string) => readIfExists(path.join(paths.artifactsDir, name));
+  const missing = (file: string) => [`${file} was not written`];
+  switch (stage) {
+    case "scout": {
+      const text = readIfExists(paths.scoutFile);
+      return text === null ? missing(paths.scoutFile) : validateScout(text);
+    }
+    case "interview": {
+      const coverage = checkCoverage(readIfExists(paths.coverageFile) ?? "");
+      const problems = [...coverage.problems];
+      // Open topics are allowed once the user ended the interview, or after
+      // the 25-question check let the agent write the spec.
+      const open = coverage.open.filter((topic) => !coverage.problems.some((p) => p.includes(`"${topic}"`)));
+      if (open.length > 0 && !finishRequested && answered < 25) {
+        problems.push(
+          `coverage.json still lists ${open.join(", ")} as open. Ask about each with a question card, or set it to "n/a: <reason>", before finishing`,
+        );
+      }
+      return problems;
+    }
+    case "spec": {
+      const text = draft("spec.md");
+      return text === null ? missing(path.join(paths.artifactsDir, "spec.md")) : validateSpec(text);
+    }
+    case "tickets": {
+      const text = draft("tickets.json");
+      return text === null ? missing(path.join(paths.artifactsDir, "tickets.json")) : validateTickets(text);
+    }
+    case "shape": {
+      const text = draft("issue.md");
+      return text === null ? missing(path.join(paths.artifactsDir, "issue.md")) : validateIssue(text);
+    }
+  }
+}
+
+/** Every value a stage prompt can use. */
+export function stageValues(
+  stage: LabStage,
+  entry: LabEntry,
+  repo: string,
+  paths: LabPaths,
+  repoMap: string,
+  records: QuestionRecord[],
+): Omit<PromptValues, "protocol"> {
+  const orNone = (text: string | null) => (text === null || text.trim() === "" ? NONE : text.trim());
+  const draft = (name: string) => readIfExists(path.join(paths.artifactsDir, name));
+  const next = nextQuestionNumber(records);
+  const previous: Record<LabStage, string | null> = {
+    scout: readIfExists(paths.scoutFile),
+    interview: null,
+    spec: draft("spec.md"),
+    tickets: draft("tickets.json"),
+    shape: draft("issue.md"),
+  };
+  return {
+    repo,
+    entry_kind: entry.kind,
+    entry_title: entryTitle(entry),
+    entry_text: entry.text.trim(),
+    stage,
+    done_file: paths.doneFile,
+    entry_dir: paths.entryDir,
+    artifacts_dir: paths.artifactsDir,
+    repo_map: repoMap,
+    scout_file: paths.scoutFile,
+    scout_notes: orNone(readIfExists(paths.scoutFile)),
+    // A grilled bug that was shaped first starts from its report.
+    shaped_report: stage === "shape" ? NONE : orNone(draft("issue.md")),
+    questions_dir: paths.questionsDir,
+    next_question_number: String(next),
+    next_question_path: path.join(paths.questionsDir, cardFileName(next)),
+    interview_so_far: orNone(buildInterviewSoFar(records)),
+    coverage_file: paths.coverageFile,
+    coverage: orNone(readIfExists(paths.coverageFile)),
+    spec_file: path.join(paths.artifactsDir, "spec.md"),
+    spec: orNone(draft("spec.md")),
+    tickets_file: path.join(paths.artifactsDir, "tickets.json"),
+    issue_file: path.join(paths.artifactsDir, "issue.md"),
+    previous_draft: orNone(previous[stage]),
+    next_adr_number: nextAdrNumber(repo, paths.artifactsDir),
+  };
+}
+
+/** The repository map Grove built for the checkout's commit. */
+export function readRepoMap(paths: LabPaths, commit: string | null): string {
+  if (commit) {
+    const map = readIfExists(path.join(paths.labDir, "repo-map", `${commit}.md`));
+    if (map !== null) return map.trim();
+  }
+  return "(no repository map is available; explore the repository with your file tools)";
 }
 
 function gitCommonDir(repo: string): string {
@@ -650,7 +767,12 @@ function gitCommonDir(repo: string): string {
   return path.resolve(repo, result.stdout.trim());
 }
 
-function readStageFile(file: string): string {
+function headCommit(repo: string): string | null {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function readMarker(file: string): string {
   try {
     if (!fs.statSync(file).isFile()) return "";
     return fs.readFileSync(file, "utf8").trim().toLowerCase();
@@ -661,7 +783,7 @@ function readStageFile(file: string): string {
 
 /**
  * Removes a session marker file, tolerating a stale directory left at its
- * path (an agent that mistakes `stage` for a directory). `recursive` lets
+ * path (an agent that mistakes a marker for a directory). `recursive` lets
  * the same call clear files and directories.
  */
 function clearMarkerFile(file: string): void {
@@ -723,6 +845,11 @@ export function labAgentArgs(
   return args;
 }
 
+/** The name of a stage's agent in Herdr; one per stage, so stages never collide. */
+export function stageAgentName(stage: LabStage, entryId: string): string {
+  return `lab-${stage}-${entryId}`.slice(0, 32);
+}
+
 async function main(kind: LabSessionKind, entryId: string): Promise<void> {
   const repo = process.cwd();
   const runId = process.env.GROVE_WORKFLOW_RUN_ID ?? `lab-${process.pid}`;
@@ -730,21 +857,89 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
   const entry = readLabEntry(paths, entryId);
   fs.mkdirSync(paths.artifactsDir, { recursive: true });
   clearMarkerFile(paths.closeFile);
-  clearMarkerFile(paths.stageFile);
 
   const title = `${kind === "shape" ? "Shape" : "Grill"}: ${entryTitle(entry)}`;
   updateTrackedWorkflow({ title, current_step: "Starting" });
 
   const launch = getAgentLaunchConfig();
   if (launch.backend === "claude") ensureClaudeWorkspaceTrust(repo);
+  const repoMap = readRepoMap(paths, headCommit(repo));
+  const runtimeId = process.env.GROVE_WORKFLOW_RUN_ID;
+
+  const deps: SessionDeps = {
+    runner: runCommand,
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+    closed: () => fs.existsSync(paths.closeFile),
+    readDone: () => readMarker(paths.doneFile),
+    clearDone: () => clearMarkerFile(paths.doneFile),
+    checkStage: () => [],
+    approved: () => false,
+    scanQuestions: () => scanQuestions(paths.questionsDir),
+    scanRequests: () => scanRequests(paths.requestsDir),
+    writeQuestionReceipt: (number, receipt) => writeReceipt(paths.questionsDir, number, receipt),
+    writeRequestReceipt: (number, receipt) => writeReceipt(paths.requestsDir, number, receipt),
+    writeSession: (state) => writeJsonAtomic(paths.sessionFile, state),
+    report: (report, pane: string | null) =>
+      updateTrackedWorkflow({
+        status: report.status,
+        current_step: report.current_step,
+        steps: report.steps,
+        agents: pane
+          ? [
+              {
+                id: `${runtimeId ?? entryId}:${kind}`,
+                kind: resolveAgentBackend(),
+                name: `lab-${kind}-${entryId}`,
+                status: report.status === "blocked" ? "blocked" : "working",
+                summary: report.summary,
+                pane_id: pane,
+              },
+            ]
+          : [],
+      }),
+  };
+  const reporter = new SessionReporter(kind, launch.label, deps);
+
+  try {
+    let step = resumeStep(kind, paths, entryId);
+    while (step !== "publish") {
+      const outcome = await runStage(step, kind, entry, repo, repoMap, paths, launch, deps, reporter);
+      if (outcome === "closed") return;
+      step = nextStep(kind, step);
+    }
+    // Every draft is approved: Grove publishes, then closes the session.
+    fs.writeFileSync(paths.stageFile, "publish\n", "utf8");
+    reporter.publish("review", "publish", null);
+    while (!deps.closed()) await deps.sleep(POLL_MS);
+  } finally {
+    clearMarkerFile(paths.closeFile);
+    clearMarkerFile(paths.sessionFile);
+  }
+  const steps = SESSION_STEPS[kind].map((step) => ({ id: step.id, title: step.title, status: "succeeded" }));
+  updateTrackedWorkflow({ current_step: "Closed", steps, agents: [] });
+}
+
+/** Runs one stage with its own agent, in a pane of its own. */
+async function runStage(
+  stage: LabStage,
+  kind: LabSessionKind,
+  entry: LabEntry,
+  repo: string,
+  repoMap: string,
+  paths: LabPaths,
+  launch: AgentLaunchConfig,
+  deps: SessionDeps,
+  reporter: SessionReporter,
+): Promise<"finished" | "closed"> {
+  fs.writeFileSync(paths.stageFile, `${stage}\n`, "utf8");
+  clearMarkerFile(paths.doneFile);
+
   // A resumed session's questions are replayed in the brief, answers the
   // previous agent never received included, so those count as delivered.
   const records = scanQuestions(paths.questionsDir);
-  const promptText =
-    kind === "shape"
-      ? buildShapePrompt(entry, repo, paths, records)
-      : buildGrillPrompt(entry, repo, paths, bundledSkillsDir(), readShapedReport(paths), records);
-  const assignmentPath = path.join(paths.entryDir, "assignment.md");
+  const promptText = buildStagePrompt(stage, repo, stageValues(stage, entry, repo, paths, repoMap, records));
+  const assignmentPath = path.join(paths.entryDir, `assignment-${stage}.md`);
   fs.writeFileSync(assignmentPath, promptText, "utf8");
   for (const record of records.filter(needsDelivery)) {
     writeReceipt(paths.questionsDir, record.number, {
@@ -754,9 +949,8 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
     });
   }
 
-  const paneArgs = ["pane", "split", "--current", "--direction", "right", "--cwd", repo];
-  const paneId = parsePaneId(runCommand("herdr", paneArgs));
-  const agentName = `lab-${kind}-${entryId}`.slice(0, 32);
+  const paneId = parsePaneId(runCommand("herdr", ["pane", "split", "--current", "--direction", "right", "--cwd", repo]));
+  const agentName = stageAgentName(stage, entry.id);
   try {
     startAgentWithReadinessRecovery(agentName, [
       "agent",
@@ -770,49 +964,21 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
     ]);
     // The user answers in Grove, so the pane is not focused.
     runCommand("herdr", ["agent", "prompt", agentName, deliverablePrompt(promptText, assignmentPath)]);
-
-    await watchSession(
-      { kind, agentName, paneId, agent: launch.label, paths },
-      {
-        runner: runCommand,
-        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-        exists: (file) => fs.existsSync(file),
-        readStage: () => readStageFile(paths.stageFile),
-        now: () => Date.now(),
-        scanQuestions: () => scanQuestions(paths.questionsDir),
-        scanRequests: () => scanRequests(paths.requestsDir),
-        writeQuestionReceipt: (number, receipt) => writeReceipt(paths.questionsDir, number, receipt),
-        writeRequestReceipt: (number, receipt) => writeReceipt(paths.requestsDir, number, receipt),
-        writeSession: (state) => writeJsonAtomic(paths.sessionFile, state),
-        report: (report, pane: string | null) =>
-          updateTrackedWorkflow({
-            status: report.status,
-            current_step: report.current_step,
-            steps: report.steps,
-            agents: [
-              {
-                id: `${process.env.GROVE_WORKFLOW_RUN_ID ?? agentName}:${kind}`,
-                kind: resolveAgentBackend(),
-                name: agentName,
-                status: report.status === "blocked" ? "blocked" : "working",
-                summary: report.summary,
-                pane_id: pane,
-              },
-            ],
-          }),
-      },
-    );
+    const review = REVIEWED_DRAFT[stage];
+    return await watchStage({ kind, stage, agentName, paneId, agent: launch.label, paths }, {
+      ...deps,
+      checkStage: (finishRequested, answered) => checkStageOutput(stage, paths, finishRequested, answered),
+      approved: () =>
+        review !== undefined &&
+        isApproved(paths.labDir, entry.id, review, readIfExists(path.join(paths.artifactsDir, review))),
+    }, reporter);
   } finally {
     try {
       runCommand("herdr", ["pane", "close", paneId]);
     } catch {
       // The user may have closed the pane already.
     }
-    clearMarkerFile(paths.closeFile);
-    clearMarkerFile(paths.sessionFile);
   }
-  const steps = SESSION_STEPS[kind].map((step) => ({ id: step.stage, title: step.title, status: "succeeded" }));
-  updateTrackedWorkflow({ current_step: "Closed", steps, agents: [] });
 }
 
 const isEntrypoint =
@@ -829,14 +995,4 @@ if (isEntrypoint) {
     console.error(`\x1b[31m[Lab]\x1b[0m ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   });
-}
-
-/** The shaped report of a bug escalated to a grill, if it has one. */
-function readShapedReport(paths: LabPaths): string | undefined {
-  try {
-    const report = fs.readFileSync(path.join(paths.artifactsDir, "issue.md"), "utf8");
-    return report.trim() === "" ? undefined : report;
-  } catch {
-    return undefined;
-  }
 }

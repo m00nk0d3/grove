@@ -60,8 +60,14 @@ type LabReceipt struct {
 	SentAt   time.Time `json:"sent_at"`
 }
 
-// LabReceiptViaPane marks a question answered in the agent's pane.
-const LabReceiptViaPane = "pane"
+// Receipt sources other than an answer given in Grove.
+const (
+	// LabReceiptViaPane marks a question answered in the agent's pane.
+	LabReceiptViaPane = "pane"
+	// LabReceiptSkipped marks a question left open when the user ended the
+	// interview.
+	LabReceiptSkipped = "skipped"
+)
 
 // LabQuestionRecord is a question file and everything written about it.
 type LabQuestionRecord struct {
@@ -136,7 +142,10 @@ type LabSession struct {
 	Agent   string          `json:"agent"`
 	Pending []int           `json:"pending"`
 	Output  string          `json:"output,omitempty"`
-	Counts  struct {
+	// Problems lists what the draft under review still gets wrong after the
+	// agent's repairs.
+	Problems []string `json:"problems,omitempty"`
+	Counts   struct {
 		Repairs   int `json:"repairs"`
 		Fallbacks int `json:"fallbacks"`
 	} `json:"counts"`

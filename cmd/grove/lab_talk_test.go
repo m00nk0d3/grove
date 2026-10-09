@@ -156,3 +156,24 @@ func TestLabAsk_RepliesAndPermissionDecisionsBecomeRequests(t *testing.T) {
 	require.NotNil(t, permission.Allow)
 	assert.False(t, *permission.Allow)
 }
+
+func TestLabAsk_DraftsBetweenStagesAreReviewedInTheInspector(t *testing.T) {
+	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
+	writeSession := func(stage string) {
+		raw := fmt.Sprintf(`{"phase":"review","stage":%q,"pending":[]}`, stage)
+		require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(raw), 0o644))
+		m.lab.talks = loadLabTalks(store, m.lab.entries)
+	}
+	require.NoError(t, os.MkdirAll(store.EntryDir(e.ID), 0o755))
+
+	writeSession("spec")
+	assert.Equal(t, "Review the spec", labNextAction(m.lab, e))
+	writeSession("tickets")
+	assert.Equal(t, "Review the tickets", labNextAction(m.lab, e))
+	m, _ = press(t, m, "enter")
+	require.IsType(t, &modal.LabInspectorModal{}, m.activeModal, "Enter opens the draft for review")
+
+	m.activeModal = nil
+	writeSession("publish")
+	assert.NotContains(t, labNextAction(m.lab, e), "Review the", "a session waiting to publish is published, not reviewed")
+}
