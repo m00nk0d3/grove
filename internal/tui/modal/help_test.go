@@ -279,7 +279,6 @@ func TestHelpModal_View_KeybindingsTab_ShowsLabKeys(t *testing.T) {
 		"Capture a new idea or bug",
 		"Open the entry's page",
 		"Change that answer while the interview lasts",
-		"Inspect progress, artifacts, and original capture",
 		"Actions: publish, shape, grill, escalate, open issue, end session, archive",
 		"Show the archive, or go back to the active entries",
 		"Filter: All entries",

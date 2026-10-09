@@ -385,8 +385,8 @@ func TestRenderLab_ShowsGroupsCountsAndRows(t *testing.T) {
 	assert.NotContains(t, out, "details", "the list shows titles, not bodies")
 	assert.Contains(t, out, "IDEA TO GRILL")
 	assert.Contains(t, out, "BUG TO REPORT")
-	assert.Contains(t, out, "↵ Grill this idea")
-	assert.Contains(t, out, "↵ Shape this bug into a report")
+	assert.Contains(t, out, "↵ Start grill")
+	assert.Contains(t, out, "↵ Shape bug")
 }
 
 func TestRenderLab_EmptyTabExplainsWhatToDo(t *testing.T) {
@@ -442,20 +442,29 @@ func TestLabNextAction_ExplainsWhatEnterWillDo(t *testing.T) {
 	}
 
 	idea := entryAt(now, "idea", domain.LabKindIdea, domain.LabStatusDraft, "Idea")
-	assert.Equal(t, "Grill this idea", labNextAction(viewOf(idea, nil), idea))
+	assert.Equal(t, "Start grill", labNextAction(viewOf(idea, nil), idea))
 
 	bug := entryAt(now, "bug", domain.LabKindBug, domain.LabStatusDraft, "Bug")
-	assert.Equal(t, "Shape this bug into a report", labNextAction(viewOf(bug, nil), bug))
+	assert.Equal(t, "Shape bug", labNextAction(viewOf(bug, nil), bug))
 
 	working := entryAt(now, "working", domain.LabKindIdea, domain.LabStatusGrilling, "Working")
 	working.Runs = []string{"run-1"}
 	assert.Equal(t, "Answer the agent in its pane", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowBlocked}), working),
 		"a session waiting on something Grove has no card for is answered in the pane")
-	assert.Equal(t, "Watch the agent", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowRunning}), working))
+	assert.Equal(t, "Writing the spec…", labNextAction(viewOf(working, map[string]string{"run-1": domain.WorkflowRunning}), working),
+		"a working session says what its agent is doing")
+	failed := viewOf(working, map[string]string{"run-1": domain.WorkflowFailed})
+	failed.runs["run-1"] = labRun{workflow: domain.WorkflowRunRef{RunID: "run-1", Status: domain.WorkflowFailed}}
+	assert.Equal(t, "Retry grill", labNextAction(failed, working))
 
 	review := entryAt(now, "review", domain.LabKindBug, domain.LabStatusShaping, "Review")
 	review.Mode = domain.LabModeShape
-	assert.Equal(t, "Review the drafted bug report", labNextAction(viewOf(review, nil), review))
+	assert.Equal(t, "Resume shaping", labNextAction(viewOf(review, nil), review), "a report never written is shaped again")
+	drafted := viewOf(review, nil)
+	drafted.talks = map[string]labTalk{review.ID: {artifacts: []domain.LabArtifact{{Path: "issue.md", Body: "# Bug\n"}}}}
+	assert.Equal(t, "Review the bug report", labNextAction(drafted, review))
+	review.SetReview(domain.LabArtifact{Path: "issue.md", Body: "# Bug\n"}, domain.LabReviewApproved)
+	assert.Equal(t, "Publish the bug report", labNextAction(drafted, review))
 
 	issue := 42
 	published := entryAt(now, "published", domain.LabKindBug, domain.LabStatusPublished, "Published")
@@ -538,7 +547,7 @@ func TestLabView_RunStateDrivesRows(t *testing.T) {
 
 	assert.Equal(t, "SPECCED", labStateOf(v, running).badge)
 	assert.Equal(t, "Spec 3/5", labStageLabel(v, running), "a live run's current step is shown")
-	assert.Contains(t, labDetail(v, running, now), "Herdr pane-run-r")
+	assert.NotContains(t, labDetail(v, running, now), "Herdr", "rows do not point at the pane; View agent does")
 	assert.Equal(t, "Tickets 4/5", labStageLabel(v, idle), "without a run the stored stage is shown")
 	assert.NotContains(t, labDetail(v, idle, now), "Herdr")
 }
@@ -576,56 +585,23 @@ func TestLabView_StalePaneDoesNotKeepSessionLive(t *testing.T) {
 	assert.Empty(t, run.paneID)
 	assert.False(t, v.hasLiveSession(e), "Sandcastle telemetry cannot keep a session live after its Herdr pane is gone")
 	assert.True(t, v.canGrill(e))
-	assert.Equal(t, "Resume grilling this idea", labNextAction(v, e))
+	assert.Equal(t, "Resume grill", labNextAction(v, e))
 	assert.NotContains(t, labDetail(v, e, time.Now()), "Herdr")
 }
 
-func TestLab_MissionUpdateRefreshesRowsAndInspector(t *testing.T) {
+func TestLab_MissionUpdateRefreshesRows(t *testing.T) {
 	m := newLabModel(t)
 	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusGrilling, "Entry")
 	e.Runs = []string{"run-1"}
 	m.lab.entries = []domain.LabEntry{e}
 
-	updated, _ := m.openLabInspector()
-	m = updated.(*Model)
-	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
-	require.True(t, ok)
-	assert.NotContains(t, inspector.View(), "WAITING ON YOU")
+	theme := styles.NewTheme(styles.Themes[0])
+	assert.NotContains(t, renderLab(m.lab, theme, 110, 0, true), "WAITING ON YOU")
 
-	updated, _ = m.Update(missionControlUpdatedMsg{state: *labMissionState(map[string]string{"run-1": domain.WorkflowBlocked})})
+	updated, _ := m.Update(missionControlUpdatedMsg{state: *labMissionState(map[string]string{"run-1": domain.WorkflowBlocked})})
 	m = updated.(*Model)
 	assert.True(t, m.lab.waiting(e))
-	assert.Contains(t, m.activeModal.View(), "WAITING ON YOU", "an open inspector follows its run")
-}
-
-func TestLab_VOpensInspectorAndLoadsArtifacts(t *testing.T) {
-	commonDir := withLabCommonDir(t)
-	store := data.NewLabStore(commonDir)
-	e := domain.NewLabEntry(domain.LabKindIdea, "Plugin API", time.Now())
-	require.NoError(t, store.Put(e))
-	require.NoError(t, os.MkdirAll(store.ArtifactsDir(e.ID), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(store.ArtifactsDir(e.ID), "spec.md"), []byte("# Plugin API spec"), 0o644))
-
-	m := newLabModel(t)
-	m.width, m.height = 140, 40
-	m.lab.entries, _ = store.Load()
-
-	m, cmd := press(t, m, "v")
-	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
-	require.True(t, ok, "v opens the inspector")
-	require.NotNil(t, cmd, "opening asks for the artifacts")
-
-	// The request goes to Grove, which reads the files and hands them back.
-	updated, load := m.Update(cmd())
-	m = updated.(*Model)
-	require.NotNil(t, load)
-	updated, _ = m.Update(load())
-	m = updated.(*Model)
-
-	m, _ = press(t, m, "3")
-	view := inspector.View()
-	assert.Contains(t, view, "spec.md")
-	assert.Contains(t, view, "Plugin API spec")
+	assert.Contains(t, renderLab(m.lab, theme, 110, 0, true), "WAITING ON YOU", "the row follows its run")
 }
 
 func TestLab_EnterOnLiveRunFocusesItsPane(t *testing.T) {
@@ -646,27 +622,26 @@ func TestLab_EnterOnLiveRunFocusesItsPane(t *testing.T) {
 	assert.Nil(t, m.activeModal)
 }
 
-func TestLab_EnterWithoutLiveRunOpensInspector(t *testing.T) {
+func TestLab_AStoppedSessionWithoutItsDraftsIsResumed(t *testing.T) {
 	m := newLabModel(t)
 	ended := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusSpecced, "Entry")
 	ended.Mode = domain.LabModeGrill
 	m.lab.entries = []domain.LabEntry{ended}
 
-	m, _ = press(t, m, "enter")
-	require.NotNil(t, m.lab.page, "Enter on a row opens the entry page")
-	m, _ = press(t, m, "enter")
-	assert.IsType(t, &modal.LabInspectorModal{}, m.activeModal)
+	_, reviewing := m.lab.reviewing(ended)
+	assert.False(t, reviewing, "a draft never written is not reviewed")
+	assert.False(t, m.lab.publishable(ended))
+	assert.Equal(t, "Resume grill", labNextAction(m.lab, ended))
 }
 
-func TestLab_InspectorClosesWhenEntryIsDeleted(t *testing.T) {
+func TestLab_PageClosesWhenEntryIsDeleted(t *testing.T) {
 	m := newLabModel(t)
 	e := entryAt(time.Now(), "e", domain.LabKindIdea, domain.LabStatusDraft, "Entry")
 	m.lab.entries = []domain.LabEntry{e}
-	updated, _ := m.openLabInspector()
-	m = updated.(*Model)
+	m.openLabPage(e)
 
-	updated, _ = m.Update(labsLoadedMsg{entries: nil})
-	assert.Nil(t, updated.(*Model).activeModal)
+	updated, _ := m.Update(labsLoadedMsg{entries: nil})
+	assert.Nil(t, updated.(*Model).lab.page)
 }
 
 // A row's title and badge share one line, and badges line up in one column,
@@ -713,21 +688,21 @@ func TestLabContextActions_DependOnStateAndSession(t *testing.T) {
 	now := time.Now()
 
 	assert.Equal(t, []string{"Capture new entry"}, labels(newLabView()))
-	assert.Equal(t, []string{"Grill", "Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
+	assert.Equal(t, []string{"Grill", "Edit", "Archive", "Delete", "Capture new entry"},
 		labels(viewOf(entryAt(now, "i", domain.LabKindIdea, domain.LabStatusDraft, "Idea"), nil)))
-	assert.Equal(t, []string{"Shape into an issue", "Inspect", "Edit", "Archive", "Delete", "Capture new entry"},
+	assert.Equal(t, []string{"Shape into an issue", "Edit", "Archive", "Delete", "Capture new entry"},
 		labels(viewOf(entryAt(now, "b", domain.LabKindBug, domain.LabStatusDraft, "Bug"), nil)), "a bug draft can be shaped")
 
 	shaping := entryAt(now, "s", domain.LabKindBug, domain.LabStatusShaping, "Bug")
 	shaping.Runs = []string{"run-1"}
-	assert.Equal(t, []string{"Inspect", "End session", "View agent", "Archive", "Capture new entry"},
+	assert.Equal(t, []string{"End session", "View agent", "Archive", "Capture new entry"},
 		labels(viewOf(shaping, map[string]string{"run-1": domain.WorkflowBlocked})), "a live session is ended, not restarted")
-	assert.Equal(t, []string{"Resume shaping", "Inspect", "Archive", "Capture new entry"},
+	assert.Equal(t, []string{"Resume shaping", "Archive", "Capture new entry"},
 		labels(viewOf(shaping, map[string]string{"run-1": domain.WorkflowSucceeded})), "an ended session can be resumed")
 
 	archived := entryAt(now, "a", domain.LabKindBug, domain.LabStatusDraft, "Bug")
 	archived.Archived = true
-	assert.Equal(t, []string{"Inspect", "Restore", "Delete", "Capture new entry"}, labels(viewOf(archived, nil)))
+	assert.Equal(t, []string{"Restore", "Delete", "Capture new entry"}, labels(viewOf(archived, nil)))
 }
 
 // fakeLabStarter records the sessions Grove starts.

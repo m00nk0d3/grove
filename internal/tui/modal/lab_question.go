@@ -32,10 +32,11 @@ type LabRequestSubmittedMsg struct {
 	Allow   bool
 }
 
-// LabQuestionModal shows one question card and takes its answer. Options are
+// LabQuestionCard shows one question card on the entry page and takes its
+// answer. Options are
 // chosen with the arrow keys or their number; Tab moves to the note, which
 // takes every key as text until Esc; Enter submits from either.
-type LabQuestionModal struct {
+type LabQuestionCard struct {
 	entryID  string
 	question domain.LabQuestion
 	number   int
@@ -57,8 +58,8 @@ type LabQuestionModal struct {
 
 // NewLabRevisionCard reopens question n to change its answer, starting from
 // the answer given.
-func NewLabRevisionCard(entryID string, n int, q domain.LabQuestion, a domain.LabAnswer) *LabQuestionModal {
-	m := NewLabQuestionModal(entryID, n, q, "")
+func NewLabRevisionCard(entryID string, n int, q domain.LabQuestion, a domain.LabAnswer) *LabQuestionCard {
+	m := NewLabQuestionCard(entryID, n, q, "")
 	m.revise = true
 	m.picked = map[int]bool{}
 	for _, i := range a.Choices {
@@ -73,14 +74,14 @@ func NewLabRevisionCard(entryID string, n int, q domain.LabQuestion, a domain.La
 }
 
 // InNote reports whether the note has the keyboard.
-func (m *LabQuestionModal) InNote() bool { return m.inNote }
+func (m *LabQuestionCard) InNote() bool { return m.inNote }
 
 // HasOptions reports whether the card is answered by choosing options.
-func (m *LabQuestionModal) HasOptions() bool { return len(m.question.Options) > 0 }
+func (m *LabQuestionCard) HasOptions() bool { return len(m.question.Options) > 0 }
 
 // FocusOptions gives the keyboard to the options, or to the answer of a text
 // card.
-func (m *LabQuestionModal) FocusOptions() {
+func (m *LabQuestionCard) FocusOptions() {
 	m.blurred = false
 	if m.HasOptions() {
 		m.leaveNote()
@@ -90,25 +91,25 @@ func (m *LabQuestionModal) FocusOptions() {
 }
 
 // FocusNote gives the keyboard to the note.
-func (m *LabQuestionModal) FocusNote() {
+func (m *LabQuestionCard) FocusNote() {
 	m.blurred = false
 	m.focusNote()
 }
 
 // Blur takes the keyboard away from the card.
-func (m *LabQuestionModal) Blur() {
+func (m *LabQuestionCard) Blur() {
 	m.blurred = true
 	m.leaveNote()
 }
 
-// NewLabQuestionModal opens the card of question n. The recommended answer is
+// NewLabQuestionCard opens the card of question n. The recommended answer is
 // preselected, so Enter accepts it.
-func NewLabQuestionModal(entryID string, n int, q domain.LabQuestion, position string) *LabQuestionModal {
+func NewLabQuestionCard(entryID string, n int, q domain.LabQuestion, position string) *LabQuestionCard {
 	note := textinput.New()
 	note.Prompt = "Note: "
 	note.CharLimit = 0
 	note.Cursor.SetMode(cursor.CursorStatic)
-	m := &LabQuestionModal{entryID: entryID, question: q, number: n, position: position, picked: map[int]bool{}, note: note, width: 72}
+	m := &LabQuestionCard{entryID: entryID, question: q, number: n, position: position, picked: map[int]bool{}, note: note, width: 72}
 	switch q.Kind {
 	case domain.LabQuestionText:
 		m.note.Prompt = "Answer: "
@@ -131,16 +132,16 @@ func NewLabQuestionModal(entryID string, n int, q domain.LabQuestion, position s
 }
 
 // EntryID returns the entry the question belongs to.
-func (m *LabQuestionModal) EntryID() string { return m.entryID }
+func (m *LabQuestionCard) EntryID() string { return m.entryID }
 
 // Number returns the question's number.
-func (m *LabQuestionModal) Number() int { return m.number }
+func (m *LabQuestionCard) Number() int { return m.number }
 
 // Init satisfies tea.Model.
-func (m *LabQuestionModal) Init() tea.Cmd { return nil }
+func (m *LabQuestionCard) Init() tea.Cmd { return nil }
 
 // Title returns the modal title.
-func (m *LabQuestionModal) Title() string {
+func (m *LabQuestionCard) Title() string {
 	title := fmt.Sprintf("QUESTION %d", m.number)
 	if m.revise {
 		title = fmt.Sprintf("CHANGE ANSWER %d", m.number)
@@ -152,26 +153,26 @@ func (m *LabQuestionModal) Title() string {
 }
 
 // SetWidth sizes the card to the terminal width.
-func (m *LabQuestionModal) SetWidth(w int) {
+func (m *LabQuestionCard) SetWidth(w int) {
 	m.width = max(40, min(96, w-12))
 	m.note.Width = m.width - len(m.note.Prompt) - 2
 }
 
 // SetTheme applies the active theme.
-func (m *LabQuestionModal) SetTheme(t styles.Theme) { m.theme = &t }
+func (m *LabQuestionCard) SetTheme(t styles.Theme) { m.theme = &t }
 
-func (m *LabQuestionModal) focusNote() {
+func (m *LabQuestionCard) focusNote() {
 	m.inNote = true
 	m.note.Focus()
 }
 
-func (m *LabQuestionModal) leaveNote() {
+func (m *LabQuestionCard) leaveNote() {
 	m.inNote = false
 	m.note.Blur()
 }
 
 // Update handles choosing, typing, submitting, and cancelling.
-func (m *LabQuestionModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *LabQuestionCard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -224,7 +225,7 @@ func (m *LabQuestionModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // submit returns the answer, or nil with an error shown when it is empty.
-func (m *LabQuestionModal) submit() tea.Cmd {
+func (m *LabQuestionCard) submit() tea.Cmd {
 	answer := LabAnswerSubmittedMsg{EntryID: m.entryID, Number: m.number, Text: strings.TrimSpace(m.note.Value()), Revise: m.revise}
 	switch m.question.Kind {
 	case domain.LabQuestionText:
@@ -248,7 +249,7 @@ func (m *LabQuestionModal) submit() tea.Cmd {
 	return func() tea.Msg { return answer }
 }
 
-func (m *LabQuestionModal) styles() (accent, muted, warning lipgloss.Style) {
+func (m *LabQuestionCard) styles() (accent, muted, warning lipgloss.Style) {
 	accent, muted, warning = lipgloss.NewStyle().Bold(true), lipgloss.NewStyle(), lipgloss.NewStyle()
 	if m.theme != nil {
 		accent = accent.Foreground(lipgloss.Color(m.theme.Accent()))
@@ -259,7 +260,7 @@ func (m *LabQuestionModal) styles() (accent, muted, warning lipgloss.Style) {
 }
 
 // View renders the card.
-func (m *LabQuestionModal) View() string {
+func (m *LabQuestionCard) View() string {
 	accent, muted, warning := m.styles()
 	wrap := lipgloss.NewStyle().Width(m.width)
 	var b strings.Builder
@@ -307,7 +308,7 @@ func (m *LabQuestionModal) View() string {
 	return b.String()
 }
 
-func (m *LabQuestionModal) hints() string {
+func (m *LabQuestionCard) hints() string {
 	switch {
 	case m.question.Kind == domain.LabQuestionText:
 		return "Enter send  ·  Esc later"
@@ -320,73 +321,61 @@ func (m *LabQuestionModal) hints() string {
 	}
 }
 
-// LabMessageModal writes a free-text message to a session's agent: a reply to
-// a turn that ended without a question card, or a change request on a draft.
-// The agent's recent output, when there is any, is shown above the editor.
-type LabMessageModal struct {
+// LabChangeModal writes a change request on a draft for the session's
+// agent, which revises the draft in place.
+type LabChangeModal struct {
 	entryID string
-	kind    domain.LabRequestKind
-	title   string
 	intro   string
-	output  string
 	editor  textarea.Model
 	err     string
 	width   int
 	theme   *styles.Theme
 }
 
-// Rows the agent's output may take in the message modal.
-const labMessageOutputRows = 14
-
-// NewLabReplyModal replies to an agent that ended its turn without a question
-// card; output is what it last wrote.
-func NewLabReplyModal(entryID, output string) *LabMessageModal {
-	return newLabMessageModal(entryID, domain.LabRequestReply, "REPLY TO THE AGENT",
-		"The agent stopped without asking through a question card. Its last output:", output, "")
-}
-
-// NewLabChangeModal asks the agent for changes to a draft at path.
-func NewLabChangeModal(entryID, path string) *LabMessageModal {
-	return newLabMessageModal(entryID, domain.LabRequestChange, "REQUEST CHANGES",
-		fmt.Sprintf("What should the agent change? The agent revises the drafts in place and %s returns to review.", path), "", path+": ")
-}
-
-func newLabMessageModal(entryID string, kind domain.LabRequestKind, title, intro, output, text string) *LabMessageModal {
+// NewLabChangeModal asks the agent for changes to the draft at path.
+func NewLabChangeModal(entryID, path string) *LabChangeModal {
 	editor := textarea.New()
 	editor.ShowLineNumbers = false
 	editor.CharLimit = 0
 	editor.Prompt = "│ "
+	// Grove delivers only key events to a modal, so a blinking cursor would
+	// never receive its blink messages.
 	editor.Cursor.SetMode(cursor.CursorStatic)
 	editor.SetWidth(60)
 	editor.SetHeight(5)
-	editor.SetValue(text)
+	editor.SetValue(path + ": ")
 	editor.Focus()
-	return &LabMessageModal{entryID: entryID, kind: kind, title: title, intro: intro, output: output, editor: editor, width: 72}
+	return &LabChangeModal{
+		entryID: entryID,
+		intro:   fmt.Sprintf("What should the agent change? It revises the drafts in place and %s returns to review.", path),
+		editor:  editor,
+		width:   72,
+	}
 }
 
-// AppendText adds text to the message, such as the ticket it is about.
-func (m *LabMessageModal) AppendText(text string) {
+// AppendText adds text to the request, such as the ticket it is about.
+func (m *LabChangeModal) AppendText(text string) {
 	m.editor.SetValue(m.editor.Value() + text)
 	m.editor.CursorEnd()
 }
 
 // Init satisfies tea.Model.
-func (m *LabMessageModal) Init() tea.Cmd { return nil }
+func (m *LabChangeModal) Init() tea.Cmd { return nil }
 
 // Title returns the modal title.
-func (m *LabMessageModal) Title() string { return m.title }
+func (m *LabChangeModal) Title() string { return "REQUEST CHANGES" }
 
 // SetWidth sizes the modal to the terminal width.
-func (m *LabMessageModal) SetWidth(w int) {
+func (m *LabChangeModal) SetWidth(w int) {
 	m.width = max(40, min(96, w-12))
 	m.editor.SetWidth(m.width - 2)
 }
 
 // SetTheme applies the active theme.
-func (m *LabMessageModal) SetTheme(t styles.Theme) { m.theme = &t }
+func (m *LabChangeModal) SetTheme(t styles.Theme) { m.theme = &t }
 
 // Update handles typing, sending, and cancelling.
-func (m *LabMessageModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *LabChangeModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -397,10 +386,10 @@ func (m *LabMessageModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "ctrl+s":
 		text := strings.TrimSpace(m.editor.Value())
 		if text == "" {
-			m.err = "Write a message first."
+			m.err = "Write what to change first."
 			return m, nil
 		}
-		sent := LabRequestSubmittedMsg{EntryID: m.entryID, Kind: m.kind, Text: text}
+		sent := LabRequestSubmittedMsg{EntryID: m.entryID, Kind: domain.LabRequestChange, Text: text}
 		return m, func() tea.Msg { return sent }
 	}
 	m.err = ""
@@ -409,8 +398,8 @@ func (m *LabMessageModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// View renders the output, the editor, and the key hints.
-func (m *LabMessageModal) View() string {
+// View renders the request editor and the key hints.
+func (m *LabChangeModal) View() string {
 	muted, warning := lipgloss.NewStyle(), lipgloss.NewStyle()
 	if m.theme != nil {
 		muted = muted.Foreground(lipgloss.Color(m.theme.Muted()))
@@ -418,13 +407,7 @@ func (m *LabMessageModal) View() string {
 	}
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Width(m.width).Render(m.intro))
-	b.WriteString("\n")
-	if out := tailLines(m.output, labMessageOutputRows); out != "" {
-		b.WriteString("\n")
-		b.WriteString(muted.Render(truncateLines(out, m.width)))
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	b.WriteString(m.editor.View())
 	b.WriteString("\n")
 	if m.err != "" {
@@ -433,91 +416,4 @@ func (m *LabMessageModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(muted.Render("Ctrl+S send  ·  Enter new line  ·  Esc cancel"))
 	return b.String()
-}
-
-// LabPermissionModal answers a permission prompt the agent is waiting on.
-type LabPermissionModal struct {
-	entryID string
-	output  string
-	width   int
-	theme   *styles.Theme
-}
-
-// NewLabPermissionModal shows what the agent is asking permission for.
-func NewLabPermissionModal(entryID, output string) *LabPermissionModal {
-	return &LabPermissionModal{entryID: entryID, output: output, width: 72}
-}
-
-// Init satisfies tea.Model.
-func (m *LabPermissionModal) Init() tea.Cmd { return nil }
-
-// Title returns the modal title.
-func (m *LabPermissionModal) Title() string { return "PERMISSION REQUEST" }
-
-// SetWidth sizes the modal to the terminal width.
-func (m *LabPermissionModal) SetWidth(w int) { m.width = max(40, min(96, w-12)) }
-
-// SetTheme applies the active theme.
-func (m *LabPermissionModal) SetTheme(t styles.Theme) { m.theme = &t }
-
-// Update handles allow, deny, and cancel.
-func (m *LabPermissionModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return m, nil
-	}
-	decide := func(allow bool) tea.Cmd {
-		sent := LabRequestSubmittedMsg{EntryID: m.entryID, Kind: domain.LabRequestPermission, Allow: allow}
-		return func() tea.Msg { return sent }
-	}
-	switch key.String() {
-	case "y", "Y":
-		return m, decide(true)
-	case "n", "N":
-		return m, decide(false)
-	case "esc":
-		return m, func() tea.Msg { return ModalCancelledMsg{} }
-	}
-	return m, nil
-}
-
-// View renders the agent's output and the choices.
-func (m *LabPermissionModal) View() string {
-	muted := lipgloss.NewStyle()
-	if m.theme != nil {
-		muted = muted.Foreground(lipgloss.Color(m.theme.Muted()))
-	}
-	var b strings.Builder
-	b.WriteString("The agent is waiting for a permission decision:\n\n")
-	if out := tailLines(m.output, labMessageOutputRows); out != "" {
-		b.WriteString(muted.Render(truncateLines(out, m.width)))
-	} else {
-		b.WriteString(muted.Render("(no output captured)"))
-	}
-	b.WriteString("\n\n[y] allow  [n] deny  [Esc] decide later")
-	return b.String()
-}
-
-// tailLines returns the last n non-trailing-blank lines of s.
-func tailLines(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n "), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.TrimRight(strings.Join(lines, "\n"), "\n ")
-}
-
-// truncateLines cuts every line of s to width display columns.
-func truncateLines(s string, width int) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		if lipgloss.Width(line) > width {
-			runes := []rune(line)
-			for len(runes) > 0 && lipgloss.Width(string(runes))+1 > width {
-				runes = runes[:len(runes)-1]
-			}
-			lines[i] = string(runes) + "…"
-		}
-	}
-	return strings.Join(lines, "\n")
 }

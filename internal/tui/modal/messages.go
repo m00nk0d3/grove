@@ -131,7 +131,6 @@ const (
 	ContextActionRemoveRun    = "remove-workflow"
 	ContextActionSyncGitHub   = "sync-github"
 	ContextActionLabCapture   = "lab-capture"
-	ContextActionLabInspect   = "lab-inspect"
 	ContextActionLabShape     = "lab-shape"
 	ContextActionLabGrill     = "lab-grill"
 	ContextActionLabEscalate  = "lab-escalate"
@@ -174,4 +173,22 @@ type CleanupCandidate struct {
 type CleanupConfirmedMsg struct {
 	Worktrees []string
 	Branches  []string
+}
+
+// Review actions on a drafted artifact.
+const (
+	LabReviewApprove = "approve"
+	LabReviewDiscard = "discard"
+	LabReviewEdit    = "edit"
+	LabReviewChanges = "changes"
+)
+
+// LabArtifactReviewMsg asks Grove to act on one of an entry's artifacts.
+// Hash identifies the content the user was shown, so a decision never applies
+// to a revision they have not seen.
+type LabArtifactReviewMsg struct {
+	EntryID string
+	Path    string
+	Hash    string
+	Action  string
 }

@@ -9,15 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestPublish(plan LabPublishPlan) *LabPublishModal {
-	m := NewLabPublishModal(plan)
+func newTestPublish(plan LabPublishPlan) *LabPublishPreview {
+	m := NewLabPublishPreview(plan)
 	m.SetWidth(140)
 	m.SetHeight(40)
 	m.SetTheme(styles.NewTheme(styles.Themes[0]))
 	return m
 }
 
-func publishKey(m *LabPublishModal, key string) tea.Msg {
+func publishKey(m *LabPublishPreview, key string) tea.Msg {
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	switch key {
 	case "esc":
@@ -113,6 +113,6 @@ func TestLabPublish_EpicListsItsTicketsInOrder(t *testing.T) {
 func TestLabPublish_TicketTitlesStayReadableWhenNarrow(t *testing.T) {
 	plan := basePlan()
 	plan.Tickets = []LabPublishTicket{{Key: "01", Title: "Cache the last sync"}}
-	m := NewLabPublishModal(plan) // no width: the narrowest layout
+	m := NewLabPublishPreview(plan) // no width: the narrowest layout
 	assert.Contains(t, m.View(), "Cache the last sync")
 }

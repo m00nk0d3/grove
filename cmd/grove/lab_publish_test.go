@@ -135,6 +135,14 @@ func publishModel(t *testing.T, approved bool) (*Model, *data.LabStore, domain.L
 	return m, store, e
 }
 
+// labPreview is the publish preview the entry page shows, if any.
+func labPreview(m *Model) *modal.LabPublishPreview {
+	if m.lab.page == nil {
+		return nil
+	}
+	return m.lab.page.publish
+}
+
 // step runs cmd and feeds its message back, returning the model.
 func step(t *testing.T, m *Model, cmd tea.Cmd) *Model {
 	t.Helper()
@@ -150,8 +158,9 @@ func TestLabPublish_PreviewThenPublish(t *testing.T) {
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	preview, ok := m.activeModal.(*modal.LabPublishModal)
-	require.True(t, ok, "publishing opens the preview first")
+	preview := labPreview(m)
+	require.NotNil(t, preview, "publishing opens the preview first, on the entry page")
+	assert.Nil(t, m.activeModal, "the preview is not a pop-up")
 	assert.Empty(t, gh.created, "nothing is created before confirmation")
 	assert.Contains(t, preview.View(), "Roadmap (m00nk0d3/3)")
 	assert.Contains(t, preview.View(), "Sync stalls on token expiry")
@@ -191,8 +200,8 @@ func TestLabPublish_UnapprovedDraftIsNotPublished(t *testing.T) {
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	assert.Nil(t, m.activeModal)
-	assert.Contains(t, m.statusErr, "approve issue.md in the inspector before publishing")
+	assert.Nil(t, labPreview(m))
+	assert.Contains(t, m.statusErr, "approve issue.md on the entry page before publishing")
 	assert.Empty(t, gh.created)
 }
 
@@ -203,7 +212,7 @@ func TestLabPublish_DraftChangedAfterPreviewIsNotPublished(t *testing.T) {
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	require.IsType(t, &modal.LabPublishModal{}, m.activeModal)
+	require.NotNil(t, labPreview(m))
 
 	// The agent revises the draft while the preview is open.
 	require.NoError(t, os.WriteFile(filepath.Join(store.ArtifactsDir(e.ID), "issue.md"), []byte(shapedDraft+"\nMore.\n"), 0o644))
@@ -239,7 +248,7 @@ func TestLabPublish_BoardFailureResumesWithoutDuplicating(t *testing.T) {
 	m.statusErr = ""
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	assert.Contains(t, m.activeModal.View(), "Issue #251 was created by an earlier attempt")
+	assert.Contains(t, labPreview(m).View(), "Issue #251 was created by an earlier attempt")
 	updated, cmd = m.publishLabEntry(modal.LabPublishConfirmedMsg{EntryID: e.ID, BoardRef: "m00nk0d3/3"})
 	m = step(t, updated.(*Model), cmd)
 
@@ -280,7 +289,7 @@ func TestLabPublish_ConfiguredBoardIsUsed(t *testing.T) {
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	view := m.activeModal.View()
+	view := labPreview(m).View()
 	assert.Contains(t, view, "Two (o/2)")
 	assert.NotContains(t, view, "←/→", "a configured board is not offered as a choice")
 }
@@ -312,7 +321,7 @@ func TestLabReview_ChangesAreRequestedInGrove(t *testing.T) {
 
 	updated, _ := m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: "issue.md", Action: modal.LabReviewChanges})
 	m = updated.(*Model)
-	require.IsType(t, &modal.LabMessageModal{}, m.activeModal, "the change request is written in Grove")
+	require.IsType(t, &modal.LabChangeModal{}, m.activeModal, "the change request is written in Grove")
 	assert.Empty(t, navigator.focusedPane, "the pane is not opened")
 	m = typeInto(t, m, "Mention the proxy")
 	m, cmd := press(t, m, "ctrl+s")
@@ -327,20 +336,35 @@ func TestLabReview_ChangesAreRequestedInGrove(t *testing.T) {
 	assert.Contains(t, updated.(*Model).statusErr, "resume it to ask the agent for changes")
 }
 
-func TestLab_EnterOnDraftedEntryOpensReview(t *testing.T) {
-	m, _, e := publishModel(t, false)
+func TestLab_DraftsOfAFinishedSessionAreReviewedThenPublished(t *testing.T) {
+	gh := &fakeGitHub{}
+	withFakeGitHub(t, gh)
+	m, store, e := publishModel(t, false)
 	e.Runs = []string{"run-1"}
 	m.lab.entries = []domain.LabEntry{e}
-	state := labMissionState(map[string]string{"run-1": domain.WorkflowBlocked})
-	state.WorkflowRuns[0].CurrentStep = "Publish"
-	m.lab.setMission(state)
+	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowSucceeded}))
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 180, Height: 50})
+	m = updated.(*Model)
 
+	assert.Equal(t, "Review the bug report", labNextAction(m.lab, e))
 	m, _ = press(t, m, "enter")
 	require.NotNil(t, m.lab.page, "Enter on a row opens the entry page")
-	m, _ = press(t, m, "enter")
-	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
-	require.True(t, ok, "a finished draft is reviewed in Grove, not in the pane")
-	assert.Contains(t, inspector.View(), "3 ARTIFACTS")
+	assert.Contains(t, m.View(), "REVIEW · issue.md", "the session's draft is reviewed on the page")
+
+	m, cmd := press(t, m, "enter")
+	m = step(t, m, cmd)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
+	e, _ = m.lab.entry(e.ID)
+	assert.Equal(t, "Publish the bug report", labNextAction(m.lab, e), "once approved, the entry is ready to publish")
+
+	m, cmd = press(t, m, "enter")
+	m = step(t, m, cmd)
+	require.NotNil(t, labPreview(m), "Enter shows the preview on the page")
+	assert.Contains(t, m.View(), "Sync stalls on token expiry")
+	m, _ = press(t, m, "esc")
+	assert.Nil(t, labPreview(m), "Esc cancels the preview")
+	assert.NotNil(t, m.lab.page)
 }
 
 func TestLabEditorCommand(t *testing.T) {
@@ -426,7 +450,7 @@ func publishEpic(t *testing.T, m *Model, e domain.LabEntry, boardRef string) *Mo
 	t.Helper()
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	require.IsType(t, &modal.LabPublishModal{}, m.activeModal, m.statusErr)
+	require.NotNil(t, labPreview(m), m.statusErr)
 	updated, cmd = m.publishLabEntry(modal.LabPublishConfirmedMsg{EntryID: e.ID, BoardRef: boardRef})
 	return step(t, updated.(*Model), cmd)
 }
@@ -443,7 +467,7 @@ func TestLabPublishEpic_EpicThenTicketsThenLinksThenBoard(t *testing.T) {
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	publishPreview := m.activeModal.(*modal.LabPublishModal)
+	publishPreview := labPreview(m)
 	publishPreview.SetWidth(140)
 	preview := publishPreview.View()
 	assert.Contains(t, preview, "TICKETS  3 sub-issues")
@@ -496,7 +520,7 @@ func TestLabPublishEpic_ResumesAfterFailedTicket(t *testing.T) {
 	m.statusErr = ""
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	assert.Contains(t, m.activeModal.View(), "Epic #251 and 1 of 3 tickets were created by an earlier attempt")
+	assert.Contains(t, labPreview(m).View(), "Epic #251 and 1 of 3 tickets were created by an earlier attempt")
 	updated, cmd = m.publishLabEntry(modal.LabPublishConfirmedMsg{EntryID: e.ID})
 	m = step(t, updated.(*Model), cmd)
 
@@ -530,7 +554,7 @@ func TestLabPublishEpic_NeedsApprovedValidTickets(t *testing.T) {
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	assert.Contains(t, m.statusErr, "approve tickets.json in the inspector before publishing")
+	assert.Contains(t, m.statusErr, "approve tickets.json on the entry page before publishing")
 
 	cyclic := `{"tickets":[{"key":"01","title":"a","blocked_by":["02"]},{"key":"02","title":"b","blocked_by":["01"]}]}`
 	require.NoError(t, os.WriteFile(filepath.Join(store.ArtifactsDir(e.ID), "tickets.json"), []byte(cyclic), 0o644))
@@ -631,7 +655,7 @@ func TestLabPublishEpic_EscalatedBugBecomesSubIssue(t *testing.T) {
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)
-	preview := m.activeModal.(*modal.LabPublishModal)
+	preview := labPreview(m)
 	preview.SetWidth(140)
 	assert.Contains(t, preview.View(), "Bug #240, which this grew out of, becomes a sub-issue of the epic")
 

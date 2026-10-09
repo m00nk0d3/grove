@@ -31,15 +31,15 @@ func submitted(t *testing.T, cmd tea.Cmd) LabAnswerSubmittedMsg {
 	return msg
 }
 
-func TestLabQuestionModal_EnterAcceptsTheRecommendation(t *testing.T) {
-	m := NewLabQuestionModal("e1", 2, domain.LabQuestion{ID: 2, Kind: domain.LabQuestionChoice, Question: "Keep it?", Options: []string{"Yes", "No", "Later"}, Recommended: []int{2}}, "")
+func TestLabQuestionCard_EnterAcceptsTheRecommendation(t *testing.T) {
+	m := NewLabQuestionCard("e1", 2, domain.LabQuestion{ID: 2, Kind: domain.LabQuestionChoice, Question: "Keep it?", Options: []string{"Yes", "No", "Later"}, Recommended: []int{2}}, "")
 	assert.Contains(t, m.View(), "(recommended)")
 	_, cmd := questionKey(m, "enter")
 	assert.Equal(t, LabAnswerSubmittedMsg{EntryID: "e1", Number: 2, Choices: []int{2}}, submitted(t, cmd))
 }
 
-func TestLabQuestionModal_MultiTogglesAndRequiresAPick(t *testing.T) {
-	m := NewLabQuestionModal("e1", 1, domain.LabQuestion{ID: 1, Kind: domain.LabQuestionMulti, Options: []string{"A", "B", "C"}, Recommended: []int{0}}, "")
+func TestLabQuestionCard_MultiTogglesAndRequiresAPick(t *testing.T) {
+	m := NewLabQuestionCard("e1", 1, domain.LabQuestion{ID: 1, Kind: domain.LabQuestionMulti, Options: []string{"A", "B", "C"}, Recommended: []int{0}}, "")
 	questionKey(m, "1") // untoggle the recommendation
 	_, cmd := questionKey(m, "enter")
 	assert.Nil(t, cmd, "an empty answer is not sent")
@@ -50,8 +50,8 @@ func TestLabQuestionModal_MultiTogglesAndRequiresAPick(t *testing.T) {
 	assert.Equal(t, []int{1, 2}, submitted(t, cmd).Choices)
 }
 
-func TestLabQuestionModal_TheNoteTakesEveryKeyUntilEsc(t *testing.T) {
-	m := NewLabQuestionModal("e1", 1, domain.LabQuestion{ID: 1, Kind: domain.LabQuestionChoice, Options: []string{"A", "B"}, Recommended: []int{0}}, "")
+func TestLabQuestionCard_TheNoteTakesEveryKeyUntilEsc(t *testing.T) {
+	m := NewLabQuestionCard("e1", 1, domain.LabQuestion{ID: 1, Kind: domain.LabQuestionChoice, Options: []string{"A", "B"}, Recommended: []int{0}}, "")
 	questionKey(m, "tab")
 	for _, r := range "j 2" {
 		questionKey(m, string(r))
@@ -68,8 +68,8 @@ func TestLabQuestionModal_TheNoteTakesEveryKeyUntilEsc(t *testing.T) {
 	assert.Equal(t, "j 2", answer.Text)
 }
 
-func TestLabQuestionModal_TextCardsStartFromTheSuggestion(t *testing.T) {
-	m := NewLabQuestionModal("e1", 4, domain.LabQuestion{ID: 4, Kind: domain.LabQuestionText, RecommendedText: "Windows 11"}, "")
+func TestLabQuestionCard_TextCardsStartFromTheSuggestion(t *testing.T) {
+	m := NewLabQuestionCard("e1", 4, domain.LabQuestion{ID: 4, Kind: domain.LabQuestionText, RecommendedText: "Windows 11"}, "")
 	_, cmd := questionKey(m, "enter")
 	assert.Equal(t, LabAnswerSubmittedMsg{EntryID: "e1", Number: 4, Text: "Windows 11"}, submitted(t, cmd))
 }

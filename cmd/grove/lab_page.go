@@ -30,7 +30,7 @@ type labPage struct {
 	entryID string
 	focus   labPageFocus
 	// card is the question card being answered, or reopened for revision.
-	card     *modal.LabQuestionModal
+	card     *modal.LabQuestionCard
 	cardNum  int
 	revising bool
 	// reply is the editor for answering a turn that ended without a card.
@@ -46,6 +46,9 @@ type labPage struct {
 	ticketCursor int
 	ticketOpen   string
 	docCursor    int
+	// publish is the preview of what publishing creates, shown until the
+	// user confirms or cancels.
+	publish *modal.LabPublishPreview
 }
 
 // Rows of the agent's output shown on the page.
@@ -112,7 +115,7 @@ func (m *Model) syncLabPage() {
 			if len(pending) > 1 {
 				position = fmt.Sprintf("1 of %d", len(pending))
 			}
-			p.card = modal.NewLabQuestionModal(e.ID, pending[0].Number, *pending[0].Question, position)
+			p.card = modal.NewLabQuestionCard(e.ID, pending[0].Number, *pending[0].Question, position)
 			p.cardNum = pending[0].Number
 			if p.focus == labFocusLog {
 				p.card.Blur()
@@ -202,11 +205,20 @@ func (m *Model) handleLabPageKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	if p.focus == labFocusLog {
+	if p.focus == labFocusLog && p.publish == nil {
 		return m.handleLabLogKey(e, key)
 	}
-	if ask, _ := m.lab.ask(e); ask == labAskReview && p.card == nil && !p.replyOn {
-		return m.handleLabReviewKey(e, key)
+	if p.publish != nil {
+		switch key {
+		case "esc", "n", "N", "q":
+			p.publish, m.labPending = nil, nil
+			return m, nil
+		}
+		_, cmd := p.publish.Update(msg)
+		return m, cmd
+	}
+	if path, ok := m.lab.reviewing(e); ok && p.card == nil && !p.replyOn {
+		return m.handleLabReviewKey(e, path, key)
 	}
 	switch {
 	case p.card != nil:
@@ -411,7 +423,13 @@ func renderLabPage(v labView, theme styles.Theme, width, height int, focused boo
 	b.WriteString(rule + "\n")
 
 	var hints string
+	reviewPath, reviewing := v.reviewing(e)
 	switch {
+	case p.publish != nil:
+		p.publish.SetWidth(width + 4)
+		p.publish.SetHeight(height)
+		p.publish.SetTheme(theme)
+		b.WriteString(p.publish.View() + "\n")
 	case p.card != nil:
 		if p.card.Title() != "" {
 			line := p.card.Title()
@@ -444,14 +462,14 @@ func renderLabPage(v labView, theme styles.Theme, width, height int, focused boo
 		b.WriteString("The agent is waiting for a permission decision:\n\n")
 		b.WriteString(muted.Render(labTail(t.session.Output, labPageOutputRows, width)) + "\n\n")
 		hints = "y allow  ·  n deny  ·  Esc back to the list  ·  . actions"
-	case ask == labAskReview:
+	case reviewing:
 		// The stepper, the review heading, and the hints take about nine
 		// rows; the documents strip takes one each, and a heading.
 		docRows := 0
 		if len(t.docs) > 0 {
 			docRows = len(t.docs) + 2
 		}
-		review, reviewHints := renderLabReview(e, t, p, theme, width, max(6, height-9-docRows))
+		review, reviewHints := renderLabReview(e, t, reviewPath, p, theme, width, max(6, height-9-docRows))
 		b.WriteString(review)
 		if p.focus != labFocusLog {
 			hints = reviewHints
@@ -532,15 +550,53 @@ func labTail(text string, rows, width int) string {
 // labFocusDocs gives the keyboard to the drafted repository documents.
 const labFocusDocs labPageFocus = labFocusLog + 1
 
-// labReviewPath is the draft a session waits on the user to approve.
-func labReviewPath(t labTalk) string {
-	switch t.session.Stage {
-	case "spec":
-		return "spec.md"
-	case "tickets":
-		return "tickets.json"
+// reviewing returns the draft e waits on the user to approve: the draft a
+// live session holds between stages or, once the session has ended, the
+// first draft publishing needs that is not approved yet. A draft never
+// written is not reviewed; the session is resumed to write it.
+func (v labView) reviewing(e domain.LabEntry) (string, bool) {
+	t := v.talks[e.ID]
+	if ask, _ := v.ask(e); ask == labAskReview {
+		switch t.session.Stage {
+		case "spec":
+			return domain.LabSpecArtifact, true
+		case "tickets":
+			return domain.LabTicketsArtifact, true
+		}
+		return domain.LabIssueArtifact, true
 	}
-	return "issue.md"
+	required := labPublishRequires(e)
+	if v.hasLiveSession(e) || required == nil || !v.draftReady(e) {
+		return "", false
+	}
+	for _, path := range required {
+		if _, ok := t.labArtifact(path); !ok {
+			return "", false
+		}
+	}
+	for _, path := range required {
+		if a, _ := t.labArtifact(path); e.ReviewOf(a) != domain.LabReviewApproved {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+// publishable reports whether every draft publishing e needs is written and
+// approved, and the session is done with them.
+func (v labView) publishable(e domain.LabEntry) bool {
+	required := labPublishRequires(e)
+	if required == nil || !v.draftReady(e) {
+		return false
+	}
+	t := v.talks[e.ID]
+	for _, path := range required {
+		a, ok := t.labArtifact(path)
+		if !ok || e.ReviewOf(a) != domain.LabReviewApproved {
+			return false
+		}
+	}
+	return true
 }
 
 // labTicketRow is a ticket as the review lists it.
@@ -571,7 +627,7 @@ func labTicketRows(body string) ([]labTicketRow, error) {
 
 // renderLabReview draws the draft waiting for approval, and the repository
 // documents drafted beside it. It returns the panel and its key hints.
-func renderLabReview(e domain.LabEntry, t labTalk, p *labPage, theme styles.Theme, width, rows int) (string, string) {
+func renderLabReview(e domain.LabEntry, t labTalk, path string, p *labPage, theme styles.Theme, width, rows int) (string, string) {
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent())).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
 	success := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success()))
@@ -586,7 +642,6 @@ func renderLabReview(e domain.LabEntry, t labTalk, p *labPage, theme styles.Them
 		return warning.Render("draft")
 	}
 
-	path := labReviewPath(t)
 	a, ok := t.labArtifact(path)
 	var b strings.Builder
 	if ok {
@@ -690,10 +745,9 @@ func renderLabReview(e domain.LabEntry, t labTalk, p *labPage, theme styles.Them
 }
 
 // handleLabReviewKey handles a key while the page shows a draft for review.
-func (m *Model) handleLabReviewKey(e domain.LabEntry, key string) (tea.Model, tea.Cmd) {
+func (m *Model) handleLabReviewKey(e domain.LabEntry, path, key string) (tea.Model, tea.Cmd) {
 	p := m.lab.page
 	t := m.lab.talks[e.ID]
-	path := labReviewPath(t)
 	a, ok := t.labArtifact(path)
 	review := func(a domain.LabArtifact, action string) (tea.Model, tea.Cmd) {
 		return m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: a.Path, Hash: domain.LabContentHash(a.Body), Action: action})
@@ -757,7 +811,7 @@ func (m *Model) handleLabReviewKey(e domain.LabEntry, key string) (tea.Model, te
 			prefix = rows[p.ticketCursor].ticket.Key + ": "
 		}
 		updated, cmd := review(a, modal.LabReviewChanges)
-		if change, ok := m.activeModal.(*modal.LabMessageModal); ok && prefix != "" {
+		if change, ok := m.activeModal.(*modal.LabChangeModal); ok && prefix != "" {
 			change.AppendText(prefix)
 		}
 		return updated, cmd
@@ -790,7 +844,7 @@ func (m *Model) handleLabReviewKey(e domain.LabEntry, key string) (tea.Model, te
 // labPublishSummary says what publishing e will create, once its drafts are
 // ready; otherwise it is empty.
 func labPublishSummary(v labView, e domain.LabEntry, t labTalk) string {
-	if labPublishRequires(e) == nil || !v.draftReady(e) || e.Status == domain.LabStatusPublished {
+	if !v.publishable(e) {
 		return ""
 	}
 	title := func(path string) string {

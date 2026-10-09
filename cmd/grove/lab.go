@@ -399,7 +399,6 @@ func (m *Model) handleLabsLoaded(msg labsLoadedMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.lab.clamp()
 	}
-	m.refreshLabInspector()
 	if msg.status == "" {
 		return m, nil
 	}
@@ -481,16 +480,13 @@ func (m *Model) labPrimaryAction(e domain.LabEntry) (tea.Model, tea.Cmd) {
 	if e.Status == domain.LabStatusPublished {
 		return m.openLabIssue(e)
 	}
-	// A draft waiting for review is reviewed in Grove, not in the pane.
-	if labPublishRequires(e) != nil && m.lab.draftReady(e) {
-		if e.Mode == domain.LabModeGrill && e.Status == domain.LabStatusTicketed {
-			return m.prepareLabPublish(e)
-		}
-		return m.openLabInspectorOnArtifacts()
-	}
-	// What the session asks is answered in Grove; the pane is only watched.
-	if m.openLabAsk(e) {
+	// A draft waiting for approval is reviewed on the entry page, which
+	// handles its keys itself; once every draft is approved, Enter publishes.
+	if _, reviewing := m.lab.reviewing(e); reviewing {
 		return m, nil
+	}
+	if m.lab.publishable(e) {
+		return m.prepareLabPublish(e)
 	}
 	if run, ok := m.lab.latestRun(e); ok && run.live() && run.paneID != "" {
 		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
@@ -505,7 +501,8 @@ func (m *Model) labPrimaryAction(e domain.LabEntry) (tea.Model, tea.Cmd) {
 		m.activeModal = modal.NewLabEditModal(e)
 		return m, nil
 	}
-	return m.openLabInspector()
+	m.statusMsg = "Nothing to do for this entry right now"
+	return m, clearMsgCmd()
 }
 
 // labContextActions lists what the Actions panel offers for the selected
@@ -543,7 +540,6 @@ func labContextActions(v labView) []contextActionOption {
 			contextActionOption{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
 		)
 	}
-	actions = append(actions, contextActionOption{icon: "◎", label: "Inspect", action: modal.ContextActionLabInspect})
 	if v.hasLiveSession(e) {
 		actions = append(actions, contextActionOption{icon: "■", label: "End session", action: modal.ContextActionLabEnd})
 	}
@@ -616,8 +612,6 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "The session is not running"
 		return m, clearErrorCmd()
-	case modal.ContextActionLabInspect:
-		return m.openLabInspector()
 	case modal.ContextActionLabOpenIssue:
 		return m.openLabIssue(e)
 	case modal.ContextActionLabClearLock:
@@ -674,62 +668,6 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// labInspectorState builds what the inspector shows for e.
-func (m *Model) labInspectorState(e domain.LabEntry) modal.LabInspectorState {
-	state := labStateOf(m.lab, e)
-	var runs []modal.LabInspectorRun
-	for _, run := range m.lab.entryRuns(e) {
-		runs = append(runs, modal.LabInspectorRun{Workflow: run.workflow, PaneID: run.paneID})
-	}
-	return modal.LabInspectorState{
-		Entry:           e,
-		Badge:           state.badge,
-		Attention:       state.tone == labToneAttention,
-		StageLabel:      labStageLabel(m.lab, e),
-		PublishRequires: labPublishRequires(e),
-		Runs:            runs,
-	}
-}
-
-// openLabInspector opens the inspector on the selected entry.
-func (m *Model) openLabInspector() (tea.Model, tea.Cmd) {
-	e, ok := m.lab.selected()
-	if !ok {
-		m.statusErr = "No Lab entry selected"
-		return m, clearErrorCmd()
-	}
-	inspector := modal.NewLabInspectorModal(m.labInspectorState(e))
-	m.activeModal = inspector
-	return m, inspector.Init()
-}
-
-// refreshLabInspector updates an open inspector after its entry or runs
-// changed. An inspector whose entry was deleted is closed.
-func (m *Model) refreshLabInspector() {
-	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
-	if !ok {
-		return
-	}
-	e, ok := m.lab.entry(inspector.EntryID())
-	if !ok {
-		m.activeModal = nil
-		return
-	}
-	inspector.SetState(m.labInspectorState(e))
-}
-
-// loadLabArtifactsCmd reads an entry's drafted artifacts.
-func loadLabArtifactsCmd(repoPath, id string) tea.Cmd {
-	return func() tea.Msg {
-		store, err := labStoreFor(repoPath)
-		if err != nil {
-			return modal.LabArtifactsLoadedMsg{EntryID: id, Err: err}
-		}
-		artifacts, err := store.Artifacts(id)
-		return modal.LabArtifactsLoadedMsg{EntryID: id, Artifacts: artifacts, Err: err}
-	}
 }
 
 // openLabRunPane focuses the Herdr pane of a run's agent.
@@ -933,11 +871,12 @@ func labNextAction(v labView, e domain.LabEntry) string {
 			return fmt.Sprintf("Open issue #%d", *issue)
 		}
 		return "Open published issues"
-	case labPublishRequires(e) != nil && v.draftReady(e):
-		if e.Mode == domain.LabModeGrill && e.Status == domain.LabStatusTicketed {
-			return "Review and publish the epic"
-		}
-		return "Review the drafted bug report"
+	}
+	if path, ok := v.reviewing(e); ok {
+		return "Review the " + labDraftNames[path]
+	}
+	if v.publishable(e) {
+		return labPublishAction(v, e)
 	}
 	if action := labAskAction(v, e); action != "" {
 		return action
@@ -947,34 +886,68 @@ func labNextAction(v labView, e domain.LabEntry) string {
 			// Waiting on something Grove has no card for.
 			return "Answer the agent in its pane"
 		}
-		return "Watch the agent"
+		return labWorkingAction(run)
+	}
+	failed := false
+	if run, ok := v.latestRun(e); ok {
+		failed = strings.EqualFold(run.workflow.Status, domain.WorkflowFailed)
 	}
 	switch {
+	case v.canShape(e) && e.Status == domain.LabStatusDraft:
+		return "Shape bug"
+	case v.canShape(e) && failed:
+		return "Retry shaping"
 	case v.canShape(e):
-		if e.Status == domain.LabStatusDraft {
-			return "Shape this bug into a report"
-		}
-		return "Resume shaping the bug report"
+		return "Resume shaping"
+	case v.canGrill(e) && e.Status == domain.LabStatusDraft:
+		return "Start grill"
+	case v.canGrill(e) && failed:
+		return "Retry grill"
 	case v.canGrill(e):
-		if e.Status == domain.LabStatusDraft {
-			return "Grill this idea"
-		}
-		return "Resume grilling this idea"
+		return "Resume grill"
 	case e.Editable():
 		return "Edit this capture"
 	default:
-		return "Inspect progress"
+		return "Nothing to do right now"
 	}
 }
 
-// openLabInspectorOnArtifacts opens the inspector on the selected entry's
-// Artifacts tab, for review.
-func (m *Model) openLabInspectorOnArtifacts() (tea.Model, tea.Cmd) {
-	updated, cmd := m.openLabInspector()
-	if inspector, ok := m.activeModal.(*modal.LabInspectorModal); ok {
-		inspector.ShowArtifacts()
+// labDraftNames names the drafts a session waits on approval for.
+var labDraftNames = map[string]string{
+	domain.LabSpecArtifact:    "spec",
+	domain.LabTicketsArtifact: "tickets",
+	domain.LabIssueArtifact:   "bug report",
+}
+
+// labPublishAction says what publishing e creates, such as "Publish 6
+// issues": the epic and its tickets, or the one bug issue.
+func labPublishAction(v labView, e domain.LabEntry) string {
+	if e.Mode != domain.LabModeGrill {
+		return "Publish the bug report"
 	}
-	return updated, cmd
+	if a, ok := v.talks[e.ID].labArtifact(domain.LabTicketsArtifact); ok {
+		if tickets, err := domain.ParseLabTickets(a.Body); err == nil {
+			return fmt.Sprintf("Publish %d issues", len(tickets)+1)
+		}
+	}
+	return "Publish the epic and its tickets"
+}
+
+// labWorkingStep is what a session's agent is doing, by the run's step.
+var labWorkingStep = map[string]string{
+	"Scout":     "Scouting the code…",
+	"Interview": "Interviewing…",
+	"Spec":      "Writing the spec…",
+	"Tickets":   "Writing the tickets…",
+	"Shape":     "Shaping the report…",
+}
+
+// labWorkingAction describes a working session; Enter shows its agent.
+func labWorkingAction(run labRun) string {
+	if doing, ok := labWorkingStep[run.workflow.CurrentStep]; ok {
+		return doing
+	}
+	return "Watch the agent"
 }
 
 // hasLiveSession reports whether e has a session that has not finished.

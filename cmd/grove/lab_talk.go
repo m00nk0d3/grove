@@ -169,32 +169,6 @@ func labAskAction(v labView, e domain.LabEntry) string {
 	return ""
 }
 
-// openLabAsk opens the card for what e's session is waiting on, and reports
-// whether there was one.
-func (m *Model) openLabAsk(e domain.LabEntry) bool {
-	ask, t := m.lab.ask(e)
-	switch ask {
-	case labAskQuestion:
-		pending := domain.LabPendingQuestions(t.questions)
-		position := ""
-		if len(pending) > 1 {
-			position = fmt.Sprintf("1 of %d", len(pending))
-		}
-		m.activeModal = modal.NewLabQuestionModal(e.ID, pending[0].Number, *pending[0].Question, position)
-	case labAskReply:
-		m.activeModal = modal.NewLabReplyModal(e.ID, t.session.Output)
-	case labAskPermission:
-		m.activeModal = modal.NewLabPermissionModal(e.ID, t.session.Output)
-	case labAskReview:
-		inspector := modal.NewLabInspectorModal(m.labInspectorState(e))
-		inspector.ShowArtifacts()
-		m.activeModal = inspector
-	default:
-		return false
-	}
-	return true
-}
-
 // labAnswerRecordedMsg reports an answer written, with the entry's questions
 // as they are after it.
 type labAnswerRecordedMsg struct {
@@ -235,9 +209,6 @@ func (m *Model) handleLabAnswerRecorded(msg labAnswerRecordedMsg) (tea.Model, te
 		}
 		m.lab.talks[msg.entryID] = t
 	}
-	if _, ok := m.activeModal.(*modal.LabQuestionModal); ok {
-		m.activeModal = nil
-	}
 	if p := m.lab.page; p != nil && p.entryID == msg.entryID {
 		// The page shows the next waiting card, if there is one.
 		p.revising, p.card = false, nil
@@ -250,11 +221,6 @@ func (m *Model) handleLabAnswerRecorded(msg labAnswerRecordedMsg) (tea.Model, te
 		}
 		m.statusErr = msg.err.Error()
 		return m, clearErrorCmd()
-	}
-	if e, ok := m.lab.entry(msg.entryID); ok && m.lab.page == nil {
-		if ask, _ := m.lab.ask(e); ask == labAskQuestion && m.openLabAsk(e) {
-			return m, nil
-		}
 	}
 	m.statusMsg = "Answer sent to the agent"
 	return m, clearMsgCmd()
@@ -270,8 +236,7 @@ type labRequestSentMsg struct {
 // handleLabRequestSubmitted writes a reply, change request, or permission
 // decision for the session runtime to deliver.
 func (m *Model) handleLabRequestSubmitted(msg modal.LabRequestSubmittedMsg) (tea.Model, tea.Cmd) {
-	switch m.activeModal.(type) {
-	case *modal.LabMessageModal, *modal.LabPermissionModal:
+	if _, ok := m.activeModal.(*modal.LabChangeModal); ok {
 		m.activeModal = nil
 	}
 	repoPath := m.RepoPath

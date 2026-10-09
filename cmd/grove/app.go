@@ -1188,27 +1188,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
-		case modal.LabArtifactsRequestedMsg:
-			return m, loadLabArtifactsCmd(m.RepoPath, msg.EntryID)
-		case modal.LabArtifactsLoadedMsg:
-			if inspector, ok := m.activeModal.(*modal.LabInspectorModal); ok {
-				inspector.SetArtifacts(msg)
-			}
-			return m, nil
-		case modal.LabOpenPaneMsg:
-			m.activeModal = nil
-			return m.openLabRunPane(msg.RunID)
-		case modal.LabArtifactReviewMsg:
-			return m.handleLabArtifactReview(msg)
-		case modal.LabPublishRequestedMsg:
-			e, ok := m.lab.entry(msg.EntryID)
-			if !ok {
-				return m, nil
-			}
-			m.activeModal = nil
-			return m.prepareLabPublish(e)
-		case modal.LabPublishConfirmedMsg:
-			return m.publishLabEntry(msg)
 		case modal.MissionReportsRequestedMsg:
 			return m, loadMissionReportsCmd(msg, m.RepoPath)
 		case modal.MissionReportsLoadedMsg:
@@ -1438,9 +1417,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.view == viewDashboard {
 					return m.openSelectedMissionInspector()
 				}
-				if m.view == viewLab {
-					return m.openLabInspector()
-				}
 			case "x", "X":
 				if m.view == viewDashboard {
 					return m.confirmSelectedWorkflowRemoval()
@@ -1580,9 +1556,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case labEditorClosedMsg:
 		if msg.err != nil {
 			m.statusErr = fmt.Sprintf("The editor exited with an error: %v", msg.err)
-			return m, tea.Batch(clearErrorCmd(), loadLabArtifactsCmd(m.RepoPath, msg.entryID))
+			return m, tea.Batch(clearErrorCmd(), loadLabTalksCmd(m.RepoPath, m.lab.entries))
 		}
-		return m, loadLabArtifactsCmd(m.RepoPath, msg.entryID)
+		return m, loadLabTalksCmd(m.RepoPath, m.lab.entries)
 
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
@@ -1758,7 +1734,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.missionState = &msg.state
 		m.lab.setMission(m.missionState)
 		m.syncLabPage()
-		m.refreshLabInspector()
 		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 		if len(missions) == 0 {
 			m.selectedMissionIdx = 0
@@ -1779,6 +1754,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case modal.LabAnswerSubmittedMsg:
 		return m.handleLabAnswerSubmitted(msg)
+
+	case modal.LabPublishConfirmedMsg:
+		return m.publishLabEntry(msg)
 
 	case modal.LabRequestSubmittedMsg:
 		return m.handleLabRequestSubmitted(msg)
@@ -3341,7 +3319,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
-	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEscalate, modal.ContextActionLabOpenIssue, modal.ContextActionLabClearLock, modal.ContextActionLabEnd,
+	case modal.ContextActionLabCapture, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEscalate, modal.ContextActionLabOpenIssue, modal.ContextActionLabClearLock, modal.ContextActionLabEnd,
 		modal.ContextActionLabPublish,
 		modal.ContextActionLabEdit, modal.ContextActionLabArchive,
 		modal.ContextActionLabRestore, modal.ContextActionLabDelete:

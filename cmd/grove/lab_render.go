@@ -119,9 +119,6 @@ func labDetail(v labView, e domain.LabEntry, now time.Time) string {
 	if stage := labStageLabel(v, e); stage != "" {
 		parts = append(parts, stage)
 	}
-	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
-		parts = append(parts, "Herdr "+run.paneID)
-	}
 	parts = append(parts, string(e.Kind), formatFinishedAt(e.Updated, now))
 	return strings.Join(parts, "  •  ")
 }

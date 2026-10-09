@@ -337,7 +337,7 @@ func TestLabPage_TicketsAreReviewedAsATree(t *testing.T) {
 	assert.Contains(t, ansi.Strip(m.View()), "The thinnest path.", "→ opens the selected ticket")
 
 	m, _ = press(t, m, "c")
-	change, ok := m.activeModal.(*modal.LabMessageModal)
+	change, ok := m.activeModal.(*modal.LabChangeModal)
 	require.True(t, ok, "c asks for changes, got %T", m.activeModal)
 	assert.Contains(t, change.View(), "02: ", "the request starts with the selected ticket")
 }
