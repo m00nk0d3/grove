@@ -42,6 +42,7 @@ import {
   buildAssignmentPointerPrompt,
   buildCompletionRetryPrompt,
   deliverablePrompt,
+  MAX_COMPLETION_ATTEMPTS,
   MAX_INLINE_PROMPT_CHARS,
   findMissingCompletionArtifacts,
   promptAgent,
@@ -99,6 +100,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
+  assertDeliverable,
   captureWorktreeState,
   createLeanReport,
   implementationSessionId,
@@ -554,6 +556,22 @@ test("agent startup recovers from a transient not-ready failure", () => {
     /blocked during startup/,
     "a failed wait must surface the original startup error",
   );
+});
+
+test("delivery refuses an empty worktree on an existing repository", () => {
+  // Dirty tree, committed progress, and brand-new repositories all pass.
+  assertDeliverable(" M cmd/grove/app.go", "abc123", "def456", "cmd/grove/app.go", "280");
+  assertDeliverable("", "abc123", "def456", "cmd/grove/app.go", "280");
+  assertDeliverable("", "abc123", "abc123", "", "280");
+  // Clean tree, nothing committed, tracked files present: loud failure.
+  assert.throws(
+    () => assertDeliverable("", "abc123", "abc123", "cmd/grove/app.go", "280"),
+    /produced no changes for issue #280/,
+  );
+});
+
+test("completion stages get a bounded retry budget", () => {
+  assert.equal(MAX_COMPLETION_ATTEMPTS, 3);
 });
 
 test("completion retry guidance matches the active backend", () => {

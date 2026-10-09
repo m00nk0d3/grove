@@ -217,6 +217,11 @@ function humanInputTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
 // either machine.
 export const MAX_INLINE_PROMPT_CHARS = 16_000;
 
+// How many times a settled stage is nudged to finish its artifacts before the
+// run fails. Flaky finishes outnumber refusals with local models, and every
+// attempt re-checks the same files, so retries converge rather than repeat.
+export const MAX_COMPLETION_ATTEMPTS = 3;
+
 export function buildAssignmentPointerPrompt(assignmentPath: string): string {
   return (
     "Your assignment is too large to send inline, so it is in a file.\n" +
@@ -387,13 +392,6 @@ export function runSpecialistInPane(options: SpecialistOptions): void {
     onAgentStatus,
   } = options;
   const launch = getAgentLaunchConfig();
-  // Override agent name with role for OpenCode agents to ensure correct specialist runs
-  if (launch.backend === "opencode") {
-    const agentIndex = launch.args.indexOf("--agent");
-    if (agentIndex !== -1 && agentIndex + 1 < launch.args.length) {
-      launch.args[agentIndex + 1] = role;
-    }
-  }
   if (launch.backend === "claude") {
     // A fresh worktree is a directory Claude has not seen, and its trust
     // dialog blocks the first prompt rather than the launch.
@@ -534,67 +532,61 @@ Use the Write tool with the absolute path for each artifact.
       completionArtifacts,
       completionValidator,
     );
-    if (completionProblems.length > 0 && launch.backend === "pi") {
-      console.log(
-        `\x1b[33m[Continuity]\x1b[0m ${role} settled without required output; compacting and retrying completion.`,
-      );
-      const compactionCursor = readContinuityEvents(compactionStatusPath).length;
-      promptAgent(
-        agentName,
-        "/compact Preserve the exact assignment, completed work, concrete evidence, validation results, required output paths, and remaining steps.",
-      );
-      waitForPiCompaction(compactionStatusPath, compactionCursor);
+    // A stage that settles without its artifacts is retried rather than
+    // failed: with local models the common shape is a flaky finish (one file
+    // written, then drift), not a refusal, and every attempt re-checks the
+    // same artifacts, so a retry can only complete what is missing.
+    for (
+      let attempt = 1;
+      attempt <= MAX_COMPLETION_ATTEMPTS && completionProblems.length > 0;
+      attempt++
+    ) {
+      if (launch.backend === "pi") {
+        console.log(
+          `\x1b[33m[Continuity]\x1b[0m ${role} settled without required output; compacting and retrying completion (attempt ${attempt} of ${MAX_COMPLETION_ATTEMPTS}).`,
+        );
+        const compactionCursor = readContinuityEvents(compactionStatusPath).length;
+        promptAgent(
+          agentName,
+          "/compact Preserve the exact assignment, completed work, concrete evidence, validation results, required output paths, and remaining steps.",
+        );
+        waitForPiCompaction(compactionStatusPath, compactionCursor);
 
-      const retryCursor = readContinuityEvents(compactionStatusPath).length;
-      const retryOutput = promptAgent(agentName, buildCompletionRetryPrompt(completionProblems, launch.backend), {
-        extraArgs: ["--wait", "--timeout", String(AGENT_TIMEOUT_MS)],
-      settleTimeoutMs: AGENT_TIMEOUT_MS,
-        onBlocked: () =>
-          onAgentStatus?.("blocked", `Waiting for input in pane ${paneId ?? "unknown"}`),
-        onResumed: () => onAgentStatus?.("working", `Executing ${role} stage`),
-        });
-      assertAgentSettled(retryOutput, `${role} completion retry`);
-      waitForPiAgentSettled(
-        compactionStatusPath,
-        AGENT_TIMEOUT_MS,
-        retryCursor,
-      );
+        const retryCursor = readContinuityEvents(compactionStatusPath).length;
+        const retryOutput = promptAgent(agentName, buildCompletionRetryPrompt(completionProblems, launch.backend), {
+          extraArgs: ["--wait", "--timeout", String(AGENT_TIMEOUT_MS)],
+        settleTimeoutMs: AGENT_TIMEOUT_MS,
+          onBlocked: () =>
+            onAgentStatus?.("blocked", `Waiting for input in pane ${paneId ?? "unknown"}`),
+          onResumed: () => onAgentStatus?.("working", `Executing ${role} stage`),
+          });
+        assertAgentSettled(retryOutput, `${role} completion retry`);
+        waitForPiAgentSettled(
+          compactionStatusPath,
+          AGENT_TIMEOUT_MS,
+          retryCursor,
+        );
+      } else {
+        console.log(
+          `\x1b[33m[Continuity]\x1b[0m ${role} settled without required output; prompting retry (attempt ${attempt} of ${MAX_COMPLETION_ATTEMPTS}).`,
+        );
+        const retryOutput = promptAgent(agentName, buildCompletionRetryPrompt(completionProblems, launch.backend), {
+          extraArgs: ["--wait", "--timeout", String(AGENT_TIMEOUT_MS)],
+        settleTimeoutMs: AGENT_TIMEOUT_MS,
+          onBlocked: () =>
+            onAgentStatus?.("blocked", `Waiting for input in pane ${paneId ?? "unknown"}`),
+          onResumed: () => onAgentStatus?.("working", `Executing ${role} stage`),
+          });
+        assertAgentSettled(retryOutput, `${role} completion retry`);
+      }
       completionProblems = getCompletionProblems(
         completionArtifacts,
         completionValidator,
-      );
-    } else if (completionProblems.length > 0 && launch.backend !== "pi") {
-      console.log(
-        `\x1b[33m[Continuity]\x1b[0m ${role} settled without required output; prompting retry.`,
-      );
-      const retryOutput = promptAgent(agentName, buildCompletionRetryPrompt(completionProblems, launch.backend), {
-        extraArgs: ["--wait", "--timeout", String(AGENT_TIMEOUT_MS)],
-      settleTimeoutMs: AGENT_TIMEOUT_MS,
-        onBlocked: () =>
-          onAgentStatus?.("blocked", `Waiting for input in pane ${paneId ?? "unknown"}`),
-        onResumed: () => onAgentStatus?.("working", `Executing ${role} stage`),
-        });
-      assertAgentSettled(retryOutput, `${role} completion retry`);
-
-      // Immediately re-check completion artifacts for non-Pi backends
-      const retryCursor = 0;
-
-      completionProblems = getCompletionProblems(
-        completionArtifacts,
-        completionValidator,
-      );
-    } else if (completionProblems.length > 0) {
-      console.log(
-        `\x1b[33m[Continuity]\x1b[0m ${role} settled without required output; throwing error.`,
-      );
-      // Unreachable for known backends; retained as a safety net
-      throw new Error(
-        `${role} did not satisfy completion requirements:\n${completionProblems.join("\n")}`,
       );
     }
     if (completionProblems.length > 0) {
       throw new Error(
-        `${role} did not satisfy completion requirements:\n${completionProblems.join("\n")}`,
+        `${role} did not satisfy completion requirements after ${MAX_COMPLETION_ATTEMPTS} attempts:\n${completionProblems.join("\n")}`,
       );
     }
   } finally {

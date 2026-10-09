@@ -35,6 +35,7 @@ import {
 } from "./project-board.js";
 import {
   collectChangedFiles,
+  filesOutsideAssignedScope,
   hasDocumentationSurface,
   planReviewPasses,
   resolveMaxReviewPasses,
@@ -140,6 +141,26 @@ export function captureWorktreeState(
     })
     .sort(([left], [right]) => left.localeCompare(right));
   return JSON.stringify({ trackedDiff, untracked });
+}
+
+// Delivery refuses an empty worktree on an existing repository: every stage
+// signing off on no changes is a pipeline failure, not a quiet success. The
+// one exception is a repository with no tracked files yet, where there was
+// genuinely nothing to change.
+export function assertDeliverable(
+  status: string,
+  head: string,
+  baseCommit: string,
+  trackedFiles: string,
+  issueNum: string,
+): void {
+  if (status.trim() || head !== baseCommit) return;
+  if (!trackedFiles.trim()) return;
+  throw new Error(
+    `Implementation produced no changes for issue #${issueNum}: the worktree ` +
+      `matches ${baseCommit} after every stage passed. Inspect the preserved ` +
+      `worktree, then resume once the change exists.`,
+  );
 }
 
 // An accusation with no evidence is unactionable: "the reviewer modified the
@@ -826,6 +847,24 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
       );
     };
 
+    // A change confined to another stack's project is the wrong change wearing
+    // the right workflow: refuse it loudly instead of reviewing, verifying,
+    // and delivering code that cannot satisfy the issue.
+    const requireScopeDiscipline = (stage: string): void => {
+      const outside = filesOutsideAssignedScope(
+        collectChangedFiles(targetDir),
+        stack,
+        projects,
+      );
+      if (outside.length > 0) {
+        throw new Error(
+          `Implementation left ${stage} with files outside the assigned ${stack} scope:\n` +
+            outside.map((file) => `- ${file}`).join("\n") +
+            `\nRemove them or move the change into scope, then resume.`,
+        );
+      }
+    };
+
     // Review specialists whose subject matter appears in only some diffs.
     // Selecting them from the changed files keeps an ordinary issue at the cost
     // it has today, while a migration or an authorization change still gets the
@@ -1223,7 +1262,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           ),
         ),
       );
-      await runStep("implementation", () =>
+      await runStep("implementation", () => {
         runSpecialist(
           `${stack.toLowerCase()}-implementer`,
           getImplementationPrompt(
@@ -1236,8 +1275,9 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
           [],
           undefined,
           implementerSessionId,
-        ),
-      );
+        );
+        requireScopeDiscipline("implementation");
+      });
       await runStep("verification", async () => {
         runSpecialist(
           "verifier",
@@ -1356,6 +1396,16 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
     await runStep("delivery", async () => {
       // Planning artifacts are scaffolding for the agents, not deliverables.
       removeAgentArtifacts();
+      // Backstop for anything that drifted out of scope after implementation
+      // (review fixes included): delivery never ships another stack's files.
+      requireScopeDiscipline("delivery");
+      assertDeliverable(
+        runCommand("git", ["status", "--porcelain"], { cwd: targetDir }),
+        runCommand("git", ["rev-parse", "HEAD"], { cwd: targetDir }),
+        state.baseCommit,
+        runCommand("git", ["ls-files"], { cwd: targetDir }),
+        issueNum,
+      );
       const status = runCommand("git", ["status", "--porcelain"], { cwd: targetDir });
       const head = runCommand("git", ["rev-parse", "HEAD"], { cwd: targetDir });
       if (!status && head !== state.baseCommit) {

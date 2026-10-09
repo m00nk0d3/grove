@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { runCommand, type CommandRunner } from "./workflow-utils.js";
 import type { ProfileConcern } from "./project-profile.js";
+import type { StackProject, TechStack } from "./stack-detector.js";
 
 // Specialists that review a finished implementation rather than produce it.
 // Each one costs an agent run, so a stage is only worth entering when the diff
@@ -108,6 +109,43 @@ export function collectChangedFiles(
     }
   }
   return [...files];
+}
+
+// filesOutsideAssignedScope reports changed files that belong to a project of
+// a different stack than the one assigned to this run. A nested project owns
+// its subtree alone: files under runtime/sandcastle/ belong to TYPESCRIPT
+// even when the repository root is GO, so a GO run that only touches the
+// website fails here instead of sailing through review of the wrong change.
+//
+// Files owned by no project at all (root-level docs, configs) always pass:
+// shared ground is legitimately touched by any stack. Agent scaffolding under
+// .agent/ is removed at delivery and never counts either.
+export function filesOutsideAssignedScope(
+  files: string[],
+  stack: TechStack,
+  projects: StackProject[],
+): string[] {
+  const ownedBy = (file: string): StackProject | undefined => {
+    const normalized = file.replace(/\\/g, "/");
+    let owner: StackProject | undefined;
+    for (const project of projects) {
+      const root = project.root.replace(/\\/g, "/");
+      const owns =
+        root === "" ||
+        normalized === root ||
+        normalized.startsWith(`${root}/`);
+      if (owns && (!owner || root.length > owner.root.length)) {
+        owner = project;
+      }
+    }
+    return owner;
+  };
+  return files.filter((file) => {
+    const normalized = file.replace(/\\/g, "/");
+    if (normalized.startsWith(".agent/")) return false;
+    const owner = ownedBy(normalized);
+    return !!owner && owner.stack !== stack;
+  });
 }
 
 // hasDocumentationSurface reports whether the repository keeps documentation
