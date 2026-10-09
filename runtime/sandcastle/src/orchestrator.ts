@@ -1089,7 +1089,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
             projects.map((project) => ({
               root: project.root,
               marker: project.marker,
-              label: stackLabel(project),
+              label: project.label ?? stackLabel(project),
               // Facts, read from the manifest. The prompt engineer decides what
               // they mean; it does not decide what they are.
               dependencies: readDirectDependencies(
