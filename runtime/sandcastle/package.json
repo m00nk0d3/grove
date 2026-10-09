@@ -24,7 +24,8 @@
     "start": "tsx src/orchestrator.ts",
     "test": "npm run build && node --test dist/*.test.js",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "lab-eval": "npm run build && node dist/lab-eval.js"
   },
   "keywords": [],
   "author": "",

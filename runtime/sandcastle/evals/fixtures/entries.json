@@ -1,0 +1,37 @@
+{
+  "description": "Lab evaluation fixtures, run against evals/fixtures/repo. The scripted user answers every card with its recommendation unless an override names the question; revisions re-answer an earlier question after a later one is answered. See src/lab-eval.ts.",
+  "fixtures": [
+    {
+      "name": "clear-feature",
+      "kind": "idea",
+      "sessions": ["grill"],
+      "text": "Import bookmarks from a browser HTML export\n\nUsers want `bookmarks import <file.html>` to read the Netscape bookmark HTML that browsers export and add each link, turning the folders it sits in into tags.",
+      "overrides": { "2": { "choices": [1] } },
+      "revisions": [{ "after": 4, "question": 1, "choices": [1] }]
+    },
+    {
+      "name": "vague-idea",
+      "kind": "idea",
+      "sessions": ["grill"],
+      "text": "Make bookmarks smarter",
+      "overrides": {},
+      "revisions": []
+    },
+    {
+      "name": "bug",
+      "kind": "bug",
+      "sessions": ["shape"],
+      "text": "Removing a bookmark deletes the wrong one\n\nI ran `bookmarks list`, then `bookmarks remove 1`, and a different bookmark disappeared.",
+      "overrides": {},
+      "revisions": []
+    },
+    {
+      "name": "escalation",
+      "kind": "bug",
+      "sessions": ["shape", "grill"],
+      "text": "Tags are lost when two commands run at once\n\nI tagged a bookmark from one terminal while a script was adding bookmarks in another, and the tag was gone afterwards.",
+      "overrides": {},
+      "revisions": []
+    }
+  ]
+}
