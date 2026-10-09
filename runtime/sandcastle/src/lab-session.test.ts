@@ -177,6 +177,34 @@ test("every stage prompt renders with every placeholder filled", () => {
   assert.ok(interview.includes(path.join(paths.questionsDir, "001.json")), "the first card's path is given");
 });
 
+test("a bug escalated to a grill carries its report and its shaping questions", () => {
+  const paths = labFixture();
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "lab-repo-"));
+  const report = "# Sync stalls on token expiry\n\n## Summary\nThe dashboard freezes.\n";
+  fs.writeFileSync(path.join(paths.artifactsDir, "issue.md"), report);
+  approve(paths, "issue.md");
+  fs.writeFileSync(paths.doneFile, "shape\n");
+  fs.mkdirSync(paths.questionsDir, { recursive: true });
+  for (const n of [1, 2]) {
+    const id = String(n).padStart(3, "0");
+    fs.writeFileSync(path.join(paths.questionsDir, `${id}.json`), JSON.stringify({
+      id: n, kind: "text", question: `Shaping question ${n}?`, context: "c", recommended: "x", why: "w",
+    }));
+    fs.writeFileSync(path.join(paths.questionsDir, `${id}.answer.json`), JSON.stringify({ id: n, text: `answer ${n}` }));
+  }
+
+  assert.equal(resumeStep("grill", paths, entry.id), "scout", "the grill starts from the beginning");
+  const records = scanQuestions(paths.questionsDir);
+  const scout = stageValues("scout", entry, repo, paths, "", records);
+  assert.equal(scout.shaped_report, report.trim(), "the scout reads the shaped report");
+  const interview = stageValues("interview", entry, repo, paths, "", records);
+  assert.match(interview.interview_so_far, /Q1\. Shaping question 1\? → "answer 1"/);
+  assert.match(interview.interview_so_far, /Q2\. Shaping question 2\? → "answer 2"/);
+  assert.equal(interview.next_question_number, "3", "numbering continues after the shaping questions");
+  assert.equal(stageValues("shape", entry, repo, paths, "", records).shaped_report, "(none)",
+    "a shaping stage is not given its own report as a prior one");
+});
+
 test("a repository can replace a stage prompt", () => {
   const paths = labFixture();
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "lab-repo-"));
@@ -423,6 +451,18 @@ test("a stage without review finishes once its output is valid", async () => {
   assert.equal(run.prompts.length, 1, "the missing notes were asked for once");
   assert.match(run.prompts[0], /^What you wrote has problems:\n- .*scout\.md was not written/);
   assert.match(run.prompts[0], /then write scout to /);
+});
+
+test("a card left open by shaping does not hold up a stage that does not ask", async () => {
+  const run = await stage("scout", [
+    { state: "working", act: card(1) },
+    { state: "idle", act: both(write(() => current.scoutFile, SCOUT), finish("scout")) },
+    { state: "idle", close: true },
+  ]);
+  assert.equal(run.outcome, "finished", "the scout finishes; the card waits for the interview");
+  assert.equal(run.prompts.length, 0, "nothing is delivered to the scout");
+  assert.ok(!run.sessions.some((state) => state.phase === "question"));
+  assert.equal(scanQuestions(current.questionsDir)[0].receipt, undefined, "the card is still open for the interview");
 });
 
 test("an interview that leaves topics open is sent back, unless the user ended it", async () => {

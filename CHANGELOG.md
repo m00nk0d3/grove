@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   CMD bootstrap is standalone, and Linux and Windows reinstall behavior runs in
   CI.
 
+### Fixed
+
+- **Lab escalation with a question open** — escalating a bug while its
+  shaping agent waited on a question card no longer holds the new grill's
+  Scout stage on that card. Only the stages that ask handle cards; the open
+  card is answered in Grove and reaches the Interview agent in its brief.
+
 ### Added
 
 - **Lab review on the entry page** — the fifth slice of the Lab redesign. A

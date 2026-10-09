@@ -713,6 +713,11 @@ Interview prompt is told they are already answered and are not to be asked
 again. Escalation is also available after the bug is published; the bug issue
 is kept and becomes a sub-issue of the new epic.
 
+Only the stages that ask — Interview and Shape — deal with question cards. A
+card the shaping agent left open stays open through Scout and can be
+answered in Grove meanwhile; the Interview agent receives it, answered or
+waiting, in its brief.
+
 ## Lifecycle end
 
 - **Archive** is available in any state and hides the entry from the active

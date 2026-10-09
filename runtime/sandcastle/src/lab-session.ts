@@ -504,7 +504,11 @@ export async function watchStage(
     }
     goneSince = null;
 
-    let records = deps.scanQuestions();
+    // Only a stage that asks deals with question cards. A card left open by
+    // an earlier stage, such as shaping before an escalation, waits for the
+    // next stage that asks; an answer given meanwhile is replayed in its brief.
+    const scan = () => (asks ? deps.scanQuestions() : []);
+    let records = scan();
     const done = () => deps.readDone() === stage;
 
     if (state === "working") {
@@ -540,7 +544,7 @@ export async function watchStage(
               deps.writeQuestionReceipt(record.number, { revision: 0, via: "pane", sent_at: stamp() });
             }
           }
-          records = deps.scanQuestions();
+          records = scan();
         }
       }
     }
