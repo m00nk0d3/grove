@@ -133,7 +133,7 @@ export const PI_COMPACTION_GUARD_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "pi-compaction-guard.js",
 );
-const AGENT_CONTINUITY_PROMPT =
+export const AGENT_CONTINUITY_PROMPT =
   "Agent-flow continuity contract: context compaction is lossy. After any " +
   "compaction, follow the injected recovery message, treat the exact original " +
   "assignment and filesystem/Git state as authoritative, re-read durable " +
