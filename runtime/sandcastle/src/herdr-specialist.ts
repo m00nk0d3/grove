@@ -135,8 +135,9 @@ Tool calls are structured data, not a terminal: NEVER emit a raw line break
 inside a tool call. Type backslash-n (\\n) wherever the file needs a new line;
 it arrives as a real line break, while a raw line break is a syntax error and
 the write fails silently. The quoted heredoc delimiter disables expansion, so
-$, backticks and quotes in the content are safe. Never use echo for multi-line
-content. Then verify every file before reporting done:
+$, backticks and quotes in the content are safe. Do not use the Write tool for
+these files (it mangles multi-line content on some backends) and never use
+echo for multi-line content. Then verify every file before reporting done:
   ls -l "/abs/path/to/artifact.md" && wc -l "/abs/path/to/artifact.md"
 A file you have not verified does not exist; never report it as written.`;
   return `The previous turn stopped without satisfying these completion requirements:
@@ -424,9 +425,10 @@ Tool calls are structured data, not a terminal: NEVER emit a raw line break
 inside a tool call. Type backslash-n (\\n) wherever the file needs a new line;
 it arrives as a real line break, while a raw line break is a syntax error and
 the write fails silently. The quoted heredoc delimiter disables expansion, so
-$, backticks and quotes in the content are safe. Never use echo for multi-line
-content. Then verify every file: ls -l "<path>" && wc -l "<path>". A file you
-have not verified does not exist; never report it as written.
+$, backticks and quotes in the content are safe. Do not use the Write tool for
+these files and never use echo for multi-line content. Then verify every file:
+ls -l "<path>" && wc -l "<path>". A file you have not verified does not exist;
+never report it as written.
 `;
   } else if (launch.backend === "claude") {
     effectivePrompt = effectivePrompt + `

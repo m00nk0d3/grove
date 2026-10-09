@@ -28,8 +28,8 @@ Code organization standard:
 // stated once here and referenced by every prompt that writes files.
 const ARTIFACT_WRITING_GUIDE = `
 How to write artifact files (mechanical, follow exactly):
-- If a Write tool is available, use it with the absolute path. Otherwise use
-  the shell, one heredoc per file.
+- Use the shell, one heredoc per file. The Write tool mangles multi-line
+  content for some backends, so it is the fallback, not the default.
 - NEVER emit a raw line break inside a tool call. Type backslash-n (\\n)
   wherever the file needs a new line; it arrives as a real line break, while
   a raw line break is a syntax error and the write fails silently.
