@@ -129,8 +129,16 @@ export function buildCompletionRetryPrompt(
   const artifactGuidance =
     backend === "claude"
       ? `Write each artifact with the Write tool, using its absolute path.`
-      : `If you're using OpenCode (API-based agent), write each artifact using bash commands like:
-  echo '{"key":"value"}' > "/abs/path/to/artifact.json"`;
+      : `Write each artifact with one heredoc per file, using its absolute path:
+  cat > "/abs/path/to/artifact.md" <<'EOF'\\n<content, with \\n for every line break>\\nEOF
+Tool calls are structured data, not a terminal: NEVER emit a raw line break
+inside a tool call. Type backslash-n (\\n) wherever the file needs a new line;
+it arrives as a real line break, while a raw line break is a syntax error and
+the write fails silently. The quoted heredoc delimiter disables expansion, so
+$, backticks and quotes in the content are safe. Never use echo for multi-line
+content. Then verify every file before reporting done:
+  ls -l "/abs/path/to/artifact.md" && wc -l "/abs/path/to/artifact.md"
+A file you have not verified does not exist; never report it as written.`;
   return `The previous turn stopped without satisfying these completion requirements:
 ${problems.map((problem) => `- ${problem}`).join("\n")}
 

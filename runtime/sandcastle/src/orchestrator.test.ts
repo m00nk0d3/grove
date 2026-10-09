@@ -561,13 +561,20 @@ test("completion retry guidance matches the active backend", () => {
     buildCompletionRetryPrompt(["Missing artifact"], "claude"),
     /Write tool/,
   );
+  // Shell guidance must be JSON-safe: a raw line break inside a tool call is
+  // a syntax error several runs died on, so the retry teaches heredocs with
+  // backslash-n escapes and a verify step instead of the old echo example.
   assert.match(
     buildCompletionRetryPrompt(["Missing artifact"], "opencode"),
-    /echo '\{"key":"value"\}'/,
+    /NEVER emit a raw line break/,
+  );
+  assert.match(
+    buildCompletionRetryPrompt(["Missing artifact"], "opencode"),
+    /wc -l/,
   );
   assert.match(
     buildCompletionRetryPrompt(["Missing artifact"]),
-    /echo '\{"key":"value"\}'/,
+    /NEVER emit a raw line break/,
   );
 });
 
@@ -856,6 +863,36 @@ test("verifier rejects behavioral diffs with zero test delta", () => {
   );
 
   assert.match(verifier, /zero test delta fails/i);
+});
+
+test("file-writing specialists teach JSON-safe artifact writes", () => {
+  // Local models emit raw line breaks inside tool calls, which is a syntax
+  // error that fails the write while looking like a heredoc; every prompt
+  // that produces files must carry the rule and the verify step.
+  const planner = SPECIALISTS.PLANNER(
+    TS_PERSONA,
+    "42",
+    "owner/repo",
+    ".agent/issue-42/REQUIREMENTS.md",
+    ".agent/issue-42/CONTEXT.md",
+    ".agent/issue-42/PLAN.md",
+  );
+  const promptEngineer = SPECIALISTS.PROMPT_ENGINEER(
+    "owner/repo",
+    ".agent/profile.draft.json",
+    [],
+    [],
+  );
+  const leanPlanner = SPECIALISTS.LEAN_PLANNER(
+    TS_PERSONA,
+    "42",
+    "owner/repo",
+    ".agent/issue-42/LEAN_PLAN.md",
+  );
+  for (const prompt of [planner, promptEngineer, leanPlanner]) {
+    assert.match(prompt, /NEVER emit a raw line break/);
+    assert.match(prompt, /wc -l/);
+  }
 });
 
 test("lean specialists have distinct planning, implementation, and review contracts", () => {

@@ -20,6 +20,26 @@ Code organization standard:
 - If safe refactoring is not practical or useful, preserve the cohesive implementation.
 `;
 
+// Every prompt below that produces a file artifact shares one mechanical rule.
+// Tool calls travel as structured data, not a terminal: a raw line break
+// inside a tool call is a syntax error and the write fails while looking
+// exactly like the heredoc the author meant to send. Several runs died this
+// way — the agent then reported artifacts it never wrote — so the rule is
+// stated once here and referenced by every prompt that writes files.
+const ARTIFACT_WRITING_GUIDE = `
+How to write artifact files (mechanical, follow exactly):
+- If a Write tool is available, use it with the absolute path. Otherwise use
+  the shell, one heredoc per file.
+- NEVER emit a raw line break inside a tool call. Type backslash-n (\\n)
+  wherever the file needs a new line; it arrives as a real line break, while
+  a raw line break is a syntax error and the write fails silently.
+- Shape: cat > '<absolute path>' <<'EOF'\\n<file content, \\n for line breaks>\\nEOF
+  The quoted delimiter disables expansion, so $, backticks and quotes in the
+  content are safe. Never use echo for multi-line content.
+- Verify every file before finishing: ls -l '<path>' && wc -l '<path>'. A file
+  you have not verified does not exist. Never claim otherwise.
+`;
+
 // Keyed on the known stacks only. A project this runtime does not recognise has
 // no honest built-in persona, and inventing one is the bug this table caused:
 // a Rust repository was told it was being edited by a TypeScript engineer.
@@ -412,7 +432,7 @@ Completion criteria:
   empty string, so a project listed as 'root ""' takes "root": "" — never its
   label, and never the words "the repository root". 'root' is a path and
   'label' is the uppercase stack name; swapping them fails validation.
-`;
+${ARTIFACT_WRITING_GUIDE}`;
   },
 
   LEAN_PLANNER: (
@@ -443,7 +463,7 @@ Boundaries:
 
 Completion criteria:
 - '${leanPlanPath}' is the only new or modified artifact and contains enough evidence for implementation and independent review.
-`,
+${ARTIFACT_WRITING_GUIDE}`,
 
   LEAN_IMPLEMENTER: (
     persona: string,
@@ -513,7 +533,7 @@ Boundaries:
 
 Completion criteria:
 - '${completionPath}' contains the required completion JSON. A missing, malformed, or non-complete signal fails the stage.
-`,
+${ARTIFACT_WRITING_GUIDE}`,
 
   IMPLEMENTER_REVIEW_FIXES: (
     persona: string,
@@ -635,7 +655,7 @@ Boundaries:
 Completion criteria:
 - All three artifacts exist, agree with each other, and trace back to the
   issue's acceptance criteria with concrete file paths and commands.
-`,
+${ARTIFACT_WRITING_GUIDE}`,
 
   TEST_ENGINEER: (
     persona: string,
@@ -757,7 +777,7 @@ Completion criteria:
 - '${verdictPath}' contains the required JSON, every checklist point above is
   accounted for in reviewedAreas, and every blocker names a concrete location,
   impact and fix.
-`,
+${ARTIFACT_WRITING_GUIDE}`,
   DOCUMENTATION_SPECIALIST: (
     persona: string,
     issueNum: string,
@@ -976,7 +996,7 @@ Boundaries:
 Completion criteria:
 - '${reportPath}' is a detailed standalone implementation report suitable for a pull request body and terminal handoff.
 - '${prTitlePath}' holds exactly one line: the pull request title.
-`,
+${ARTIFACT_WRITING_GUIDE}`,
 
   PR_REVIEWER: (
     persona: string,
@@ -1018,7 +1038,7 @@ Completion criteria:
 - The verdict is detailed and evidence-based.
 - An approved verdict leaves the worktree clean.
 - A blockers verdict contains actionable evidence for the implementation specialist and leaves source files unchanged.
-`,
+${ARTIFACT_WRITING_GUIDE}`,
 };
 
 export function getImplementationPrompt(
