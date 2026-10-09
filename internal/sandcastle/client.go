@@ -191,7 +191,7 @@ func (c *sandcastleClient) StartWorkflow(ctx context.Context, req StartWorkflowR
 
 	// Ensure OpenCode model is set for opencode agent
 if strings.EqualFold(c.config.DefaultAgent, "opencode") {
-    os.Setenv("AGENT_FLOW_OPENCODE_MODEL", "openai/gpt-oss-20b")
+    os.Setenv("AGENT_FLOW_OPENCODE_MODEL", "lmstudio/openai/gpt-oss-20b")
 }
 stderr, stdout, err := c.runCommand(ctx, args...)
 	if err != nil {
