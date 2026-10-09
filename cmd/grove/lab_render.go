@@ -12,19 +12,15 @@ import (
 
 // Rows the Lab list draws around its entries.
 const (
-	labBannerRows  = 3 // tabs, kind filter, spacing
-	labHintRows    = 2 // divider and key hints
+	labBannerRows  = 2 // header and spacing
+	labHintRows    = 2 // spacing and key hints
 	labRowsPerItem = 2
 )
 
-var labTabShortLabels = [labTabCount]string{"WORKING", "INBOX", "ISSUES", "ARCHIVE"}
+var labEmptyMessage = "Nothing here yet. Press c to capture an idea or report a bug."
 
-var labEmptyMessages = [labTabCount]string{
-	"Nothing needs attention and no agents are working.",
-	"Nothing captured. Press c to add an idea or report a bug.",
-	"No issues created from the Lab yet.",
-	"Nothing archived.",
-}
+// labEmptyArchive explains an empty archive.
+const labEmptyArchive = "Nothing archived. Press 0 to go back to the active entries."
 
 // labTone is the color family an entry's state is drawn in.
 type labTone int
@@ -55,6 +51,18 @@ func labStateOf(v labView, e domain.LabEntry) labState {
 			return labState{"◆", "WAITING ON YOU", labToneAttention}
 		case domain.WorkflowFailed:
 			return labState{"✗", "FAILED", labToneAttention}
+		}
+	}
+	// Whatever is listed under NEEDS YOU looks it: a card waiting while the
+	// agent works on, or a session that stopped before publishing.
+	// An entry whose run Grove has not heard of yet, just started or with
+	// Sandcastle unreachable, keeps its status rather than claiming to wait.
+	_, runKnown := v.latestRun(e)
+	if v.groupOf(e) == labGroupNeedsYou && (runKnown || len(e.Runs) == 0) {
+		return labState{"◆", "WAITING ON YOU", labToneAttention}
+	}
+	if run, ok := v.latestRun(e); ok {
+		switch strings.ToLower(run.workflow.Status) {
 		case domain.WorkflowQueued, domain.WorkflowRunning:
 			return labState{"●", strings.ToUpper(string(e.Status)), labToneActive}
 		}
@@ -118,33 +126,23 @@ func labDetail(v labView, e domain.LabEntry, now time.Time) string {
 	return strings.Join(parts, "  •  ")
 }
 
-// renderLabTabs renders the lifecycle tabs with their entry counts, falling
-// back to shorter labels when the full ones do not fit.
-func renderLabTabs(v labView, theme styles.Theme, width int) string {
+// renderLabHeader renders the title, the kind filter, and the archive toggle.
+func renderLabHeader(v labView, theme styles.Theme, width int) string {
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent())).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
-	build := func(labels [labTabCount]string, hint bool) string {
-		var b strings.Builder
-		b.WriteString(accent.Render("⌁ LAB"))
-		for tab := labTab(0); tab < labTabCount; tab++ {
-			style := muted
-			if tab == v.tab {
-				style = accent
-			}
-			b.WriteString("  ")
-			b.WriteString(style.Render(fmt.Sprintf("[ %s %02d ]", labels[tab], len(v.visibleIn(tab)))))
-		}
-		if hint {
-			b.WriteString(muted.Render("   [ / ] switch"))
-		}
-		return b.String()
+	title := accent.Render("⌁ LAB")
+	if v.archived {
+		title += accent.Render(" › ARCHIVE")
 	}
-	for _, candidate := range []string{build(labTabLabels, true), build(labTabLabels, false), build(labTabShortLabels, false)} {
-		if lipgloss.Width(candidate) <= width {
-			return candidate
-		}
+	archive := fmt.Sprintf("0 archive (%d)", v.archivedCount())
+	if v.archived {
+		archive = "0 back to active"
 	}
-	return build(labTabShortLabels, false)
+	line := title + "   " + renderLabFilter(v, theme) + muted.Render("  ·  "+archive)
+	if lipgloss.Width(line) > width {
+		line = title + "   " + renderLabFilter(v, theme)
+	}
+	return line
 }
 
 // renderLabFilter renders the kind filter, highlighting the active one.
@@ -171,8 +169,8 @@ func renderLabFilter(v labView, theme styles.Theme) string {
 	return muted.Render("Show  ") + strings.Join(parts, muted.Render("  ·  "))
 }
 
-// renderLab renders the Lab list: lifecycle tabs, the kind filter, and two
-// rows per entry.
+// renderLab renders the Lab list: the header, then the entries grouped by
+// what they need, two rows each, under a heading per group.
 func renderLab(v labView, theme styles.Theme, listInner, panelHeight int, focused bool) string {
 	if v.page != nil {
 		st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
@@ -190,48 +188,29 @@ func renderLab(v labView, theme styles.Theme, listInner, panelHeight int, focuse
 	now := time.Now()
 
 	var b strings.Builder
-	b.WriteString(renderLabTabs(v, theme, listInner))
-	b.WriteString("\n")
-	b.WriteString(renderLabFilter(v, theme))
+	b.WriteString(renderLabHeader(v, theme, listInner))
 	b.WriteString("\n\n")
 
-	entries := v.visible()
-	start, count := 0, len(entries)
-	if panelHeight > 0 {
-		start, count = listWindow(panelHeight-labBannerRows-labHintRows, labRowsPerItem, len(entries), v.cursor)
-	}
-	listWidth := listInner - scrollbarWidth(len(entries), count)
-	// Badges share one column, as wide as the widest one on screen. A row is
-	// cursor (2), marker (1), two gaps (2 + 2), title, and badge.
-	badgeWidth := 0
-	for i := start; i < start+count; i++ {
-		badgeWidth = max(badgeWidth, lipgloss.Width(labStateOf(v, entries[i]).badge))
-	}
-	titleWidth := max(12, listWidth-badgeWidth-7)
-	var rows strings.Builder
-	for i := start; i < start+count; i++ {
-		e := entries[i]
-		state := labStateOf(v, e)
-		cursor := "  "
-		if focused && i == v.cursor {
-			cursor = "> "
+	items := v.items()
+	lines, starts := renderLabItems(v, items, theme, listInner, focused, now)
+	if len(items) == 0 {
+		message := labEmptyMessage
+		if v.archived {
+			message = labEmptyArchive
 		}
-		style := state.style(theme)
-		rows.WriteString(fmt.Sprintf("%s%s  %-*s  %s\n",
-			cursor,
-			style.Render(state.marker),
-			titleWidth,
-			truncateStr(e.Title(), titleWidth),
-			style.Render(state.badge),
-		))
-		rows.WriteString(muted.Render("     " + truncateStr(labDetail(v, e, now), max(1, listWidth-5))))
-		rows.WriteString("\n")
-	}
-	if count > 0 {
-		b.WriteString(attachScrollbar(strings.TrimRight(rows.String(), "\n"), 0, len(entries), count, start, theme))
+		b.WriteString(muted.Render("  ◌ " + message))
 		b.WriteString("\n")
 	} else {
-		b.WriteString(muted.Render("  ◌ " + labEmptyMessages[v.tab]))
+		start, count := 0, len(lines)
+		if panelHeight > 0 {
+			start, count = labLineWindow(len(lines), panelHeight-labBannerRows-labHintRows, starts, v.cursor)
+		}
+		if scrollbarWidth(len(lines), count) > 0 {
+			// Draw again one column narrower, leaving room for the scrollbar.
+			lines, _ = renderLabItems(v, items, theme, listInner-1, focused, now)
+		}
+		body := strings.Join(lines[start:start+count], "\n")
+		b.WriteString(attachScrollbar(body, 0, len(lines), count, start, theme))
 		b.WriteString("\n")
 	}
 
@@ -244,13 +223,102 @@ func renderLab(v labView, theme styles.Theme, listInner, panelHeight int, focuse
 	}
 	b.WriteString("\n")
 	primary := "↵ capture your first item"
-	if e, ok := v.selected(); ok {
-		primary = "↵ " + labNextAction(v, e)
+	if it, ok := v.selectedItem(); ok {
+		primary = "↵ open"
+		if it.more > 0 {
+			primary = "↵ show every done entry"
+		}
 	}
-	b.WriteString(muted.Render(truncateStr(primary+"  •  c new  •  v details  •  a more  •  [ / ] lane", listInner)))
+	b.WriteString(muted.Render(truncateStr(primary+"  •  c new  •  1-3 kind  •  0 archive  •  a more", listInner)))
 	content := clipContent(b.String(), 0, panelHeight)
 	st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
 	return theme.RenderPanel(st, content)
+}
+
+// renderLabItems draws every row of the list and returns the lines with the
+// index of each item's first line.
+func renderLabItems(v labView, items []labItem, theme styles.Theme, width int, focused bool, now time.Time) ([]string, []int) {
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
+	heading := func(g labGroup) lipgloss.Style {
+		color := theme.Muted()
+		switch g {
+		case labGroupNeedsYou:
+			color = theme.Warning()
+		case labGroupWorking:
+			color = theme.Accent()
+		case labGroupDone:
+			color = theme.Success()
+		}
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+	}
+	// Badges share one column, as wide as the widest one listed. A row is
+	// cursor (2), marker (1), two gaps (2 + 2), title, and badge.
+	badgeWidth := 0
+	for _, it := range items {
+		if it.more == 0 {
+			badgeWidth = max(badgeWidth, lipgloss.Width(labStateOf(v, it.entry).badge))
+		}
+	}
+	titleWidth := max(12, width-badgeWidth-7)
+
+	var lines []string
+	starts := make([]int, len(items))
+	last := labGroup(-1)
+	for i, it := range items {
+		if it.group != last {
+			if last >= 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, heading(it.group).Render(fmt.Sprintf("%s  %d", labGroupLabels[it.group], v.groupCount(it.group))))
+			last = it.group
+		}
+		starts[i] = len(lines)
+		cursor := "  "
+		if focused && i == v.cursor {
+			cursor = "> "
+		}
+		if it.more > 0 {
+			lines = append(lines, cursor+muted.Render(fmt.Sprintf("… %d more done — Enter to show them", it.more)))
+			continue
+		}
+		e := it.entry
+		state := labStateOf(v, e)
+		style := state.style(theme)
+		lines = append(lines,
+			fmt.Sprintf("%s%s  %-*s  %s", cursor, style.Render(state.marker), titleWidth, truncateStr(e.Title(), titleWidth), style.Render(state.badge)),
+			muted.Render("     "+truncateStr(labDetail(v, e, now), max(1, width-5))),
+		)
+	}
+	return lines, starts
+}
+
+// labLineWindow returns the lines to show of total: as many as fit in
+// available, keeping the selected item, and the heading just above it,
+// in view.
+func labLineWindow(total, available int, starts []int, selected int) (start, count int) {
+	if available < 1 {
+		available = 1
+	}
+	if total <= available {
+		return 0, total
+	}
+	if selected < 0 || selected >= len(starts) {
+		return 0, available
+	}
+	first := starts[selected]
+	end := first + labRowsPerItem
+	if selected+1 < len(starts) && starts[selected+1] < end {
+		end = starts[selected+1]
+	}
+	start = max(0, first-1) // keep the group heading in view when it is right above
+	if end-start > available {
+		start = first
+	}
+	if end > start+available {
+		start = end - available
+	}
+	start = min(start, total-available)
+	return start, available
 }
 
 // labIssuesSummary describes an entry's published issues.

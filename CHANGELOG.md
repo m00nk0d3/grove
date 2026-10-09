@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Lab list grouped by what entries need** — the fourth slice of the Lab
+  redesign. The `WORKING`, `INBOX`, `ISSUES`, and `ARCHIVE` lanes and the
+  `[` and `]` keys are replaced by one list in four groups: *NEEDS YOU* (a
+  question, reply, permission, or draft waiting; ready to publish; a failed or
+  stopped session), longest waiting first; *WORKING*; *NOT STARTED*; and
+  *DONE*, which shows the five latest published entries until its last row is
+  opened. Everything listed under *NEEDS YOU* is marked *Waiting on you*. `0`
+  shows the archive and returns from it; `1`, `2`, and `3` still filter by
+  kind.
 - **Lab entry page** — the third slice of the Lab redesign. Enter on a Lab
   entry opens its page in place of the list: a stepper of the session's
   steps, with interview coverage such as `Interview 6/9`; a panel for what the

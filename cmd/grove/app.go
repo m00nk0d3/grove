@@ -1459,16 +1459,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedMissionIdx = 0
 					return m, nil
 				}
-				if m.view == viewLab {
-					if msg.String() == "[" {
-						m.lab.setTab(m.lab.tab - 1)
-					} else {
-						m.lab.setTab(m.lab.tab + 1)
-					}
-					m.ctxScrollOffset = 0
-					m.contextActionIdx = 0
-					return m, nil
-				}
 			case "w", "W":
 				m.view = viewWorktrees
 				m.ctxScrollOffset = 0
@@ -1507,6 +1497,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "/":
 				return m, m.openFuzzyCmd()
+			case "0":
+				if m.view == viewLab {
+					m.lab.setArchived(!m.lab.archived)
+					m.ctxScrollOffset = 0
+					m.contextActionIdx = 0
+				}
 			case "1", "2", "3":
 				if m.view == viewLab {
 					filters := map[string]domain.LabFilter{"1": domain.LabFilterAll, "2": domain.LabFilterIdea, "3": domain.LabFilterBug}

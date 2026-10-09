@@ -74,7 +74,7 @@ var keybindingGroups = []bindingGroup{
 			{"Enter", "Open the entry's page"},
 			{"v / V", "Inspect progress, artifacts, and original capture"},
 			{"a / A", "Actions: publish, shape, grill, escalate, open issue, end session, archive"},
-			{"[ / ]", "Switch lane: working, inbox, issues, archive"},
+			{"0", "Show the archive, or go back to the active entries"},
 			{"1", "Filter: All entries"},
 			{"2", "Filter: Ideas only"},
 			{"3", "Filter: Bugs only"},

@@ -44,7 +44,6 @@ func labTalkModel(t *testing.T, status string) (*Model, *data.LabStore, domain.L
 	m := newLabModel(t)
 	m.lab.entries = []domain.LabEntry{e}
 	m.lab.setMission(labMissionState(map[string]string{"run-1": status}))
-	m.lab.setTab(labTabActive)
 	return m, store, e
 }
 

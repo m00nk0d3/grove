@@ -132,7 +132,6 @@ func publishModel(t *testing.T, approved bool) (*Model, *data.LabStore, domain.L
 	e := shapedEntry(t, store, approved)
 	m := newLabModel(t)
 	m.lab.entries, _ = store.Load()
-	m.lab.setTab(labTabActive)
 	return m, store, e
 }
 
@@ -181,7 +180,7 @@ func TestLabPublish_PreviewThenPublish(t *testing.T) {
 	assert.Equal(t, domain.LabStatusPublished, stored[0].Status)
 	assert.FileExists(t, filepath.Join(store.EntryDir(e.ID), "run-1.close"), "the session is ended")
 	assert.NoFileExists(t, filepath.Join(store.EntryDir(e.ID), "session.lock"))
-	assert.Equal(t, labTabPublished, m.lab.tab)
+	assert.Equal(t, labGroupDone, m.lab.groupOf(stored[0]))
 	assert.Contains(t, m.statusMsg, "as #251 in m00nk0d3/grove")
 }
 
@@ -419,7 +418,6 @@ func epicModel(t *testing.T, gh *fakeGitHub, approveTickets bool) (*Model, *data
 	e := grilledEntry(t, store, approveTickets)
 	m := newLabModel(t)
 	m.lab.entries, _ = store.Load()
-	m.lab.setTab(labTabActive)
 	return m, store, e
 }
 
@@ -569,7 +567,6 @@ func TestLab_EscalateShapingBugHandsOverToGrill(t *testing.T) {
 	require.NoError(t, store.Put(e))
 	m.lab.entries, _ = store.Load()
 	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowBlocked}))
-	m.lab.setTab(labTabActive)
 
 	assert.Contains(t, labelsOf(labContextActions(m.lab)), "Escalate to grill")
 	updated, cmd := m.handleLabAction(modal.ContextActionLabEscalate)
@@ -593,7 +590,6 @@ func TestLab_EscalatePublishedBugKeepsItsIssue(t *testing.T) {
 	e.Issues.Issue = &bug
 	require.NoError(t, store.Put(e))
 	m.lab.entries, _ = store.Load()
-	m.lab.setTab(labTabPublished)
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabEscalate)
 	updated.(*Model).Update(cmd())
@@ -632,7 +628,6 @@ func TestLabPublishEpic_EscalatedBugBecomesSubIssue(t *testing.T) {
 	require.NoError(t, store.Put(e))
 	m := newLabModel(t)
 	m.lab.entries, _ = store.Load()
-	m.lab.setTab(labTabActive)
 
 	updated, cmd := m.handleLabAction(modal.ContextActionLabPublish)
 	m = step(t, updated.(*Model), cmd)

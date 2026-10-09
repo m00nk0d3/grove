@@ -16,41 +16,17 @@ import (
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 )
 
-// labTab is one of the Lab list's lifecycle tabs.
-type labTab int
-
-const (
-	labTabActive labTab = iota
-	labTabDrafts
-	labTabPublished
-	labTabArchived
-	labTabCount
-)
-
-var labTabLabels = [labTabCount]string{"WORKING", "INBOX", "ISSUES", "ARCHIVE"}
-
-// labTabOf returns the tab that lists e.
-func labTabOf(e domain.LabEntry) labTab {
-	switch {
-	case e.Archived:
-		return labTabArchived
-	case e.Status == domain.LabStatusDraft:
-		return labTabDrafts
-	case e.Status == domain.LabStatusPublished:
-		return labTabPublished
-	default:
-		return labTabActive
-	}
-}
-
 // labView is the Lab tab's state: every entry of the repository and what the
 // list shows of them. The cursor indexes visible(), so the entry drawn as
 // selected is the entry acted on.
 type labView struct {
 	entries []domain.LabEntry
-	tab     labTab
-	filter  domain.LabFilter
-	cursor  int
+	// archived shows the archive instead of the active groups.
+	archived bool
+	// doneExpanded shows every published entry, not only the latest.
+	doneExpanded bool
+	filter       domain.LabFilter
+	cursor       int
 	// runs holds the Sandcastle runs of the repository by run ID, refreshed
 	// with mission control state. An entry's session state is read from its
 	// runs here, never stored on the entry.
@@ -142,34 +118,157 @@ func (v labView) waiting(e domain.LabEntry) bool {
 	return ok && run.waiting()
 }
 
-// visibleIn returns the entries in tab that match the kind filter: entries
-// waiting for the user first, then newest first.
-func (v labView) visibleIn(tab labTab) []domain.LabEntry {
-	var out []domain.LabEntry
+// labGroup is a section of the Lab list. Entries are grouped by what they
+// need from the user, so the list reads as a to-do list. See
+// docs/LAB_DESIGN.md, "List".
+type labGroup int
+
+const (
+	labGroupNeedsYou labGroup = iota
+	labGroupWorking
+	labGroupNotStarted
+	labGroupDone
+	labGroupArchived
+	labGroupCount
+)
+
+var labGroupLabels = [labGroupCount]string{"NEEDS YOU", "WORKING", "NOT STARTED", "DONE", "ARCHIVED"}
+
+// labDoneShown is how many published entries the list shows before the row
+// that reveals the rest.
+const labDoneShown = 5
+
+// groupOf returns the group that lists e.
+func (v labView) groupOf(e domain.LabEntry) labGroup {
+	switch {
+	case e.Archived:
+		return labGroupArchived
+	case e.Status == domain.LabStatusPublished:
+		return labGroupDone
+	}
+	run, hasRun := v.latestRun(e)
+	if ask, _ := v.ask(e); ask != labAskNone {
+		return labGroupNeedsYou
+	}
+	if hasRun && run.live() {
+		if run.waiting() {
+			return labGroupNeedsYou
+		}
+		return labGroupWorking
+	}
+	if hasRun && strings.EqualFold(run.workflow.Status, domain.WorkflowFailed) {
+		return labGroupNeedsYou
+	}
+	if e.Status == domain.LabStatusDraft {
+		return labGroupNotStarted
+	}
+	// A session that stopped before publishing: ready to publish, to resume,
+	// or to retry.
+	return labGroupNeedsYou
+}
+
+// waitingSince is when e started waiting on the user, for putting the
+// longest wait first.
+func (v labView) waitingSince(e domain.LabEntry) time.Time {
+	if run, ok := v.latestRun(e); ok && !run.workflow.UpdatedAt.IsZero() {
+		return run.workflow.UpdatedAt
+	}
+	return e.Updated
+}
+
+// labItem is one selectable row of the list: an entry, or, when more is
+// positive, the row that shows the published entries beyond the first few.
+type labItem struct {
+	entry domain.LabEntry
+	group labGroup
+	more  int
+}
+
+// items returns the list's rows in order: the active groups, or, while the
+// archive is shown, the archived entries. Within NEEDS YOU the longest
+// waiting comes first; elsewhere the newest.
+func (v labView) items() []labItem {
+	groups := make([][]domain.LabEntry, labGroupCount)
 	for _, e := range v.entries {
-		if labTabOf(e) == tab && v.filter.Matches(e) {
-			out = append(out, e)
+		if e.Archived != v.archived || !v.filter.Matches(e) {
+			continue
+		}
+		g := v.groupOf(e)
+		groups[g] = append(groups[g], e)
+	}
+	var out []labItem
+	for g := labGroup(0); g < labGroupCount; g++ {
+		entries := groups[g]
+		sort.SliceStable(entries, func(i, j int) bool {
+			if g == labGroupNeedsYou {
+				return v.waitingSince(entries[i]).Before(v.waitingSince(entries[j]))
+			}
+			return entries[i].Created.After(entries[j].Created)
+		})
+		hidden := 0
+		if g == labGroupDone && !v.doneExpanded && len(entries) > labDoneShown {
+			hidden = len(entries) - labDoneShown
+			entries = entries[:labDoneShown]
+		}
+		for _, e := range entries {
+			out = append(out, labItem{entry: e, group: g})
+		}
+		if hidden > 0 {
+			out = append(out, labItem{group: g, more: hidden})
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if wi, wj := v.waiting(out[i]), v.waiting(out[j]); wi != wj {
-			return wi
-		}
-		return out[i].Created.After(out[j].Created)
-	})
 	return out
 }
 
-// visible returns the entries the list shows.
-func (v labView) visible() []domain.LabEntry { return v.visibleIn(v.tab) }
+// groupCount is how many entries a group holds, hidden ones included.
+func (v labView) groupCount(g labGroup) int {
+	n := 0
+	for _, e := range v.entries {
+		if e.Archived == v.archived && v.filter.Matches(e) && v.groupOf(e) == g {
+			n++
+		}
+	}
+	return n
+}
+
+// archivedCount is how many entries the archive holds.
+func (v labView) archivedCount() int {
+	n := 0
+	for _, e := range v.entries {
+		if e.Archived {
+			n++
+		}
+	}
+	return n
+}
+
+// visible returns the entries the list shows, in order.
+func (v labView) visible() []domain.LabEntry {
+	var out []domain.LabEntry
+	for _, it := range v.items() {
+		if it.more == 0 {
+			out = append(out, it.entry)
+		}
+	}
+	return out
+}
+
+// selectedItem returns the row under the cursor.
+func (v labView) selectedItem() (labItem, bool) {
+	items := v.items()
+	if v.cursor < 0 || v.cursor >= len(items) {
+		return labItem{}, false
+	}
+	return items[v.cursor], true
+}
 
 // selected returns the entry under the cursor.
 func (v labView) selected() (domain.LabEntry, bool) {
-	visible := v.visible()
-	if v.cursor < 0 || v.cursor >= len(visible) {
+	it, ok := v.selectedItem()
+	if !ok || it.more > 0 {
 		return domain.LabEntry{}, false
 	}
-	return visible[v.cursor], true
+	return it.entry, true
 }
 
 // entry returns the stored entry with the given ID.
@@ -183,7 +282,7 @@ func (v labView) entry(id string) (domain.LabEntry, bool) {
 }
 
 func (v *labView) clamp() {
-	n := len(v.visible())
+	n := len(v.items())
 	if v.cursor >= n {
 		v.cursor = n - 1
 	}
@@ -197,8 +296,9 @@ func (v *labView) move(delta int) {
 	v.clamp()
 }
 
-func (v *labView) setTab(tab labTab) {
-	v.tab = (tab%labTabCount + labTabCount) % labTabCount
+// setArchived shows the archive, or the active entries.
+func (v *labView) setArchived(archived bool) {
+	v.archived = archived
 	v.cursor = 0
 }
 
@@ -207,8 +307,9 @@ func (v *labView) setFilter(f domain.LabFilter) {
 	v.cursor = 0
 }
 
-// selectID moves to the tab listing the entry with the given ID and puts the
-// cursor on it. The kind filter is cleared when it would hide the entry.
+// selectID puts the cursor on the entry with the given ID, showing the
+// archive or the rest of DONE when that is where it is. The kind filter is
+// cleared when it would hide the entry.
 func (v *labView) selectID(id string) {
 	e, ok := v.entry(id)
 	if !ok {
@@ -218,13 +319,17 @@ func (v *labView) selectID(id string) {
 	if !v.filter.Matches(e) {
 		v.filter = domain.LabFilterAll
 	}
-	v.tab = labTabOf(e)
-	for i, visible := range v.visible() {
-		if visible.ID == id {
-			v.cursor = i
-			return
+	v.archived = e.Archived
+	for pass := 0; pass < 2; pass++ {
+		for i, it := range v.items() {
+			if it.more == 0 && it.entry.ID == id {
+				v.cursor = i
+				return
+			}
 		}
+		v.doneExpanded = true
 	}
+	v.clamp()
 }
 
 // labsLoadedMsg carries the repository's entries after a load or a change.
@@ -353,6 +458,10 @@ func (m *Model) openLabCapture() {
 
 // labNextStep performs the selected entry's next step: Enter in the Lab.
 func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
+	if it, ok := m.lab.selectedItem(); ok && it.more > 0 {
+		m.lab.doneExpanded = true
+		return m, nil
+	}
 	e, ok := m.lab.selected()
 	if !ok {
 		m.openLabCapture()
