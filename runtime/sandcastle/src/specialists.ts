@@ -35,7 +35,9 @@ How to write artifact files (mechanical, follow exactly):
   a raw line break is a syntax error and the write fails silently.
 - Shape: cat > '<absolute path>' <<'EOF'\\n<file content, \\n for line breaks>\\nEOF
   The quoted delimiter disables expansion, so $, backticks and quotes in the
-  content are safe. Never use echo for multi-line content.
+  content are safe. The closing EOF must start at the beginning of its line
+  with nothing before it, or the shell keeps swallowing input. Never use echo
+  for multi-line content.
 - Verify every file before finishing: ls -l '<path>' && wc -l '<path>'. A file
   you have not verified does not exist. Never claim otherwise.
 `;
