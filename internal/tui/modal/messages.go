@@ -147,6 +147,9 @@ const (
 	// ContextActionLabFinishInterview asks the agent to end the interview
 	// and write the spec.
 	ContextActionLabFinishInterview = "lab-finish-interview"
+	// ContextActionLabReopenSpec withdraws the spec's approval, sending a
+	// grill session from its tickets back to the spec.
+	ContextActionLabReopenSpec = "lab-reopen-spec"
 	// ContextActionLabViewAgent focuses the session agent's pane.
 	ContextActionLabViewAgent = "lab-view-agent"
 )

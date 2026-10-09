@@ -22,11 +22,34 @@ type labTalk struct {
 	// coverage is the interview's topic coverage, once the agent writes it.
 	coverage    domain.LabCoverage
 	hasCoverage bool
+	// artifacts are the drafts written so far, for review on the entry page.
+	artifacts []domain.LabArtifact
+	// docs are the drafted repository documents and what approving each
+	// would change in the checkout.
+	docs []labDoc
 }
 
-// loadLabTalks reads the protocol files of every entry that may have a
-// session.
-func loadLabTalks(store *data.LabStore, entries []domain.LabEntry) map[string]labTalk {
+// labDoc is a drafted repository document, such as CONTEXT.md or a decision
+// record, beside what approving it would change in the checkout.
+type labDoc struct {
+	artifact domain.LabArtifact
+	change   data.LabDocumentChange
+	err      error
+}
+
+// labArtifact returns the draft at path, if the agent has written it.
+func (t labTalk) labArtifact(path string) (domain.LabArtifact, bool) {
+	for _, a := range t.artifacts {
+		if a.Path == path {
+			return a, true
+		}
+	}
+	return domain.LabArtifact{}, false
+}
+
+// loadLabTalks reads the protocol files and drafts of every entry that may
+// have a session. Repository documents are compared with checkout's files.
+func loadLabTalks(store *data.LabStore, checkout string, entries []domain.LabEntry) map[string]labTalk {
 	talks := make(map[string]labTalk)
 	for _, e := range entries {
 		if e.Archived || e.Status == domain.LabStatusPublished || len(e.Runs) == 0 {
@@ -36,6 +59,13 @@ func loadLabTalks(store *data.LabStore, entries []domain.LabEntry) map[string]la
 		t.session, t.hasSession = store.Session(e.ID)
 		t.questions, _ = store.Questions(e.ID)
 		t.coverage, t.hasCoverage = store.Coverage(e.ID)
+		t.artifacts, _ = store.Artifacts(e.ID)
+		for _, a := range t.artifacts {
+			if domain.IsLabRepositoryDocument(a.Path) {
+				change, err := data.LabDocumentChanges(checkout, a)
+				t.docs = append(t.docs, labDoc{artifact: a, change: change, err: err})
+			}
+		}
 		talks[e.ID] = t
 	}
 	return talks
@@ -61,7 +91,7 @@ func loadLabTalksCmd(repoPath string, entries []domain.LabEntry) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		return labTalksLoadedMsg{talks: loadLabTalks(store, entries)}
+		return labTalksLoadedMsg{talks: loadLabTalks(store, repoPath, entries)}
 	}
 }
 

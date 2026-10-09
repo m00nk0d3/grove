@@ -48,3 +48,26 @@ func TestLabDocumentTarget_StaysInsideTheCheckout(t *testing.T) {
 	_, err := LabDocumentTarget(checkout, domain.LabArtifact{Path: "src/ordering/CONTEXT.md"})
 	assert.NoError(t, err)
 }
+
+func TestLabDocumentChanges_ReportsAddedAndDroppedLines(t *testing.T) {
+	checkout := t.TempDir()
+	if err := os.WriteFile(filepath.Join(checkout, "CONTEXT.md"), []byte("# Shop\r\n\r\n**Order**: a request.\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	extended := domain.LabArtifact{Path: "CONTEXT.md", Body: "# Shop\n\n**Order**: a request.\n**Cart**: items before ordering.\n"}
+	change, err := LabDocumentChanges(checkout, extended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if change.New || len(change.Added) != 1 || change.Added[0] != "**Cart**: items before ordering." || len(change.Dropped) != 0 {
+		t.Errorf("change = %+v", change)
+	}
+	shrunk := domain.LabArtifact{Path: "CONTEXT.md", Body: "# Shop\n"}
+	if change, _ := LabDocumentChanges(checkout, shrunk); len(change.Dropped) != 1 {
+		t.Errorf("a draft that drops a line reports it: %+v", change)
+	}
+	fresh := domain.LabArtifact{Path: "docs/adr/0001-x.md", Body: "# Use SQLite\n\nBecause.\n"}
+	if change, _ := LabDocumentChanges(checkout, fresh); !change.New || len(change.Added) != 2 {
+		t.Errorf("a new document adds every line: %+v", change)
+	}
+}

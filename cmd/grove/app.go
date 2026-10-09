@@ -3025,7 +3025,7 @@ func (m *Model) refreshWorktreesCmd() tea.Cmd {
 			msg.labs, msg.labsErr = loadLabs(repoPath)
 			if store, err := labStoreFor(repoPath); err == nil {
 				msg.labLocks, _ = store.Locks()
-				msg.labTalks = loadLabTalks(store, msg.labs)
+				msg.labTalks = loadLabTalks(store, repoPath, msg.labs)
 			}
 		}
 		return msg

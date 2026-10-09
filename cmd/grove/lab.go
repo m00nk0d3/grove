@@ -377,7 +377,7 @@ func labChangeCmd(repoPath, selectID, status string, change func(*data.LabStore)
 		}
 		entries, err := store.Load()
 		locks, lockErr := store.Locks()
-		talks := loadLabTalks(store, entries)
+		talks := loadLabTalks(store, repoPath, entries)
 		return labsLoadedMsg{entries: entries, locks: locks, locksLoaded: lockErr == nil, talks: talks, selectID: selectID, status: status, err: err}
 	}
 }
@@ -550,6 +550,9 @@ func labContextActions(v labView) []contextActionOption {
 	if t := v.talks[e.ID]; v.hasLiveSession(e) && t.hasSession && t.session.Stage == "interview" {
 		actions = append(actions, contextActionOption{icon: "»", label: "Write the spec now", action: modal.ContextActionLabFinishInterview})
 	}
+	if t := v.talks[e.ID]; v.hasLiveSession(e) && t.hasSession && t.session.Stage == "tickets" {
+		actions = append(actions, contextActionOption{icon: "↶", label: "Reopen spec", action: modal.ContextActionLabReopenSpec})
+	}
 	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
 		actions = append(actions, contextActionOption{icon: "◫", label: "View agent", action: modal.ContextActionLabViewAgent})
 	}
@@ -594,6 +597,19 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 	switch action {
 	case modal.ContextActionLabFinishInterview:
 		return m.handleLabRequestSubmitted(modal.LabRequestSubmittedMsg{EntryID: e.ID, Kind: domain.LabRequestFinishInterview})
+	case modal.ContextActionLabReopenSpec:
+		// The session notices the spec is no longer approved, ends the
+		// tickets stage, and returns to the spec; the tickets drafted so far
+		// are kept for the next tickets stage.
+		reviews := make(map[string]domain.LabReview, len(e.Reviews))
+		for path, r := range e.Reviews {
+			if path != "spec.md" {
+				reviews[path] = r
+			}
+		}
+		e.Reviews = reviews
+		e.Updated = time.Now().UTC()
+		return m, labChangeCmd(m.RepoPath, e.ID, "Reopened the spec; the session returns to it", func(s *data.LabStore) error { return s.Put(e) })
 	case modal.ContextActionLabViewAgent:
 		if run, ok := m.lab.latestRun(e); ok && run.live() {
 			return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))

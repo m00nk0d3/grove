@@ -342,6 +342,11 @@ export interface SessionDeps {
   checkStage: (finishRequested: boolean, answered: number) => string[];
   /** Whether the user approved the stage's draft as it is now. */
   approved: () => boolean;
+  /**
+   * Whether what the stage builds on still stands. The tickets stage builds
+   * on the approved spec; the user reopening the spec ends the stage.
+   */
+  prerequisitesHold: () => boolean;
   report: (report: SessionReport, pane: string | null) => void;
   scanQuestions: () => QuestionRecord[];
   scanRequests: () => RequestRecord[];
@@ -429,6 +434,9 @@ export class SessionReporter {
   }
 }
 
+/** How a stage ends: done, closed by Grove, or sent back by the user. */
+export type StageOutcome = "finished" | "closed" | "reopened";
+
 /**
  * Runs one stage until it is finished or Grove closes the session. Each poll
  * reads the agent's state and the protocol files; whenever the agent is
@@ -441,7 +449,7 @@ export async function watchStage(
   ctx: StageContext,
   deps: SessionDeps,
   reporter: SessionReporter,
-): Promise<"finished" | "closed"> {
+): Promise<StageOutcome> {
   const { stage, agentName, paneId, paths } = ctx;
   const promptedAt = deps.now();
   const finish = finishHint(stage, paths);
@@ -479,6 +487,7 @@ export async function watchStage(
 
   publish("starting");
   while (!deps.closed()) {
+    if (!deps.prerequisitesHold()) return "reopened";
     let state: AgentState;
     try {
       state = parseAgentState(deps.runner("herdr", ["agent", "get", agentName]));
@@ -875,6 +884,7 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
     clearDone: () => clearMarkerFile(paths.doneFile),
     checkStage: () => [],
     approved: () => false,
+    prerequisitesHold: () => true,
     scanQuestions: () => scanQuestions(paths.questionsDir),
     scanRequests: () => scanRequests(paths.requestsDir),
     writeQuestionReceipt: (number, receipt) => writeReceipt(paths.questionsDir, number, receipt),
@@ -906,7 +916,8 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
     while (step !== "publish") {
       const outcome = await runStage(step, kind, entry, repo, repoMap, paths, launch, deps, reporter);
       if (outcome === "closed") return;
-      step = nextStep(kind, step);
+      // A reopened spec is revised before the tickets are drafted again.
+      step = outcome === "reopened" ? "spec" : nextStep(kind, step);
     }
     // Every draft is approved: Grove publishes, then closes the session.
     fs.writeFileSync(paths.stageFile, "publish\n", "utf8");
@@ -931,7 +942,7 @@ async function runStage(
   launch: AgentLaunchConfig,
   deps: SessionDeps,
   reporter: SessionReporter,
-): Promise<"finished" | "closed"> {
+): Promise<StageOutcome> {
   fs.writeFileSync(paths.stageFile, `${stage}\n`, "utf8");
   clearMarkerFile(paths.doneFile);
 
@@ -971,6 +982,9 @@ async function runStage(
       approved: () =>
         review !== undefined &&
         isApproved(paths.labDir, entry.id, review, readIfExists(path.join(paths.artifactsDir, review))),
+      prerequisitesHold: () =>
+        stage !== "tickets" ||
+        isApproved(paths.labDir, entry.id, "spec.md", readIfExists(path.join(paths.artifactsDir, "spec.md"))),
     }, reporter);
   } finally {
     try {

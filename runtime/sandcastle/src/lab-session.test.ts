@@ -249,6 +249,7 @@ async function stage(name: LabStage, script: Step[], kind: "grill" | "shape" = "
       const index = JSON.parse(fs.readFileSync(path.join(paths.labDir, "entries.json"), "utf8"));
       return Object.values(index.entries[0].reviews as Record<string, { state: string }>).some((r) => r.state === "approved");
     },
+    prerequisitesHold: () => !fs.existsSync(path.join(paths.entryDir, "reopen-for-test")),
     report: (report) => reports.push(report),
     scanQuestions: () => scanQuestions(paths.questionsDir),
     scanRequests: () => scanRequests(paths.requestsDir),
@@ -480,6 +481,15 @@ test("a draft that stays invalid is presented for review with its problems", asy
   const review = run.sessions.at(-1)!;
   assert.equal(review.phase, "review");
   assert.match(review.problems?.join() ?? "", /"## Testing" section is missing/);
+});
+
+test("a stage ends when what it builds on is withdrawn", async () => {
+  const run = await stage("tickets", [
+    { state: "working" },
+    { state: "working", act: write(() => path.join(current.entryDir, "reopen-for-test"), "") },
+    { state: "working", close: true },
+  ]);
+  assert.equal(run.outcome, "reopened");
 });
 
 test("an idle agent that never started is not reported as waiting on the user", async () => {

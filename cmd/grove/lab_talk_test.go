@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/m00nk0d3/grove/internal/data"
 	"github.com/m00nk0d3/grove/internal/domain"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
@@ -44,7 +45,9 @@ func labTalkModel(t *testing.T, status string) (*Model, *data.LabStore, domain.L
 	m := newLabModel(t)
 	m.lab.entries = []domain.LabEntry{e}
 	m.lab.setMission(labMissionState(map[string]string{"run-1": status}))
-	return m, store, e
+	// A terminal the size people use, so the page is not cut short.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 180, Height: 50})
+	return updated.(*Model), store, e
 }
 
 // feed runs cmd and the command its message produces, hops times, as Bubble
@@ -62,22 +65,22 @@ func feed(t *testing.T, m *Model, cmd tea.Cmd, hops int) *Model {
 func TestLabAsk_RowsSayWhatTheSessionWaitsFor(t *testing.T) {
 	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
 
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	assert.Equal(t, "Answer the agent in its pane", labNextAction(m.lab, e), "without a card or session state, the pane is the way")
 
 	writeLabSession(t, store, e.ID, domain.LabPhaseFallback, "Which database?")
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	assert.Equal(t, "Reply to the agent", labNextAction(m.lab, e))
 
 	writeLabSession(t, store, e.ID, domain.LabPhasePermission, "Run rm?")
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	assert.Equal(t, "Allow or deny a command", labNextAction(m.lab, e))
 
 	writeLabCard(t, store, e.ID, 3)
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	assert.Equal(t, "Answer question 3", labNextAction(m.lab, e), "a waiting card comes first")
 	writeLabCard(t, store, e.ID, 4)
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	assert.Equal(t, "Answer questions 3–4", labNextAction(m.lab, e))
 
 	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowSucceeded}))
@@ -88,7 +91,7 @@ func TestLabPage_CardsAreAnsweredInlineOneAfterAnother(t *testing.T) {
 	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
 	writeLabCard(t, store, e.ID, 1)
 	writeLabCard(t, store, e.ID, 2)
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 
 	m, _ = press(t, m, "enter")
 	require.NotNil(t, m.lab.page, "Enter opens the entry page")
@@ -131,7 +134,7 @@ func TestLabPage_AnAnswerIsChangedFromTheDecisionsLog(t *testing.T) {
 	writeLabCard(t, store, e.ID, 2)
 	require.NoError(t, store.AnswerQuestion(e.ID, 1, []int{1}, "", time.Now()))
 	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(`{"phase":"question","stage":"interview","pending":[2]}`), 0o644))
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 
 	m, _ = press(t, m, "enter")
 	m, _ = press(t, m, "tab") // the note
@@ -156,7 +159,7 @@ func TestLabPage_AnAnswerIsChangedFromTheDecisionsLog(t *testing.T) {
 	assert.Contains(t, m.View(), "Yes (changed)")
 
 	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(`{"phase":"review","stage":"spec","pending":[]}`), 0o644))
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	m.syncLabPage()
 	m.lab.page.focus = labFocusLog
 	m, _ = press(t, m, "enter")
@@ -167,7 +170,7 @@ func TestLabPage_AnAnswerIsChangedFromTheDecisionsLog(t *testing.T) {
 func TestLabPage_RepliesAndPermissionDecisionsBecomeRequests(t *testing.T) {
 	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
 	writeLabSession(t, store, e.ID, domain.LabPhaseFallback, "Which database?")
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 
 	m, _ = press(t, m, "enter")
 	require.NotNil(t, m.lab.page)
@@ -180,10 +183,10 @@ func TestLabPage_RepliesAndPermissionDecisionsBecomeRequests(t *testing.T) {
 	assert.Contains(t, m.View(), "Waiting for the agent")
 
 	writeLabSession(t, store, e.ID, domain.LabPhaseWorking, "")
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	m.syncLabPage()
 	writeLabSession(t, store, e.ID, domain.LabPhasePermission, "Allow git push?")
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	m.syncLabPage()
 	assert.Contains(t, m.View(), "PERMISSION REQUEST")
 	m, cmd = press(t, m, "n")
@@ -204,11 +207,11 @@ func TestLabPage_RepliesAndPermissionDecisionsBecomeRequests(t *testing.T) {
 	assert.False(t, *permission.Allow)
 }
 
-func TestLabPage_DraftsBetweenStagesAreReviewedInTheInspector(t *testing.T) {
+func TestLabPage_DraftsBetweenStagesAreReviewedOnThePage(t *testing.T) {
 	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
 	writeSession := func(raw string) {
 		require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(raw), 0o644))
-		m.lab.talks = loadLabTalks(store, m.lab.entries)
+		m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	}
 	require.NoError(t, os.MkdirAll(store.EntryDir(e.ID), 0o755))
 
@@ -219,10 +222,9 @@ func TestLabPage_DraftsBetweenStagesAreReviewedInTheInspector(t *testing.T) {
 	m, _ = press(t, m, "enter")
 	assert.Contains(t, m.View(), "could not fix these problems", "problems left in the draft are shown")
 	assert.Contains(t, m.View(), "ticket 02 body")
-	m, _ = press(t, m, "enter")
-	require.IsType(t, &modal.LabInspectorModal{}, m.activeModal, "Enter opens the draft for review")
+	assert.Contains(t, m.View(), "tickets.json has not been written yet")
+	assert.Nil(t, m.activeModal, "the draft is reviewed on the page, not in the inspector")
 
-	m.activeModal = nil
 	writeSession(`{"phase":"review","stage":"publish","pending":[]}`)
 	assert.NotContains(t, labNextAction(m.lab, e), "Review the", "a session waiting to publish is published, not reviewed")
 }
@@ -239,7 +241,7 @@ func TestLabPage_StepperFollowsTheRun(t *testing.T) {
 	require.NoError(t, os.MkdirAll(store.EntryDir(e.ID), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "coverage.json"),
 		[]byte(`{"scope":"covered","triggers":"covered","data":"open"}`), 0o644))
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 
 	steps := labPageSteps(m.lab, e)
 	require.Len(t, steps, 3)
@@ -255,7 +257,7 @@ func TestLabPage_ActionsPanelServesThePage(t *testing.T) {
 	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
 	writeLabCard(t, store, e.ID, 1)
 	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(`{"phase":"question","stage":"interview","pending":[1]}`), 0o644))
-	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
 	m, _ = press(t, m, "enter")
 
 	m, _ = press(t, m, ".")
@@ -276,4 +278,124 @@ func TestLabPage_ActionsPanelServesThePage(t *testing.T) {
 	m = updated.(*Model)
 	assert.Equal(t, panelList, m.focused, "Esc in the actions returns to the page")
 	assert.NotNil(t, m.lab.page)
+}
+
+func writeLabArtifact(t *testing.T, store *data.LabStore, id, path, body string) {
+	t.Helper()
+	full := filepath.Join(store.ArtifactsDir(id), filepath.FromSlash(path))
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(body), 0o644))
+}
+
+func reviewModel(t *testing.T, stage string) (*Model, *data.LabStore, domain.LabEntry) {
+	t.Helper()
+	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
+	require.NoError(t, os.MkdirAll(store.EntryDir(e.ID), 0o755))
+	raw := fmt.Sprintf(`{"phase":"review","stage":%q,"pending":[]}`, stage)
+	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(raw), 0o644))
+	return m, store, e
+}
+
+const labTestTickets = `{"tickets":[
+ {"key":"01","title":"Prefactor the store","body":"## What\nMove it.","blocked_by":[]},
+ {"key":"02","title":"Import one bookmark","body":"## What\nThe thinnest path.","blocked_by":["01"]},
+ {"key":"03","title":"Import folders as tags","body":"## What\nWiden it.","blocked_by":["02"]}]}`
+
+func TestLabPage_TheSpecIsReadAndApprovedOnThePage(t *testing.T) {
+	m, store, e := reviewModel(t, "spec")
+	writeLabArtifact(t, store, e.ID, "spec.md", "# Offline mode\n\n## Problem\n\nThe dashboard freezes offline.\n")
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
+
+	m, _ = press(t, m, "enter")
+	require.NotNil(t, m.lab.page)
+	view := m.View()
+	assert.Contains(t, view, "REVIEW · spec.md")
+	assert.Contains(t, view, "The dashboard freezes offline.")
+	assert.Contains(t, view, "draft")
+
+	m, cmd := press(t, m, "enter")
+	m = feed(t, m, cmd, 1)
+	stored, err := store.Load()
+	require.NoError(t, err)
+	assert.Equal(t, domain.LabReviewApproved, stored[0].ReviewOf(domain.LabArtifact{Path: "spec.md", Body: "# Offline mode\n\n## Problem\n\nThe dashboard freezes offline.\n"}))
+	assert.Contains(t, m.statusMsg, "Approved spec.md")
+}
+
+func TestLabPage_TicketsAreReviewedAsATree(t *testing.T) {
+	m, store, e := reviewModel(t, "tickets")
+	writeLabArtifact(t, store, e.ID, "tickets.json", labTestTickets)
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
+	m, _ = press(t, m, "enter")
+
+	view := ansi.Strip(m.View())
+	assert.Contains(t, view, "▸ 01  Prefactor the store")
+	assert.Contains(t, view, "    02  Import one bookmark  ← 01", "a ticket sits below the ticket that blocks it")
+	assert.Contains(t, view, "      03  Import folders as tags  ← 02")
+
+	m, _ = press(t, m, "j")
+	m, _ = press(t, m, "l")
+	assert.Contains(t, ansi.Strip(m.View()), "The thinnest path.", "→ opens the selected ticket")
+
+	m, _ = press(t, m, "c")
+	change, ok := m.activeModal.(*modal.LabMessageModal)
+	require.True(t, ok, "c asks for changes, got %T", m.activeModal)
+	assert.Contains(t, change.View(), "02: ", "the request starts with the selected ticket")
+}
+
+func TestLabPage_RepositoryDocumentsAreAppliedFromTheStrip(t *testing.T) {
+	m, store, e := reviewModel(t, "spec")
+	writeLabArtifact(t, store, e.ID, "spec.md", "# Spec\n")
+	writeLabArtifact(t, store, e.ID, "CONTEXT.md", "# Shop\n\n**Cart**: items before ordering.\n")
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
+	m, _ = press(t, m, "enter")
+
+	assert.Contains(t, m.View(), "ALSO DRAFTED")
+	assert.Contains(t, m.View(), "new file, +2 lines")
+	m, _ = press(t, m, "tab")
+	require.Equal(t, labFocusDocs, m.lab.page.focus)
+	assert.Contains(t, m.View(), "+ **Cart**: items before ordering.", "the selected document shows what it adds")
+
+	m, cmd := press(t, m, "y")
+	m = feed(t, m, cmd, 1)
+	written, err := os.ReadFile(filepath.Join(m.RepoPath, "CONTEXT.md"))
+	require.NoError(t, err, "approving a document writes it into the checkout")
+	assert.Contains(t, string(written), "**Cart**")
+}
+
+func TestLabPage_ReopeningTheSpecWithdrawsItsApproval(t *testing.T) {
+	m, store, e := reviewModel(t, "tickets")
+	writeLabArtifact(t, store, e.ID, "spec.md", "# Spec\n")
+	e.SetReview(domain.LabArtifact{Path: "spec.md", Body: "# Spec\n"}, domain.LabReviewApproved)
+	require.NoError(t, store.Put(e))
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
+	m.lab.selectID(e.ID)
+
+	assert.Contains(t, labelsOf(labContextActions(m.lab)), "Reopen spec")
+	updated, cmd := m.handleLabAction(modal.ContextActionLabReopenSpec)
+	m = feed(t, updated.(*Model), cmd, 1)
+	stored, err := store.Load()
+	require.NoError(t, err)
+	assert.Equal(t, domain.LabReviewDraft, stored[0].ReviewOf(domain.LabArtifact{Path: "spec.md", Body: "# Spec\n"}))
+	assert.Equal(t, domain.LabReviewApproved, e.ReviewOf(domain.LabArtifact{Path: "spec.md", Body: "# Spec\n"}),
+		"the entry the list held is not changed in place")
+}
+
+func TestLabPage_ReadyToPublishSaysWhatWillBeCreated(t *testing.T) {
+	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
+	e.Status = domain.LabStatusTicketed
+	state := labMissionState(map[string]string{"run-1": domain.WorkflowBlocked})
+	state.WorkflowRuns[0].CurrentStep = "Publish"
+	m.lab.setMission(state)
+	writeLabArtifact(t, store, e.ID, "spec.md", "# Offline mode\n")
+	writeLabArtifact(t, store, e.ID, "tickets.json", labTestTickets)
+	for _, a := range []domain.LabArtifact{{Path: "spec.md", Body: "# Offline mode\n"}, {Path: "tickets.json", Body: labTestTickets}} {
+		e.SetReview(a, domain.LabReviewApproved)
+	}
+	require.NoError(t, store.Put(e))
+	m.lab.entries = []domain.LabEntry{e}
+	m.lab.talks = loadLabTalks(store, m.RepoPath, m.lab.entries)
+
+	m.openLabPage(e)
+	assert.Contains(t, m.View(), `Publishes the epic "Offline mode" with 3 tickets as sub-issues, placed in Backlog.`)
 }

@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Lab review on the entry page** — the fifth slice of the Lab redesign. A
+  draft waiting between stages is reviewed on the entry page: the spec and a
+  bug report are shown rendered and scroll with the arrow keys, and tickets
+  are listed beneath the tickets that block them, each opened with `→`. Enter
+  approves the draft and the session moves on, `c` asks the agent for changes
+  (to the selected ticket when reviewing tickets), and `e` edits it. Drafted
+  repository documents are listed as *Also drafted* with the lines each adds
+  to the checkout, applied with `y` or discarded with `n`. An entry ready to
+  publish says what publishing will create. *Reopen spec* withdraws the spec's
+  approval while the tickets are drafted; the session returns to the spec
+  and keeps the tickets drafted so far.
 - **Lab list grouped by what entries need** — the fourth slice of the Lab
   redesign. The `WORKING`, `INBOX`, `ISSUES`, and `ARCHIVE` lanes and the
   `[` and `]` keys are replaced by one list in four groups: *NEEDS YOU* (a

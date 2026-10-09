@@ -364,6 +364,12 @@ func newLabMessageModal(entryID string, kind domain.LabRequestKind, title, intro
 	return &LabMessageModal{entryID: entryID, kind: kind, title: title, intro: intro, output: output, editor: editor, width: 72}
 }
 
+// AppendText adds text to the message, such as the ticket it is about.
+func (m *LabMessageModal) AppendText(text string) {
+	m.editor.SetValue(m.editor.Value() + text)
+	m.editor.CursorEnd()
+}
+
 // Init satisfies tea.Model.
 func (m *LabMessageModal) Init() tea.Cmd { return nil }
 

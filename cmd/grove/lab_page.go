@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/m00nk0d3/grove/internal/domain"
+	"github.com/m00nk0d3/grove/internal/tui/markdown"
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 	"github.com/m00nk0d3/grove/internal/tui/styles"
 )
@@ -39,6 +40,12 @@ type labPage struct {
 	// session moves on, so the same request is not offered twice.
 	awaiting  bool
 	logCursor int
+	// The draft under review: how far it is scrolled, the ticket selected
+	// and the one opened, and the repository document selected.
+	reviewScroll int
+	ticketCursor int
+	ticketOpen   string
+	docCursor    int
 }
 
 // Rows of the agent's output shown on the page.
@@ -197,6 +204,9 @@ func (m *Model) handleLabPageKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if p.focus == labFocusLog {
 		return m.handleLabLogKey(e, key)
+	}
+	if ask, _ := m.lab.ask(e); ask == labAskReview && p.card == nil && !p.replyOn {
+		return m.handleLabReviewKey(e, key)
 	}
 	switch {
 	case p.card != nil:
@@ -434,13 +444,22 @@ func renderLabPage(v labView, theme styles.Theme, width, height int, focused boo
 		b.WriteString("The agent is waiting for a permission decision:\n\n")
 		b.WriteString(muted.Render(labTail(t.session.Output, labPageOutputRows, width)) + "\n\n")
 		hints = "y allow  ·  n deny  ·  Esc back to the list  ·  . actions"
+	case ask == labAskReview:
+		// The stepper, the review heading, and the hints take about nine
+		// rows; the documents strip takes one each, and a heading.
+		docRows := 0
+		if len(t.docs) > 0 {
+			docRows = len(t.docs) + 2
+		}
+		review, reviewHints := renderLabReview(e, t, p, theme, width, max(6, height-9-docRows))
+		b.WriteString(review)
+		if p.focus != labFocusLog {
+			hints = reviewHints
+		}
 	default:
 		b.WriteString(accent.Render("NEXT") + "  " + labNextAction(v, e) + "\n")
-		if ask == labAskReview && len(t.session.Problems) > 0 {
-			b.WriteString("\n" + warning.Render("The agent could not fix these problems in the draft:") + "\n")
-			for _, problem := range t.session.Problems {
-				b.WriteString(wrapText("• "+problem, width) + "\n")
-			}
+		if summary := labPublishSummary(v, e, t); summary != "" {
+			b.WriteString(muted.Render(summary) + "\n")
 		}
 		if run, ok := v.latestRun(e); ok && run.live() && strings.EqualFold(run.workflow.Status, domain.WorkflowRunning) {
 			b.WriteString(muted.Render(firstNonEmptyString(labSessionSummary(run), "The agent is working.")) + "\n")
@@ -508,4 +527,292 @@ func labTail(text string, rows, width int) string {
 		return "(no output captured)"
 	}
 	return out
+}
+
+// labFocusDocs gives the keyboard to the drafted repository documents.
+const labFocusDocs labPageFocus = labFocusLog + 1
+
+// labReviewPath is the draft a session waits on the user to approve.
+func labReviewPath(t labTalk) string {
+	switch t.session.Stage {
+	case "spec":
+		return "spec.md"
+	case "tickets":
+		return "tickets.json"
+	}
+	return "issue.md"
+}
+
+// labTicketRow is a ticket as the review lists it.
+type labTicketRow struct {
+	ticket domain.LabTicket
+	depth  int
+}
+
+// labTicketRows orders the drafted tickets by their dependencies, each
+// indented below the deepest ticket that blocks it.
+func labTicketRows(body string) ([]labTicketRow, error) {
+	tickets, err := domain.ParseLabTickets(body)
+	if err != nil {
+		return nil, err
+	}
+	depth := map[string]int{}
+	rows := make([]labTicketRow, len(tickets))
+	for i, t := range tickets {
+		d := 0
+		for _, b := range t.BlockedBy {
+			d = max(d, depth[b]+1)
+		}
+		depth[t.Key] = d
+		rows[i] = labTicketRow{ticket: t, depth: d}
+	}
+	return rows, nil
+}
+
+// renderLabReview draws the draft waiting for approval, and the repository
+// documents drafted beside it. It returns the panel and its key hints.
+func renderLabReview(e domain.LabEntry, t labTalk, p *labPage, theme styles.Theme, width, rows int) (string, string) {
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent())).Bold(true)
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
+	success := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Success()))
+	warning := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Warning()))
+	stateLabel := func(a domain.LabArtifact) string {
+		switch e.ReviewOf(a) {
+		case domain.LabReviewApproved:
+			return success.Render("approved")
+		case domain.LabReviewDiscarded:
+			return muted.Render("discarded")
+		}
+		return warning.Render("draft")
+	}
+
+	path := labReviewPath(t)
+	a, ok := t.labArtifact(path)
+	var b strings.Builder
+	if ok {
+		b.WriteString(accent.Render("REVIEW · "+path) + "  " + stateLabel(a) + "\n")
+	}
+	if len(t.session.Problems) > 0 {
+		b.WriteString(warning.Render("The agent could not fix these problems in the draft:") + "\n")
+		for _, problem := range t.session.Problems {
+			b.WriteString(wrapText("• "+problem, width) + "\n")
+		}
+	}
+	if !ok {
+		b.WriteString(muted.Render(path+" has not been written yet.") + "\n")
+		return b.String(), "Esc back to the list  ·  . actions"
+	}
+	b.WriteString("\n")
+
+	var lines []string
+	selectedLine := -1
+	if path == "tickets.json" {
+		ticketRows, err := labTicketRows(a.Body)
+		if err != nil {
+			lines = append(lines, warning.Render(err.Error()))
+		}
+		p.ticketCursor = min(p.ticketCursor, max(0, len(ticketRows)-1))
+		for i, r := range ticketRows {
+			selected := i == p.ticketCursor && p.focus == labFocusPanel
+			cursor := "  "
+			if selected {
+				cursor = "▸ "
+				selectedLine = len(lines)
+			}
+			line := fmt.Sprintf("%s%s%s  %s", cursor, strings.Repeat("  ", r.depth), r.ticket.Key, r.ticket.Title)
+			if len(r.ticket.BlockedBy) > 0 {
+				line += "  ← " + strings.Join(r.ticket.BlockedBy, ", ")
+			}
+			line = truncateStr(line, width)
+			if selected {
+				line = accent.Render(line)
+			}
+			lines = append(lines, line)
+			if p.ticketOpen == r.ticket.Key {
+				body := markdown.Render(r.ticket.Body, max(20, width-6), theme)
+				for _, l := range strings.Split(body, "\n") {
+					lines = append(lines, "      "+l)
+				}
+			}
+		}
+	} else {
+		lines = strings.Split(markdown.Render(a.Body, width, theme), "\n")
+	}
+	// Keep the selected ticket in view; a document scrolls where it was put.
+	if selectedLine >= 0 && (selectedLine < p.reviewScroll || selectedLine >= p.reviewScroll+rows) {
+		p.reviewScroll = max(0, selectedLine-rows/2)
+	}
+	p.reviewScroll = max(0, min(p.reviewScroll, len(lines)-rows))
+	end := min(len(lines), p.reviewScroll+rows)
+	b.WriteString(strings.Join(lines[p.reviewScroll:end], "\n") + "\n")
+	if end < len(lines) {
+		b.WriteString(muted.Render(fmt.Sprintf("… %d more lines", len(lines)-end)) + "\n")
+	}
+
+	if len(t.docs) > 0 {
+		b.WriteString("\n" + accent.Render("ALSO DRAFTED") + muted.Render("  repository documents; never block publishing") + "\n")
+		p.docCursor = min(p.docCursor, len(t.docs)-1)
+		for i, d := range t.docs {
+			selected := i == p.docCursor && p.focus == labFocusDocs
+			cursor := "  "
+			if selected {
+				cursor = "▸ "
+			}
+			change := fmt.Sprintf("+%d lines", len(d.change.Added))
+			switch {
+			case d.err != nil:
+				change = d.err.Error()
+			case d.change.New:
+				change = "new file, " + change
+			case len(d.change.Dropped) > 0:
+				change += fmt.Sprintf(", drops %d", len(d.change.Dropped))
+			}
+			b.WriteString(truncateStr(fmt.Sprintf("%s%s  %s  ", cursor, d.artifact.Path, muted.Render(change))+stateLabel(d.artifact), width) + "\n")
+			if selected {
+				for _, line := range d.change.Added[:min(len(d.change.Added), 6)] {
+					b.WriteString(success.Render(truncateStr("    + "+line, width)) + "\n")
+				}
+				for _, line := range d.change.Dropped[:min(len(d.change.Dropped), 3)] {
+					b.WriteString(warning.Render(truncateStr("    − "+line, width)) + "\n")
+				}
+			}
+		}
+	}
+
+	hints := "↵ approve  ·  c request changes  ·  e edit  ·  ↑↓ scroll  ·  Tab documents and decisions  ·  . actions"
+	switch {
+	case p.focus == labFocusDocs:
+		hints = "↑↓ choose  ·  y approve into the checkout  ·  n discard  ·  Tab decisions  ·  Esc back"
+	case path == "tickets.json":
+		hints = "↵ approve  ·  ↑↓ choose  ·  → open  ·  ← close  ·  c request changes to this ticket  ·  e edit  ·  . actions"
+	}
+	return b.String(), hints
+}
+
+// handleLabReviewKey handles a key while the page shows a draft for review.
+func (m *Model) handleLabReviewKey(e domain.LabEntry, key string) (tea.Model, tea.Cmd) {
+	p := m.lab.page
+	t := m.lab.talks[e.ID]
+	path := labReviewPath(t)
+	a, ok := t.labArtifact(path)
+	review := func(a domain.LabArtifact, action string) (tea.Model, tea.Cmd) {
+		return m.handleLabArtifactReview(modal.LabArtifactReviewMsg{EntryID: e.ID, Path: a.Path, Hash: domain.LabContentHash(a.Body), Action: action})
+	}
+
+	if p.focus == labFocusDocs {
+		if len(t.docs) == 0 {
+			p.focus = labFocusPanel
+			return m, nil
+		}
+		d := t.docs[min(p.docCursor, len(t.docs)-1)]
+		switch key {
+		case "up", "k":
+			p.docCursor = max(0, p.docCursor-1)
+		case "down", "j":
+			p.docCursor = min(len(t.docs)-1, p.docCursor+1)
+		case "y", "Y":
+			return review(d.artifact, modal.LabReviewApprove)
+		case "n", "N":
+			return review(d.artifact, modal.LabReviewDiscard)
+		case "tab":
+			if len(labDecisions(t)) > 0 {
+				p.focus = labFocusLog
+			} else {
+				p.focus = labFocusPanel
+			}
+		case "esc", "shift+tab":
+			p.focus = labFocusPanel
+		}
+		return m, nil
+	}
+
+	switch key {
+	case "esc":
+		m.closeLabPage()
+		return m, nil
+	case "tab":
+		switch {
+		case len(t.docs) > 0:
+			p.focus = labFocusDocs
+		case len(labDecisions(t)) > 0:
+			p.focus = labFocusLog
+		}
+		return m, nil
+	}
+	if !ok {
+		return m, nil
+	}
+	switch key {
+	case "enter":
+		if e.ReviewOf(a) == domain.LabReviewApproved {
+			m.statusMsg = fmt.Sprintf("%s is approved; the session moves on", path)
+			return m, clearMsgCmd()
+		}
+		return review(a, modal.LabReviewApprove)
+	case "e":
+		return review(a, modal.LabReviewEdit)
+	case "c":
+		prefix := ""
+		if rows, err := labTicketRows(a.Body); err == nil && path == "tickets.json" && p.ticketCursor < len(rows) {
+			prefix = rows[p.ticketCursor].ticket.Key + ": "
+		}
+		updated, cmd := review(a, modal.LabReviewChanges)
+		if change, ok := m.activeModal.(*modal.LabMessageModal); ok && prefix != "" {
+			change.AppendText(prefix)
+		}
+		return updated, cmd
+	case "up", "k":
+		if path == "tickets.json" {
+			p.ticketCursor = max(0, p.ticketCursor-1)
+		} else {
+			p.reviewScroll = max(0, p.reviewScroll-1)
+		}
+	case "down", "j":
+		if path == "tickets.json" {
+			p.ticketCursor++
+		} else {
+			p.reviewScroll++
+		}
+	case "pgup":
+		p.reviewScroll = max(0, p.reviewScroll-10)
+	case "pgdown":
+		p.reviewScroll += 10
+	case "right", "l":
+		if rows, err := labTicketRows(a.Body); err == nil && p.ticketCursor < len(rows) {
+			p.ticketOpen = rows[p.ticketCursor].ticket.Key
+		}
+	case "left", "h":
+		p.ticketOpen = ""
+	}
+	return m, nil
+}
+
+// labPublishSummary says what publishing e will create, once its drafts are
+// ready; otherwise it is empty.
+func labPublishSummary(v labView, e domain.LabEntry, t labTalk) string {
+	if labPublishRequires(e) == nil || !v.draftReady(e) || e.Status == domain.LabStatusPublished {
+		return ""
+	}
+	title := func(path string) string {
+		a, ok := t.labArtifact(path)
+		if !ok {
+			return ""
+		}
+		for _, line := range strings.Split(a.Body, "\n") {
+			if strings.HasPrefix(line, "# ") {
+				return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+			}
+		}
+		return ""
+	}
+	if e.Mode == domain.LabModeGrill {
+		tickets := 0
+		if a, ok := t.labArtifact("tickets.json"); ok {
+			if parsed, err := domain.ParseLabTickets(a.Body); err == nil {
+				tickets = len(parsed)
+			}
+		}
+		return fmt.Sprintf("Publishes the epic %q with %d tickets as sub-issues, placed in Backlog.", title("spec.md"), tickets)
+	}
+	return fmt.Sprintf("Publishes the issue %q, placed in Backlog.", title("issue.md"))
 }
