@@ -24,8 +24,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   CMD bootstrap is standalone, and Linux and Windows reinstall behavior runs in
   CI.
 
+### Changed
+
+- **Lab inspector and pop-ups retired** — the entry page now covers what the
+  Lab inspector did, so `v` no longer opens it in the Lab and *Inspect* is
+  gone from the Actions panel. Drafts of a session that has ended are reviewed
+  on the page as well, and an entry whose drafts were never written offers to
+  resume its session rather than to review. The publish preview opens on the
+  entry page, wherever publishing starts, and `Enter` confirms it as well as
+  `y`. Question, reply, and permission cards exist only on the page; a change
+  request is the one dialog left. Row actions now read *Start grill*, *Shape
+  bug*, *Resume grill*, *Retry grill*, *Review the spec*, *Publish 4 issues*,
+  or what the agent is doing, such as *Writing the spec…*, and rows no longer
+  name the agent's Herdr pane.
+
+### Fixed
+
+- **Lab sessions on Claude Code could not write anything** — Claude Code
+  refuses to write inside a `.git` directory, where the Lab lives, so a Claude
+  agent could not write its first question card. Each stage's agent now works
+  in a folder of its own under `~/.grove/lab-work/`, outside any repository,
+  still confined to it, and the session runtime keeps that folder and the Lab
+  entry in step both ways.
+- **Lab escalation with a question open** — escalating a bug while its
+  shaping agent waited on a question card no longer holds the new grill's
+  Scout stage on that card. Only the stages that ask handle cards; the open
+  card is answered in Grove and reaches the Interview agent in its brief.
+
 ### Added
 
+- **Lab review on the entry page** — the fifth slice of the Lab redesign. A
+  draft waiting between stages is reviewed on the entry page: the spec and a
+  bug report are shown rendered and scroll with the arrow keys, and tickets
+  are listed beneath the tickets that block them, each opened with `→`. Enter
+  approves the draft and the session moves on, `c` asks the agent for changes
+  (to the selected ticket when reviewing tickets), and `e` edits it. Drafted
+  repository documents are listed as *Also drafted* with the lines each adds
+  to the checkout, applied with `y` or discarded with `n`. An entry ready to
+  publish says what publishing will create. *Reopen spec* withdraws the spec's
+  approval while the tickets are drafted; the session returns to the spec
+  and keeps the tickets drafted so far.
+- **Lab list grouped by what entries need** — the fourth slice of the Lab
+  redesign. The `WORKING`, `INBOX`, `ISSUES`, and `ARCHIVE` lanes and the
+  `[` and `]` keys are replaced by one list in four groups: *NEEDS YOU* (a
+  question, reply, permission, or draft waiting; ready to publish; a failed or
+  stopped session), longest waiting first; *WORKING*; *NOT STARTED*; and
+  *DONE*, which shows the five latest published entries until its last row is
+  opened. Everything listed under *NEEDS YOU* is marked *Waiting on you*. `0`
+  shows the archive and returns from it; `1`, `2`, and `3` still filter by
+  kind.
+- **Lab entry page** — the third slice of the Lab redesign. Enter on a Lab
+  entry opens its page in place of the list: a stepper of the session's
+  steps, with interview coverage such as `Interview 6/9`; a panel for what the
+  entry needs now; and the decisions answered so far. Question cards are
+  answered on the page, with the coverage still open shown above them; a turn
+  that ended without a card is replied to on the page with the agent's output
+  above the editor, and permission prompts are answered with `y` or `n`.
+  Enter on a decision reopens its card to change the answer while the
+  interview lasts. Enter does what the entry needs next, `.` focuses the
+  Actions panel, which adds *Write the spec now* and *View agent*, and Esc
+  returns to the list. The page owns the keyboard, so typing in a note never
+  triggers a global key.
+- **Lab stages and prompts** — the second slice of the Lab redesign. A grill
+  session now runs four stages, *Scout*, *Interview*, *Spec*, and *Tickets*,
+  each with a fresh agent and its own prompt; a shaping session runs *Shape*.
+  The prompts are Grove's own, in `runtime/sandcastle/prompts/lab/`, written
+  for small local models as well as hosted ones, and a repository can replace
+  any of them under `.grove/lab/prompts/`; the pinned mattpocock skills are
+  removed. Grove builds a map of the repository for every session, from the
+  tracked files and within `[lab] repo_map_tokens` (8,000 by default), and the
+  Scout stage reads the code an entry concerns before the interview, whose
+  questions must cite it. The interview tracks topic coverage in
+  `coverage.json`. Each stage's output is checked and sent back to the agent
+  with the exact problems, and the spec, tickets, and bug report wait for
+  approval in Grove before the session moves on. `npm run lab-eval` in the
+  runtime scores the prompts against a chosen agent and model on fixture
+  entries.
+- **Lab question cards** — Lab sessions are now conducted in Grove rather than
+  in the agent's Herdr pane, as the first slice of the Lab redesign in
+  `docs/LAB_DESIGN.md`. The agent asks each question as a card in the entry's
+  `questions/` directory, with options and a recommended answer; `Enter` on the
+  entry opens the card, and the answer is written for the session runtime to
+  deliver once every waiting card has one. Invalid cards are repaired with a
+  prompt naming the exact error before they reach the user. A turn that ends
+  without a card opens a reply showing the agent's last output, permission
+  prompts are allowed or denied in Grove, and asking for changes to a draft is
+  written in Grove instead of in the pane. Claude Code runs Lab sessions in
+  `dontAsk` mode, limited to reading the repository, read-only git commands,
+  and writing under the entry, so sessions do not stop on permission prompts.
+  A resumed session replays the questions asked so far.
 - **Lab** — a navigation rail tab (`l`) for ideas and bugs before they become
   issues, rebuilt to the design in `docs/LAB_DESIGN.md`. Entries are stored in
   `<git-common-dir>/grove-lab/`, shared by every worktree and never committed,

@@ -24,9 +24,12 @@ const (
 	footerHintsIssues    = "[Tab] Panel | [j/k] Navigate | [Enter] Jump/Open | [a] Actions | [r] Sync | [t] Settings | [/] Fuzzy | [q/esc]"
 	footerHintsPRs       = "[Tab] Panel | [j/k] Navigate | [Enter] Checkout | [a] Actions | [t] Settings | [/] Fuzzy | [q/esc]"
 	footerHintsDefault   = footerHintsWorktrees
-	actionBarHints       = "[enter] Open  [a] Focus actions | [f1] Help"
-	defaultTermWidth     = 120
-	navPanelInner        = 18
+	footerHintsLab       = "[Tab] Panel | [j/k] Navigate | [Enter] Open | [c] Capture | [a] Actions | [1-3] Kind | [/] Fuzzy | [q/esc]"
+	// The Lab's entry page owns the keyboard, so only its own keys apply.
+	footerHintsLabPage = "[Esc] Back to the list | [.] Actions | [?] Help | [Ctrl+C] Quit"
+	actionBarHints     = "[enter] Open  [a] Focus actions | [f1] Help"
+	defaultTermWidth   = 120
+	navPanelInner      = 18
 	// ctxPanelInner is no longer a constant — use computeCtxInner(termWidth) instead.
 	// panelOverhead: 1 border-left + 1 pad-left + 1 pad-right + 1 border-right
 	panelOverhead = 4
@@ -263,7 +266,7 @@ func renderFull(worktrees []domain.Worktree, selectedIdx int, repoPath string, t
 	))
 	ctx := renderContextPanel(view, worktrees, selectedIdx, issues, selectedIssueIdx, prs, selectedPRIdx, lab, theme, panelHeight, ctxScroll, focused == panelCtx, ctxInner, sessions, missionState, actions, actionIdx)
 	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, nav, list, ctx)
-	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, issues, selectedIssueIdx, prs, selectedPRIdx)
+	footer := renderFooterBar(theme, time.Now().UTC().Format("2006-01-02"), termWidth, syncing, lastSynced, syncErr, view, lab.page != nil, issues, selectedIssueIdx, prs, selectedPRIdx)
 	actionBar := renderActionBar(theme, termWidth)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer, actionBar)
@@ -1733,13 +1736,17 @@ func clipContent(content string, offset, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderFooterBar(theme styles.Theme, date string, termWidth int, syncing bool, lastSynced time.Time, syncErr error, view activeView, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int) string {
+func renderFooterBar(theme styles.Theme, date string, termWidth int, syncing bool, lastSynced time.Time, syncErr error, view activeView, labPage bool, issues []domain.Issue, selectedIssueIdx int, prs []domain.PullRequest, selectedPRIdx int) string {
 	hints := footerHintsDefault
-	switch view {
-	case viewIssues:
+	switch {
+	case view == viewIssues:
 		hints = footerHintsIssues
-	case viewPRs:
+	case view == viewPRs:
 		hints = footerHintsPRs
+	case view == viewLab && labPage:
+		hints = footerHintsLabPage
+	case view == viewLab:
+		hints = footerHintsLab
 	}
 
 	var syncStatus string

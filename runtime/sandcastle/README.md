@@ -11,7 +11,7 @@ Grove's workflow runtime. It provides the workflow commands and
 | `ci <pr>` | Repair a pull request's failing checks; `--continue` resumes a stopped run |
 | `resolve <pr>` | Resolve a pull request's merge conflicts |
 | `clean` | Remove merged worktrees and branches |
-| `grove-lab shape <entry-id>`, `grove-lab grill <entry-id>` | A Grove Lab session: opens the configured agent in a Herdr pane with the entry's brief and reports the conversation's progress until Grove ends it. `grill` uses the skills bundled in `skills/mattpocock/`. See `docs/LAB_DESIGN.md` |
+| `grove-lab shape <entry-id>`, `grove-lab grill <entry-id>` | A Grove Lab session: runs each stage of the entry with a fresh agent in a Herdr pane, using Grove's own stage prompts in `prompts/lab/`, delivers the answers the user gives in Grove, and reports progress until Grove ends it. See `docs/LAB_DESIGN.md` |
 
 `imp` and `review` also accept `<owner/repo>` before the number. The workflows
 run inside Herdr panes and drive the agent backend chosen by

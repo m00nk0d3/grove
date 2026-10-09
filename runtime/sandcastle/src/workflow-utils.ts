@@ -115,8 +115,6 @@ export interface AgentLaunchConfig {
 
 const DEFAULT_PI_PROVIDER = "lm-studio";
 const DEFAULT_PI_MODEL = "qwen/qwen3.5-9b";
-
-// Default OpenCode model handling: if AGENT_FLOW_OPENCODE_MODEL is unset, no --model flag is added
 const DEFAULT_CLAUDE_PERMISSION_MODE = "acceptEdits";
 // PowerShell is a separate tool from Bash on Windows, and a specialist working in
 // a .NET or Windows repository reaches for it unprompted. Leaving it out does not
@@ -135,7 +133,7 @@ export const PI_COMPACTION_GUARD_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "pi-compaction-guard.js",
 );
-const AGENT_CONTINUITY_PROMPT =
+export const AGENT_CONTINUITY_PROMPT =
   "Agent-flow continuity contract: context compaction is lossy. After any " +
   "compaction, follow the injected recovery message, treat the exact original " +
   "assignment and filesystem/Git state as authoritative, re-read durable " +
@@ -293,7 +291,7 @@ export function getAgentLaunchConfig(
   // off and let it read the model from opencode.json. Forcing a model here
   // overrides the user's own config, and a model OpenCode does not know about
   // fails outright with "not valid source" — the specialist never starts.
-  const model = env.AGENT_FLOW_OPENCODE_MODEL ?? DEFAULT_OPENCODE_MODEL;
+  const model = env.AGENT_FLOW_OPENCODE_MODEL;
   const args = ["--", "--pure"];
   if (model) {
     args.push("--model", model);

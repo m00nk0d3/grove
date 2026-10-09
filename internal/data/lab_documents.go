@@ -82,3 +82,33 @@ func missingLines(existing, draft string) []string {
 	}
 	return missing
 }
+
+// LabDocumentChange is what approving a repository document would do to the
+// checkout.
+type LabDocumentChange struct {
+	// New is set when the checkout has no file at the document's path.
+	New bool
+	// Added are the non-blank lines the draft adds to the checkout's file.
+	Added []string
+	// Dropped are the non-blank lines of the checkout's file the draft
+	// lacks; approval is refused while there are any.
+	Dropped []string
+}
+
+// LabDocumentChanges compares a drafted repository document with the
+// checkout's file at the same path.
+func LabDocumentChanges(checkout string, a domain.LabArtifact) (LabDocumentChange, error) {
+	target, err := LabDocumentTarget(checkout, a)
+	if err != nil {
+		return LabDocumentChange{}, err
+	}
+	existing, err := os.ReadFile(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return LabDocumentChange{New: true, Added: missingLines(a.Body, "")}, nil
+	}
+	if err != nil {
+		return LabDocumentChange{}, fmt.Errorf("read %s: %w", a.Path, err)
+	}
+	current := strings.ReplaceAll(string(existing), "\r\n", "\n")
+	return LabDocumentChange{Added: missingLines(a.Body, current), Dropped: missingLines(current, a.Body)}, nil
+}

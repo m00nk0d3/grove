@@ -131,7 +131,6 @@ const (
 	ContextActionRemoveRun    = "remove-workflow"
 	ContextActionSyncGitHub   = "sync-github"
 	ContextActionLabCapture   = "lab-capture"
-	ContextActionLabInspect   = "lab-inspect"
 	ContextActionLabShape     = "lab-shape"
 	ContextActionLabGrill     = "lab-grill"
 	ContextActionLabEscalate  = "lab-escalate"
@@ -144,6 +143,14 @@ const (
 	ContextActionLabArchive   = "lab-archive"
 	ContextActionLabRestore   = "lab-restore"
 	ContextActionLabDelete    = "lab-delete"
+	// ContextActionLabFinishInterview asks the agent to end the interview
+	// and write the spec.
+	ContextActionLabFinishInterview = "lab-finish-interview"
+	// ContextActionLabReopenSpec withdraws the spec's approval, sending a
+	// grill session from its tickets back to the spec.
+	ContextActionLabReopenSpec = "lab-reopen-spec"
+	// ContextActionLabViewAgent focuses the session agent's pane.
+	ContextActionLabViewAgent = "lab-view-agent"
 )
 
 // CandidateKind distinguishes the type of a cleanup candidate.
@@ -166,4 +173,22 @@ type CleanupCandidate struct {
 type CleanupConfirmedMsg struct {
 	Worktrees []string
 	Branches  []string
+}
+
+// Review actions on a drafted artifact.
+const (
+	LabReviewApprove = "approve"
+	LabReviewDiscard = "discard"
+	LabReviewEdit    = "edit"
+	LabReviewChanges = "changes"
+)
+
+// LabArtifactReviewMsg asks Grove to act on one of an entry's artifacts.
+// Hash identifies the content the user was shown, so a decision never applies
+// to a revision they have not seen.
+type LabArtifactReviewMsg struct {
+	EntryID string
+	Path    string
+	Hash    string
+	Action  string
 }

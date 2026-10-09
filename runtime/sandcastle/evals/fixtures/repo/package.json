@@ -1,0 +1,12 @@
+{
+  "name": "bookmarks",
+  "version": "0.3.0",
+  "description": "A command-line bookmark manager.",
+  "type": "module",
+  "bin": { "bookmarks": "dist/cli.js" },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test dist/*.test.js"
+  },
+  "devDependencies": { "typescript": "^5.6.0" }
+}

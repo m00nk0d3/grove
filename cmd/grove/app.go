@@ -1188,27 +1188,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
-		case modal.LabArtifactsRequestedMsg:
-			return m, loadLabArtifactsCmd(m.RepoPath, msg.EntryID)
-		case modal.LabArtifactsLoadedMsg:
-			if inspector, ok := m.activeModal.(*modal.LabInspectorModal); ok {
-				inspector.SetArtifacts(msg)
-			}
-			return m, nil
-		case modal.LabOpenPaneMsg:
-			m.activeModal = nil
-			return m.openLabRunPane(msg.RunID)
-		case modal.LabArtifactReviewMsg:
-			return m.handleLabArtifactReview(msg)
-		case modal.LabPublishRequestedMsg:
-			e, ok := m.lab.entry(msg.EntryID)
-			if !ok {
-				return m, nil
-			}
-			m.activeModal = nil
-			return m.prepareLabPublish(e)
-		case modal.LabPublishConfirmedMsg:
-			return m.publishLabEntry(msg)
 		case modal.MissionReportsRequestedMsg:
 			return m, loadMissionReportsCmd(msg, m.RepoPath)
 		case modal.MissionReportsLoadedMsg:
@@ -1240,6 +1219,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case modal.LabCaptureSubmittedMsg:
 			return m.handleLabCaptureSubmitted(msg)
+		case modal.LabAnswerSubmittedMsg:
+			return m.handleLabAnswerSubmitted(msg)
+		case modal.LabRequestSubmittedMsg:
+			return m.handleLabRequestSubmitted(msg)
 		case modal.LabArchiveConfirmedMsg:
 			return m.handleLabArchiveConfirmed(msg)
 		case modal.LabDeleteConfirmedMsg:
@@ -1328,6 +1311,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Dismiss any visible error overlay on the next keypress.
 		m.statusErr = ""
+		// The Lab's entry page owns the keyboard; Esc in its Actions panel
+		// returns to it.
+		if m.view == viewLab && m.lab.page != nil {
+			if m.focused == panelCtx && msg.Type == tea.KeyEsc {
+				m.focused = panelList
+				return m, nil
+			}
+			if m.focused == panelList {
+				return m.handleLabPageKey(msg)
+			}
+		}
 		switch msg.Type {
 		case tea.KeyTab:
 			m.focused = (m.focused + 1) % panelCount
@@ -1423,9 +1417,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.view == viewDashboard {
 					return m.openSelectedMissionInspector()
 				}
-				if m.view == viewLab {
-					return m.openLabInspector()
-				}
 			case "x", "X":
 				if m.view == viewDashboard {
 					return m.confirmSelectedWorkflowRemoval()
@@ -1442,16 +1433,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.dashboardTab = dashboardTabCompleted
 					}
 					m.selectedMissionIdx = 0
-					return m, nil
-				}
-				if m.view == viewLab {
-					if msg.String() == "[" {
-						m.lab.setTab(m.lab.tab - 1)
-					} else {
-						m.lab.setTab(m.lab.tab + 1)
-					}
-					m.ctxScrollOffset = 0
-					m.contextActionIdx = 0
 					return m, nil
 				}
 			case "w", "W":
@@ -1492,6 +1473,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "/":
 				return m, m.openFuzzyCmd()
+			case "0":
+				if m.view == viewLab {
+					m.lab.setArchived(!m.lab.archived)
+					m.ctxScrollOffset = 0
+					m.contextActionIdx = 0
+				}
 			case "1", "2", "3":
 				if m.view == viewLab {
 					filters := map[string]domain.LabFilter{"1": domain.LabFilterAll, "2": domain.LabFilterIdea, "3": domain.LabFilterBug}
@@ -1569,9 +1556,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case labEditorClosedMsg:
 		if msg.err != nil {
 			m.statusErr = fmt.Sprintf("The editor exited with an error: %v", msg.err)
-			return m, tea.Batch(clearErrorCmd(), loadLabArtifactsCmd(m.RepoPath, msg.entryID))
+			return m, tea.Batch(clearErrorCmd(), loadLabTalksCmd(m.RepoPath, m.lab.entries))
 		}
-		return m, loadLabArtifactsCmd(m.RepoPath, msg.entryID)
+		return m, loadLabTalksCmd(m.RepoPath, m.lab.entries)
 
 	case worktreesRefreshedMsg:
 		if msg.err == nil {
@@ -1582,7 +1569,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.lab.entries = msg.labs
 				m.lab.locks = msg.labLocks
+				m.lab.talks = msg.labTalks
 				m.lab.clamp()
+				m.syncLabPage()
 			}
 			// Always use the main worktree (first entry) as the canonical repo path
 			// so the header shows the repo name rather than the current worktree dir.
@@ -1744,7 +1733,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case missionControlUpdatedMsg:
 		m.missionState = &msg.state
 		m.lab.setMission(m.missionState)
-		m.refreshLabInspector()
+		m.syncLabPage()
 		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 		if len(missions) == 0 {
 			m.selectedMissionIdx = 0
@@ -1756,7 +1745,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				inspector.SetWorkflow(workflow, agentsForWorkflow(m.missionState, inspector.RunID()))
 			}
 		}
-		return m, m.syncLabStatusesCmd()
+		return m, tea.Batch(m.syncLabStatusesCmd(), loadLabTalksCmd(m.RepoPath, m.lab.entries))
+
+	case labTalksLoadedMsg:
+		m.lab.talks = msg.talks
+		m.syncLabPage()
+		return m, nil
+
+	case modal.LabAnswerSubmittedMsg:
+		return m.handleLabAnswerSubmitted(msg)
+
+	case modal.LabPublishConfirmedMsg:
+		return m.publishLabEntry(msg)
+
+	case modal.LabRequestSubmittedMsg:
+		return m.handleLabRequestSubmitted(msg)
+
+	case labAnswerRecordedMsg:
+		return m.handleLabAnswerRecorded(msg)
+
+	case labRequestSentMsg:
+		return m.handleLabRequestSent(msg)
 
 	case sessionFocusedMsg:
 		// Focus is best-effort; show a friendly toast regardless of outcome.
@@ -2978,6 +2987,7 @@ type worktreesRefreshedMsg struct {
 	labs      []domain.LabEntry
 	labsErr   error
 	labLocks  map[string]data.LabLockOwner
+	labTalks  map[string]labTalk
 	err       error
 }
 
@@ -2993,6 +3003,7 @@ func (m *Model) refreshWorktreesCmd() tea.Cmd {
 			msg.labs, msg.labsErr = loadLabs(repoPath)
 			if store, err := labStoreFor(repoPath); err == nil {
 				msg.labLocks, _ = store.Locks()
+				msg.labTalks = loadLabTalks(store, repoPath, msg.labs)
 			}
 		}
 		return msg
@@ -3308,7 +3319,7 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
-	case modal.ContextActionLabCapture, modal.ContextActionLabInspect, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEscalate, modal.ContextActionLabOpenIssue, modal.ContextActionLabClearLock, modal.ContextActionLabEnd,
+	case modal.ContextActionLabCapture, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEscalate, modal.ContextActionLabOpenIssue, modal.ContextActionLabClearLock, modal.ContextActionLabEnd,
 		modal.ContextActionLabPublish,
 		modal.ContextActionLabEdit, modal.ContextActionLabArchive,
 		modal.ContextActionLabRestore, modal.ContextActionLabDelete:

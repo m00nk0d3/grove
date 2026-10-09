@@ -110,4 +110,7 @@ type LabConfig struct {
 	// "owner/number". When empty and the repository is linked to exactly one
 	// project, that project is used.
 	Project string `toml:"project"`
+	// RepoMapTokens is the budget, in tokens, of the repository map every
+	// Lab session stage receives. Zero means the default.
+	RepoMapTokens int `toml:"repo_map_tokens"`
 }

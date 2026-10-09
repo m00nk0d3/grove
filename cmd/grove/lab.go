@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -15,47 +16,27 @@ import (
 	"github.com/m00nk0d3/grove/internal/tui/modal"
 )
 
-// labTab is one of the Lab list's lifecycle tabs.
-type labTab int
-
-const (
-	labTabActive labTab = iota
-	labTabDrafts
-	labTabPublished
-	labTabArchived
-	labTabCount
-)
-
-var labTabLabels = [labTabCount]string{"WORKING", "INBOX", "ISSUES", "ARCHIVE"}
-
-// labTabOf returns the tab that lists e.
-func labTabOf(e domain.LabEntry) labTab {
-	switch {
-	case e.Archived:
-		return labTabArchived
-	case e.Status == domain.LabStatusDraft:
-		return labTabDrafts
-	case e.Status == domain.LabStatusPublished:
-		return labTabPublished
-	default:
-		return labTabActive
-	}
-}
-
 // labView is the Lab tab's state: every entry of the repository and what the
 // list shows of them. The cursor indexes visible(), so the entry drawn as
 // selected is the entry acted on.
 type labView struct {
 	entries []domain.LabEntry
-	tab     labTab
-	filter  domain.LabFilter
-	cursor  int
+	// archived shows the archive instead of the active groups.
+	archived bool
+	// doneExpanded shows every published entry, not only the latest.
+	doneExpanded bool
+	filter       domain.LabFilter
+	cursor       int
 	// runs holds the Sandcastle runs of the repository by run ID, refreshed
 	// with mission control state. An entry's session state is read from its
 	// runs here, never stored on the entry.
 	runs map[string]labRun
 	// locks are the entries' held session locks, by entry ID.
 	locks map[string]data.LabLockOwner
+	// talks holds what each entry's session has asked the user, by entry ID.
+	talks map[string]labTalk
+	// page is the open entry page, or nil while the list shows.
+	page *labPage
 }
 
 // labRun is a Sandcastle run as the Lab shows it.
@@ -137,34 +118,157 @@ func (v labView) waiting(e domain.LabEntry) bool {
 	return ok && run.waiting()
 }
 
-// visibleIn returns the entries in tab that match the kind filter: entries
-// waiting for the user first, then newest first.
-func (v labView) visibleIn(tab labTab) []domain.LabEntry {
-	var out []domain.LabEntry
+// labGroup is a section of the Lab list. Entries are grouped by what they
+// need from the user, so the list reads as a to-do list. See
+// docs/LAB_DESIGN.md, "List".
+type labGroup int
+
+const (
+	labGroupNeedsYou labGroup = iota
+	labGroupWorking
+	labGroupNotStarted
+	labGroupDone
+	labGroupArchived
+	labGroupCount
+)
+
+var labGroupLabels = [labGroupCount]string{"NEEDS YOU", "WORKING", "NOT STARTED", "DONE", "ARCHIVED"}
+
+// labDoneShown is how many published entries the list shows before the row
+// that reveals the rest.
+const labDoneShown = 5
+
+// groupOf returns the group that lists e.
+func (v labView) groupOf(e domain.LabEntry) labGroup {
+	switch {
+	case e.Archived:
+		return labGroupArchived
+	case e.Status == domain.LabStatusPublished:
+		return labGroupDone
+	}
+	run, hasRun := v.latestRun(e)
+	if ask, _ := v.ask(e); ask != labAskNone {
+		return labGroupNeedsYou
+	}
+	if hasRun && run.live() {
+		if run.waiting() {
+			return labGroupNeedsYou
+		}
+		return labGroupWorking
+	}
+	if hasRun && strings.EqualFold(run.workflow.Status, domain.WorkflowFailed) {
+		return labGroupNeedsYou
+	}
+	if e.Status == domain.LabStatusDraft {
+		return labGroupNotStarted
+	}
+	// A session that stopped before publishing: ready to publish, to resume,
+	// or to retry.
+	return labGroupNeedsYou
+}
+
+// waitingSince is when e started waiting on the user, for putting the
+// longest wait first.
+func (v labView) waitingSince(e domain.LabEntry) time.Time {
+	if run, ok := v.latestRun(e); ok && !run.workflow.UpdatedAt.IsZero() {
+		return run.workflow.UpdatedAt
+	}
+	return e.Updated
+}
+
+// labItem is one selectable row of the list: an entry, or, when more is
+// positive, the row that shows the published entries beyond the first few.
+type labItem struct {
+	entry domain.LabEntry
+	group labGroup
+	more  int
+}
+
+// items returns the list's rows in order: the active groups, or, while the
+// archive is shown, the archived entries. Within NEEDS YOU the longest
+// waiting comes first; elsewhere the newest.
+func (v labView) items() []labItem {
+	groups := make([][]domain.LabEntry, labGroupCount)
 	for _, e := range v.entries {
-		if labTabOf(e) == tab && v.filter.Matches(e) {
-			out = append(out, e)
+		if e.Archived != v.archived || !v.filter.Matches(e) {
+			continue
+		}
+		g := v.groupOf(e)
+		groups[g] = append(groups[g], e)
+	}
+	var out []labItem
+	for g := labGroup(0); g < labGroupCount; g++ {
+		entries := groups[g]
+		sort.SliceStable(entries, func(i, j int) bool {
+			if g == labGroupNeedsYou {
+				return v.waitingSince(entries[i]).Before(v.waitingSince(entries[j]))
+			}
+			return entries[i].Created.After(entries[j].Created)
+		})
+		hidden := 0
+		if g == labGroupDone && !v.doneExpanded && len(entries) > labDoneShown {
+			hidden = len(entries) - labDoneShown
+			entries = entries[:labDoneShown]
+		}
+		for _, e := range entries {
+			out = append(out, labItem{entry: e, group: g})
+		}
+		if hidden > 0 {
+			out = append(out, labItem{group: g, more: hidden})
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if wi, wj := v.waiting(out[i]), v.waiting(out[j]); wi != wj {
-			return wi
-		}
-		return out[i].Created.After(out[j].Created)
-	})
 	return out
 }
 
-// visible returns the entries the list shows.
-func (v labView) visible() []domain.LabEntry { return v.visibleIn(v.tab) }
+// groupCount is how many entries a group holds, hidden ones included.
+func (v labView) groupCount(g labGroup) int {
+	n := 0
+	for _, e := range v.entries {
+		if e.Archived == v.archived && v.filter.Matches(e) && v.groupOf(e) == g {
+			n++
+		}
+	}
+	return n
+}
+
+// archivedCount is how many entries the archive holds.
+func (v labView) archivedCount() int {
+	n := 0
+	for _, e := range v.entries {
+		if e.Archived {
+			n++
+		}
+	}
+	return n
+}
+
+// visible returns the entries the list shows, in order.
+func (v labView) visible() []domain.LabEntry {
+	var out []domain.LabEntry
+	for _, it := range v.items() {
+		if it.more == 0 {
+			out = append(out, it.entry)
+		}
+	}
+	return out
+}
+
+// selectedItem returns the row under the cursor.
+func (v labView) selectedItem() (labItem, bool) {
+	items := v.items()
+	if v.cursor < 0 || v.cursor >= len(items) {
+		return labItem{}, false
+	}
+	return items[v.cursor], true
+}
 
 // selected returns the entry under the cursor.
 func (v labView) selected() (domain.LabEntry, bool) {
-	visible := v.visible()
-	if v.cursor < 0 || v.cursor >= len(visible) {
+	it, ok := v.selectedItem()
+	if !ok || it.more > 0 {
 		return domain.LabEntry{}, false
 	}
-	return visible[v.cursor], true
+	return it.entry, true
 }
 
 // entry returns the stored entry with the given ID.
@@ -178,7 +282,7 @@ func (v labView) entry(id string) (domain.LabEntry, bool) {
 }
 
 func (v *labView) clamp() {
-	n := len(v.visible())
+	n := len(v.items())
 	if v.cursor >= n {
 		v.cursor = n - 1
 	}
@@ -192,8 +296,9 @@ func (v *labView) move(delta int) {
 	v.clamp()
 }
 
-func (v *labView) setTab(tab labTab) {
-	v.tab = (tab%labTabCount + labTabCount) % labTabCount
+// setArchived shows the archive, or the active entries.
+func (v *labView) setArchived(archived bool) {
+	v.archived = archived
 	v.cursor = 0
 }
 
@@ -202,8 +307,9 @@ func (v *labView) setFilter(f domain.LabFilter) {
 	v.cursor = 0
 }
 
-// selectID moves to the tab listing the entry with the given ID and puts the
-// cursor on it. The kind filter is cleared when it would hide the entry.
+// selectID puts the cursor on the entry with the given ID, showing the
+// archive or the rest of DONE when that is where it is. The kind filter is
+// cleared when it would hide the entry.
 func (v *labView) selectID(id string) {
 	e, ok := v.entry(id)
 	if !ok {
@@ -213,13 +319,17 @@ func (v *labView) selectID(id string) {
 	if !v.filter.Matches(e) {
 		v.filter = domain.LabFilterAll
 	}
-	v.tab = labTabOf(e)
-	for i, visible := range v.visible() {
-		if visible.ID == id {
-			v.cursor = i
-			return
+	v.archived = e.Archived
+	for pass := 0; pass < 2; pass++ {
+		for i, it := range v.items() {
+			if it.more == 0 && it.entry.ID == id {
+				v.cursor = i
+				return
+			}
 		}
+		v.doneExpanded = true
 	}
+	v.clamp()
 }
 
 // labsLoadedMsg carries the repository's entries after a load or a change.
@@ -229,10 +339,12 @@ type labsLoadedMsg struct {
 	// locks, when locksLoaded, are the entries' held session locks.
 	locks       map[string]data.LabLockOwner
 	locksLoaded bool
-	entries     []domain.LabEntry
-	selectID    string
-	status      string
-	err         error
+	// talks, when locksLoaded, are the entries' protocol files.
+	talks    map[string]labTalk
+	entries  []domain.LabEntry
+	selectID string
+	status   string
+	err      error
 }
 
 // labStoreFor returns the Lab store of the repository at repoPath.
@@ -265,7 +377,8 @@ func labChangeCmd(repoPath, selectID, status string, change func(*data.LabStore)
 		}
 		entries, err := store.Load()
 		locks, lockErr := store.Locks()
-		return labsLoadedMsg{entries: entries, locks: locks, locksLoaded: lockErr == nil, selectID: selectID, status: status, err: err}
+		talks := loadLabTalks(store, repoPath, entries)
+		return labsLoadedMsg{entries: entries, locks: locks, locksLoaded: lockErr == nil, talks: talks, selectID: selectID, status: status, err: err}
 	}
 }
 
@@ -278,13 +391,14 @@ func (m *Model) handleLabsLoaded(msg labsLoadedMsg) (tea.Model, tea.Cmd) {
 	m.lab.entries = msg.entries
 	if msg.locksLoaded {
 		m.lab.locks = msg.locks
+		m.lab.talks = msg.talks
 	}
+	defer m.syncLabPage()
 	if msg.selectID != "" {
 		m.lab.selectID(msg.selectID)
 	} else {
 		m.lab.clamp()
 	}
-	m.refreshLabInspector()
 	if msg.status == "" {
 		return m, nil
 	}
@@ -343,11 +457,22 @@ func (m *Model) openLabCapture() {
 
 // labNextStep performs the selected entry's next step: Enter in the Lab.
 func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
+	if it, ok := m.lab.selectedItem(); ok && it.more > 0 {
+		m.lab.doneExpanded = true
+		return m, nil
+	}
 	e, ok := m.lab.selected()
 	if !ok {
 		m.openLabCapture()
 		return m, nil
 	}
+	m.openLabPage(e)
+	return m, nil
+}
+
+// labPrimaryAction performs what an entry needs next: Enter on its page, for
+// everything but the cards the page answers itself.
+func (m *Model) labPrimaryAction(e domain.LabEntry) (tea.Model, tea.Cmd) {
 	if e.Archived {
 		m.statusMsg = "Archived — restore it from the Actions panel to continue"
 		return m, clearMsgCmd()
@@ -355,12 +480,13 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 	if e.Status == domain.LabStatusPublished {
 		return m.openLabIssue(e)
 	}
-	// A draft waiting for review is reviewed in Grove, not in the pane.
-	if labPublishRequires(e) != nil && m.lab.draftReady(e) {
-		if e.Mode == domain.LabModeGrill && e.Status == domain.LabStatusTicketed {
-			return m.prepareLabPublish(e)
-		}
-		return m.openLabInspectorOnArtifacts()
+	// A draft waiting for approval is reviewed on the entry page, which
+	// handles its keys itself; once every draft is approved, Enter publishes.
+	if _, reviewing := m.lab.reviewing(e); reviewing {
+		return m, nil
+	}
+	if m.lab.publishable(e) {
+		return m.prepareLabPublish(e)
 	}
 	if run, ok := m.lab.latestRun(e); ok && run.live() && run.paneID != "" {
 		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
@@ -375,7 +501,8 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 		m.activeModal = modal.NewLabEditModal(e)
 		return m, nil
 	}
-	return m.openLabInspector()
+	m.statusMsg = "Nothing to do for this entry right now"
+	return m, clearMsgCmd()
 }
 
 // labContextActions lists what the Actions panel offers for the selected
@@ -413,9 +540,17 @@ func labContextActions(v labView) []contextActionOption {
 			contextActionOption{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
 		)
 	}
-	actions = append(actions, contextActionOption{icon: "◎", label: "Inspect", action: modal.ContextActionLabInspect})
 	if v.hasLiveSession(e) {
 		actions = append(actions, contextActionOption{icon: "■", label: "End session", action: modal.ContextActionLabEnd})
+	}
+	if t := v.talks[e.ID]; v.hasLiveSession(e) && t.hasSession && t.session.Stage == "interview" {
+		actions = append(actions, contextActionOption{icon: "»", label: "Write the spec now", action: modal.ContextActionLabFinishInterview})
+	}
+	if t := v.talks[e.ID]; v.hasLiveSession(e) && t.hasSession && t.session.Stage == "tickets" {
+		actions = append(actions, contextActionOption{icon: "↶", label: "Reopen spec", action: modal.ContextActionLabReopenSpec})
+	}
+	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
+		actions = append(actions, contextActionOption{icon: "◫", label: "View agent", action: modal.ContextActionLabViewAgent})
 	}
 	if owner, ok := v.foreignLock(e); ok {
 		actions = append(actions, contextActionOption{icon: "⊘", label: "Clear lock from " + owner.Host, action: modal.ContextActionLabClearLock})
@@ -451,9 +586,32 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 		m.statusErr = "No Lab entry selected"
 		return m, clearErrorCmd()
 	}
+	if m.lab.page != nil {
+		// An action chosen from the entry page returns the keyboard to it.
+		m.focused = panelList
+	}
 	switch action {
-	case modal.ContextActionLabInspect:
-		return m.openLabInspector()
+	case modal.ContextActionLabFinishInterview:
+		return m.handleLabRequestSubmitted(modal.LabRequestSubmittedMsg{EntryID: e.ID, Kind: domain.LabRequestFinishInterview})
+	case modal.ContextActionLabReopenSpec:
+		// The session notices the spec is no longer approved, ends the
+		// tickets stage, and returns to the spec; the tickets drafted so far
+		// are kept for the next tickets stage.
+		reviews := make(map[string]domain.LabReview, len(e.Reviews))
+		for path, r := range e.Reviews {
+			if path != "spec.md" {
+				reviews[path] = r
+			}
+		}
+		e.Reviews = reviews
+		e.Updated = time.Now().UTC()
+		return m, labChangeCmd(m.RepoPath, e.ID, "Reopened the spec; the session returns to it", func(s *data.LabStore) error { return s.Put(e) })
+	case modal.ContextActionLabViewAgent:
+		if run, ok := m.lab.latestRun(e); ok && run.live() {
+			return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
+		}
+		m.statusErr = "The session is not running"
+		return m, clearErrorCmd()
 	case modal.ContextActionLabOpenIssue:
 		return m.openLabIssue(e)
 	case modal.ContextActionLabClearLock:
@@ -510,62 +668,6 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// labInspectorState builds what the inspector shows for e.
-func (m *Model) labInspectorState(e domain.LabEntry) modal.LabInspectorState {
-	state := labStateOf(m.lab, e)
-	var runs []modal.LabInspectorRun
-	for _, run := range m.lab.entryRuns(e) {
-		runs = append(runs, modal.LabInspectorRun{Workflow: run.workflow, PaneID: run.paneID})
-	}
-	return modal.LabInspectorState{
-		Entry:           e,
-		Badge:           state.badge,
-		Attention:       state.tone == labToneAttention,
-		StageLabel:      labStageLabel(m.lab, e),
-		PublishRequires: labPublishRequires(e),
-		Runs:            runs,
-	}
-}
-
-// openLabInspector opens the inspector on the selected entry.
-func (m *Model) openLabInspector() (tea.Model, tea.Cmd) {
-	e, ok := m.lab.selected()
-	if !ok {
-		m.statusErr = "No Lab entry selected"
-		return m, clearErrorCmd()
-	}
-	inspector := modal.NewLabInspectorModal(m.labInspectorState(e))
-	m.activeModal = inspector
-	return m, inspector.Init()
-}
-
-// refreshLabInspector updates an open inspector after its entry or runs
-// changed. An inspector whose entry was deleted is closed.
-func (m *Model) refreshLabInspector() {
-	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
-	if !ok {
-		return
-	}
-	e, ok := m.lab.entry(inspector.EntryID())
-	if !ok {
-		m.activeModal = nil
-		return
-	}
-	inspector.SetState(m.labInspectorState(e))
-}
-
-// loadLabArtifactsCmd reads an entry's drafted artifacts.
-func loadLabArtifactsCmd(repoPath, id string) tea.Cmd {
-	return func() tea.Msg {
-		store, err := labStoreFor(repoPath)
-		if err != nil {
-			return modal.LabArtifactsLoadedMsg{EntryID: id, Err: err}
-		}
-		artifacts, err := store.Artifacts(id)
-		return modal.LabArtifactsLoadedMsg{EntryID: id, Artifacts: artifacts, Err: err}
-	}
 }
 
 // openLabRunPane focuses the Herdr pane of a run's agent.
@@ -645,6 +747,7 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 	starter := m.workflowStarter
 	repoPath := m.RepoPath
 	agent := m.Config.Sandcastle.Agent()
+	mapTokens := m.Config.Lab.RepoMapTokens
 	m.statusMsg = fmt.Sprintf("Starting a %s session for %q…", verb, e.Title())
 	return m, func() tea.Msg {
 		fail := func(err error) tea.Msg { return labSessionStartedMsg{loaded: labsLoadedMsg{err: err}} }
@@ -660,6 +763,13 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 			return fail(err)
 		}
 		defer release()
+
+		// Every stage of the session reads the repository map for the
+		// checkout's commit. Without one the agent explores unaided, so a
+		// failure to build it does not stop the session.
+		if err := ensureLabRepoMap(store, repoPath, mapTokens); err != nil {
+			slog.Warn("lab: could not build the repository map", "err", err)
+		}
 
 		// Escalating hands the entry from its shape session to a grill. The
 		// shape run is told to close first; its close file is its own, so the
@@ -700,7 +810,7 @@ func (m *Model) startLabSession(e domain.LabEntry, mode domain.LabMode) (tea.Mod
 			loaded: labsLoadedMsg{
 				entries:  entries,
 				selectID: e.ID,
-				status:   fmt.Sprintf("%s %q — answer the agent in its Herdr pane", strings.ToUpper(verb[:1])+verb[1:], e.Title()),
+				status:   fmt.Sprintf("%s %q — its questions appear here in the Lab", strings.ToUpper(verb[:1])+verb[1:], e.Title()),
 				err:      err,
 			},
 		}
@@ -761,44 +871,83 @@ func labNextAction(v labView, e domain.LabEntry) string {
 			return fmt.Sprintf("Open issue #%d", *issue)
 		}
 		return "Open published issues"
-	case labPublishRequires(e) != nil && v.draftReady(e):
-		if e.Mode == domain.LabModeGrill && e.Status == domain.LabStatusTicketed {
-			return "Review and publish the epic"
-		}
-		return "Review the drafted bug report"
+	}
+	if path, ok := v.reviewing(e); ok {
+		return "Review the " + labDraftNames[path]
+	}
+	if v.publishable(e) {
+		return labPublishAction(v, e)
+	}
+	if action := labAskAction(v, e); action != "" {
+		return action
 	}
 	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
 		if run.waiting() {
-			return "Answer the agent"
+			// Waiting on something Grove has no card for.
+			return "Answer the agent in its pane"
 		}
-		return "Open the agent session"
+		return labWorkingAction(run)
+	}
+	failed := false
+	if run, ok := v.latestRun(e); ok {
+		failed = strings.EqualFold(run.workflow.Status, domain.WorkflowFailed)
 	}
 	switch {
+	case v.canShape(e) && e.Status == domain.LabStatusDraft:
+		return "Shape bug"
+	case v.canShape(e) && failed:
+		return "Retry shaping"
 	case v.canShape(e):
-		if e.Status == domain.LabStatusDraft {
-			return "Shape this bug into a report"
-		}
-		return "Resume shaping the bug report"
+		return "Resume shaping"
+	case v.canGrill(e) && e.Status == domain.LabStatusDraft:
+		return "Start grill"
+	case v.canGrill(e) && failed:
+		return "Retry grill"
 	case v.canGrill(e):
-		if e.Status == domain.LabStatusDraft {
-			return "Grill this idea"
-		}
-		return "Resume grilling this idea"
+		return "Resume grill"
 	case e.Editable():
 		return "Edit this capture"
 	default:
-		return "Inspect progress"
+		return "Nothing to do right now"
 	}
 }
 
-// openLabInspectorOnArtifacts opens the inspector on the selected entry's
-// Artifacts tab, for review.
-func (m *Model) openLabInspectorOnArtifacts() (tea.Model, tea.Cmd) {
-	updated, cmd := m.openLabInspector()
-	if inspector, ok := m.activeModal.(*modal.LabInspectorModal); ok {
-		inspector.ShowArtifacts()
+// labDraftNames names the drafts a session waits on approval for.
+var labDraftNames = map[string]string{
+	domain.LabSpecArtifact:    "spec",
+	domain.LabTicketsArtifact: "tickets",
+	domain.LabIssueArtifact:   "bug report",
+}
+
+// labPublishAction says what publishing e creates, such as "Publish 6
+// issues": the epic and its tickets, or the one bug issue.
+func labPublishAction(v labView, e domain.LabEntry) string {
+	if e.Mode != domain.LabModeGrill {
+		return "Publish the bug report"
 	}
-	return updated, cmd
+	if a, ok := v.talks[e.ID].labArtifact(domain.LabTicketsArtifact); ok {
+		if tickets, err := domain.ParseLabTickets(a.Body); err == nil {
+			return fmt.Sprintf("Publish %d issues", len(tickets)+1)
+		}
+	}
+	return "Publish the epic and its tickets"
+}
+
+// labWorkingStep is what a session's agent is doing, by the run's step.
+var labWorkingStep = map[string]string{
+	"Scout":     "Scouting the code…",
+	"Interview": "Interviewing…",
+	"Spec":      "Writing the spec…",
+	"Tickets":   "Writing the tickets…",
+	"Shape":     "Shaping the report…",
+}
+
+// labWorkingAction describes a working session; Enter shows its agent.
+func labWorkingAction(run labRun) string {
+	if doing, ok := labWorkingStep[run.workflow.CurrentStep]; ok {
+		return doing
+	}
+	return "Watch the agent"
 }
 
 // hasLiveSession reports whether e has a session that has not finished.
@@ -810,6 +959,7 @@ func (v labView) hasLiveSession(e domain.LabEntry) bool {
 // grillStepStatus is the entry status a grill session has reached at each of
 // its run's steps.
 var grillStepStatus = map[string]domain.LabStatus{
+	"Scout":     domain.LabStatusGrilling,
 	"Interview": domain.LabStatusGrilling,
 	"Spec":      domain.LabStatusSpecced,
 	"Tickets":   domain.LabStatusTicketed,

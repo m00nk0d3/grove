@@ -56,50 +56,50 @@ type LabPublishConfirmedMsg struct {
 	Chosen bool
 }
 
-// LabPublishModal previews an entry's publication and asks for confirmation.
-type LabPublishModal struct {
+// LabPublishPreview previews an entry's publication and asks for confirmation.
+type LabPublishPreview struct {
 	plan   LabPublishPlan
 	scroll int
 	inspectorChrome
 	height int
 }
 
-// NewLabPublishModal opens the preview for plan.
-func NewLabPublishModal(plan LabPublishPlan) *LabPublishModal {
+// NewLabPublishPreview opens the preview for plan.
+func NewLabPublishPreview(plan LabPublishPlan) *LabPublishPreview {
 	if plan.Board >= len(plan.Boards) {
 		plan.Board = -1
 	}
-	return &LabPublishModal{plan: plan}
+	return &LabPublishPreview{plan: plan}
 }
 
 // Init satisfies tea.Model.
-func (m *LabPublishModal) Init() tea.Cmd { return nil }
+func (m *LabPublishPreview) Init() tea.Cmd { return nil }
 
 // Title returns the modal title.
-func (m *LabPublishModal) Title() string { return "PUBLISH TO GITHUB" }
+func (m *LabPublishPreview) Title() string { return "PUBLISH TO GITHUB" }
 
 // Fullscreen makes the preview fill the terminal.
-func (m *LabPublishModal) Fullscreen() bool { return true }
+func (m *LabPublishPreview) Fullscreen() bool { return true }
 
 // SetWidth records the terminal width.
-func (m *LabPublishModal) SetWidth(width int) { m.width = width }
+func (m *LabPublishPreview) SetWidth(width int) { m.width = width }
 
 // SetHeight records the terminal height.
-func (m *LabPublishModal) SetHeight(height int) { m.height = height }
+func (m *LabPublishPreview) SetHeight(height int) { m.height = height }
 
 // SetTheme applies the active theme.
-func (m *LabPublishModal) SetTheme(theme styles.Theme) { m.theme = &theme }
+func (m *LabPublishPreview) SetTheme(theme styles.Theme) { m.theme = &theme }
 
-func (m *LabPublishModal) choosable() bool { return len(m.plan.Boards) > 1 }
+func (m *LabPublishPreview) choosable() bool { return len(m.plan.Boards) > 1 }
 
 // Update handles confirming, cancelling, choosing a board, and scrolling.
-func (m *LabPublishModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *LabPublishPreview) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
 	}
 	switch key.String() {
-	case "y", "Y":
+	case "enter", "y", "Y":
 		confirmed := LabPublishConfirmedMsg{EntryID: m.plan.EntryID, Chosen: m.choosable() && m.plan.Board >= 0}
 		if m.plan.Board >= 0 {
 			confirmed.BoardRef = m.plan.Boards[m.plan.Board].Ref
@@ -128,7 +128,7 @@ func (m *LabPublishModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // cycleBoard moves through the boards and "no board", which comes last.
-func (m *LabPublishModal) cycleBoard(delta int) int {
+func (m *LabPublishPreview) cycleBoard(delta int) int {
 	n := len(m.plan.Boards) + 1
 	pos := m.plan.Board
 	if pos < 0 {
@@ -141,7 +141,7 @@ func (m *LabPublishModal) cycleBoard(delta int) int {
 	return pos
 }
 
-func (m *LabPublishModal) bodyRows() int {
+func (m *LabPublishPreview) bodyRows() int {
 	if m.height < 20 {
 		return 12
 	}
@@ -149,7 +149,7 @@ func (m *LabPublishModal) bodyRows() int {
 }
 
 // View renders what will be created and the confirmation keys.
-func (m *LabPublishModal) View() string {
+func (m *LabPublishPreview) View() string {
 	p := m.plan
 	var b strings.Builder
 	b.WriteString(m.accentStyle().Bold(true).Render("◈ LAB // PUBLISH"))
@@ -200,7 +200,7 @@ func (m *LabPublishModal) View() string {
 	}
 	b.WriteString("\n\n")
 
-	hints := []string{"y", "publish", "n/Esc", "cancel", "j/k", "scroll"}
+	hints := []string{"Enter/y", "publish", "n/Esc", "cancel", "j/k", "scroll"}
 	if m.choosable() {
 		hints = append(hints, "←/→", "board")
 	}
@@ -208,7 +208,7 @@ func (m *LabPublishModal) View() string {
 	return b.String()
 }
 
-func (m *LabPublishModal) boardLabel() string {
+func (m *LabPublishPreview) boardLabel() string {
 	p := m.plan
 	if p.Board < 0 {
 		if len(p.Boards) == 0 {

@@ -539,10 +539,9 @@ test("a commit path that skipped validation still strips trailing whitespace", a
     ]);
 
     // A project whose only command succeeds, so validation passes and is
-    // remembered against the worktree's fingerprint.
+    // remembered against the worktree's fingerprint. Node stands in for the
+    // command because Windows cannot spawn a shebang script directly.
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "x" }));
-    fs.writeFileSync(path.join(root, "verify.sh"), "#!/usr/bin/env sh\nexit 0\n");
-    fs.chmodSync(path.join(root, "verify.sh"), 0o755);
     const profile = {
       repoSummary: "x",
       projects: [
@@ -556,7 +555,7 @@ test("a commit path that skipped validation still strips trailing whitespace", a
             planning: "", tests: "", implementation: "",
             verification: "", review: "", documentation: "",
           },
-          test: { command: "./verify.sh", args: [], verified: true, evidence: "ok" },
+          test: { command: "node", args: ["--version"], verified: true, evidence: "ok" },
         },
       ],
       concerns: [],

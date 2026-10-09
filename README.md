@@ -49,105 +49,115 @@ Modern software development means juggling several things at once: features in f
 
 The Lab is where work lives before it becomes a GitHub issue. Each repository
 keeps its Lab in `<git-common-dir>/grove-lab/`, so every worktree of the
-repository shares it and git never tracks it. The full design, including the
-grilling and publishing flows still being built, is in
+repository shares it and git never tracks it. An agent takes each entry
+through its stages while you answer and approve in Grove; you never have to
+type in the agent's pane. The full design is in
 [docs/LAB_DESIGN.md](docs/LAB_DESIGN.md).
 
-The list has four task-oriented lanes, switched with `[` and `]`: *Working*
-for live work and anything needing attention, *Inbox* for new captures,
-*Issues* for published work, and *Archive*. Keys `1`, `2`, and `3` show all
-entries, ideas only, or bugs only within the current lane.
+The list is grouped by what each entry needs:
+
+- **NEEDS YOU** — a question, reply, permission, or draft is waiting on you,
+  an entry is ready to publish, or a session failed or stopped; the longest
+  wait comes first, marked **WAITING ON YOU**.
+- **WORKING** — an agent is working, such as *Scouting the code…* or *Writing
+  the spec…*.
+- **NOT STARTED** — captured, never run.
+- **DONE** — published; the five latest, and a row that shows the rest.
 
 | Key | Action |
 |---|---|
 | `c` | Capture a new idea or bug |
-| `Enter` | Do the next action printed under the selected entry, such as *Grill this idea*, *Answer the agent*, *Review the drafted bug report*, or *Open issue #123* |
-| `v` | Open progress, artifacts, and original capture details |
-| `a` | Open less-common actions such as edit, archive, restore, and delete |
+| `Enter` | Open the entry's page |
+| `1` `2` `3` | Show all entries, ideas only, or bugs only |
+| `0` | Show the archive, or go back to the active entries |
+| `a` | Open the Actions panel: edit, archive, restore, delete, and more |
 
-An entry whose agent is waiting for an answer is marked **WAITING ON YOU** and
-listed first under *Working*. Each row shows the action Enter performs, the step
-the entry has reached, such as *Interview 1/4*, and the Herdr pane of its live
-session.
+### The entry page
+
+`Enter` on an entry opens its page in place of the list. At the top, a
+stepper shows the session's steps — *Scout → Interview → Spec → Tickets →
+Publish* for an idea, *Shape → Review → Publish* for a bug — with the
+interview's coverage, such as *Interview 6/9*. Below it is whatever the entry
+needs now, and below that, the decisions made so far. `Enter` does what the
+entry needs next: start a grill, answer a question, approve a draft, or
+publish. `.` opens the Actions panel, including *Write the spec now*, *Reopen
+spec*, *View agent*, and *End session*; `Esc` returns to the list. The page
+owns the keyboard, so nothing you type into a note or reply reaches another
+view.
+
+### Answering the agent
+
+The agent asks one question at a time as a card: the question, what it found
+in the code that makes it necessary, two to four options with its
+recommendation preselected, and why. Choose with `↑`/`↓` or `1`–`4`, `Tab` to
+add a note, and `Enter` to send. A text question takes a typed answer. `Tab`
+again moves to the decisions, where `Enter` on an answer changes it while the
+interview lasts; the agent is told what changed. If the agent stops without a
+card, its last output is shown with a reply box (`Ctrl+S` sends). If it asks
+permission to run a command, `y` allows it and `n` denies it.
 
 ### Shaping a bug
 
-*Shape into an issue* (or `Enter` on a bug draft) starts a shaping session: an
-agent — `sandcastle.default_agent` — opens in a Herdr pane beside the workflow
-and turns the captured text into a structured bug report. It asks you for
-anything the report needs that the text does not say, and you answer it in
-that pane. The entry shows **WAITING ON YOU** whenever the agent is waiting for
-an answer, and again when the draft is ready. The draft, `issue.md`, appears in
-the inspector's *Artifacts* tab; asking the agent for changes in its pane
-revises it. *End session* closes the agent's pane; *Resume shaping* starts a
-new session that continues from the existing draft.
+*Shape bug* starts a shaping session: an agent — `sandcastle.default_agent` —
+reads the code the bug concerns and asks for whatever the report needs that
+the captured text does not say, such as the steps to reproduce or the
+environment. It never invents details. The report, `issue.md`, is then
+reviewed on the page.
 
 ### Grilling an idea
 
-*Grill* (or `Enter` on an idea draft) starts a grilling session: the agent
-interviews you in its Herdr pane using the bundled
-[grill-with-docs](https://github.com/mattpocock/skills), then writes a spec and
-breaks it into tracer-bullet tickets, following to-spec and to-tickets. As
-terms and decisions settle it drafts `CONTEXT.md` and decision records under
-`docs/adr/`, at the paths they belong in the repository. The entry moves
-through *Interview 1/4*, *Spec 2/4*, *Tickets 3/4* as the session does.
-Approving a `CONTEXT.md` or decision record copies it into your checkout as an
-uncommitted change, and never drops a line an existing file has. *End session*
-and *Resume grilling* work as they do for shaping.
+*Start grill* runs four stages, each with a fresh agent and Grove's own
+instructions in `runtime/sandcastle/prompts/lab/`: **Scout** reads the code
+the idea touches, **Interview** asks until every topic — scope, data,
+interface, errors, concurrency, compatibility, testing, rollout — is settled,
+**Spec** writes `spec.md`, and **Tickets** breaks it into tracer-bullet
+tickets. Every stage is given a map of the repository that Grove builds, so
+questions cite the code instead of asking what it already answers. *Write the
+spec now* ends the interview early; topics still open become the spec's open
+questions. A repository can replace any stage's instructions with its own in
+`.grove/lab/prompts/`.
 
 ### Reviewing and publishing
 
-When the draft is ready, `Enter` opens it in the inspector's *Artifacts* tab.
-There `a` approves it, `e` edits it in `$VISUAL` or `$EDITOR`, `x` discards it,
-and `c` takes you to the agent's pane to ask for changes. An approval applies
-to the content you saw: if the agent revises the file, it is a draft again.
+The spec, the tickets, and a bug report each wait for your approval before the
+session moves on. The page shows the draft rendered; tickets are listed
+beneath the tickets that block them, and `→` opens one. `Enter` approves, `c`
+asks the agent for changes, and `e` edits the draft in `$VISUAL` or
+`$EDITOR`. An approval applies to the content you saw: if the agent revises
+the file, it is a draft again. *Reopen spec* sends a session drafting tickets
+back to the spec.
 
-`p` in the inspector, or *Publish issue* in the Actions panel, shows a preview
-of exactly what will be created — repository, labels, board, title, and body.
-Nothing is sent to GitHub until you press `y`. Grove then creates the issue
-through `gh` with the `bug` label, adds it to the project board in `Backlog`,
-and ends the session. The board is `lab.project` (`owner/number`) when set;
-otherwise the repository's linked board, or a choice among several, which Grove
-remembers. If adding it to the board fails, the created issue is recorded and
-publishing again only retries the board.
+`CONTEXT.md` and decision records the agent drafts appear under *Also
+drafted*, with the lines each would add to your checkout. `y` copies one into
+the checkout as an uncommitted change — never dropping a line an existing file
+has — and `n` discards it. They never hold up publishing.
 
-A grilled idea publishes once `spec.md` and `tickets.json` are approved. The
-preview lists every ticket and what blocks it. Grove creates the epic from the
-spec, labelled `epic`, with a *Glossary and decisions* section summarising the
-approved `CONTEXT.md` and decision records; then each ticket, blockers first,
-labelled `ready-for-agent`, as a native sub-issue of the epic with native
-blocked-by links to its blockers; then puts them all in `Backlog`. Labels that
-do not exist yet are created; existing ones are left as they are. Every issue
-and link is recorded as it is made, so a publication interrupted part-way —
-by a rate limit, say — finishes on the next attempt without repeating any of
-it.
-
-### Inspecting an entry
-
-`v` opens the inspector: header cards for stage, elapsed time, artifacts, and
-issues, then four tabs switched with `Tab` or `1`–`4`:
-
-- **Overview** — the entry and its current session: run, status, step, agent,
-  and pane. `Enter` opens the pane.
-- **Steps** — the build chain (*Interview → Spec → Tickets → Publish*, or
-  *Shape → Publish* for a bug) and every run the entry has had.
-- **Artifacts** — the files the agent has drafted, rendered in the terminal;
-  `[` and `]` switch between them.
-- **Capture** — the text as it was captured.
+Once every draft is approved, `Enter` shows a preview of exactly what will be
+created — repository, labels, board, title, body, and tickets. Nothing is sent
+to GitHub until you press `Enter` or `y` again. A bug is created through `gh`
+with the `bug` label. A grilled idea becomes an epic, labelled `epic`, with a
+*Glossary and decisions* section summarising the approved documents, and each
+ticket, blockers first, labelled `ready-for-agent`, as a native sub-issue with
+native blocked-by links. Everything goes into `Backlog` on the board named by
+`lab.project` (`owner/number`), the repository's linked board, or one you
+choose, which Grove remembers. Labels that do not exist are created. Every
+issue and link is recorded as it is made, so a publication interrupted
+part-way — by a rate limit, say — finishes on the next attempt without
+repeating any of it.
 
 ### Capturing an entry
 
 Press `c`, choose *Idea → Grill* or *Bug → Report* with `Tab`, and write the
 entry. The first line is its title; anything below is the detail. `Ctrl+S`
-saves it to the Inbox and `Esc` cancels.
+saves it and `Esc` cancels.
 
 ### Escalating a bug
 
 A bug that turns out bigger than one issue can be grilled instead: *Escalate
-to grill* ends its shaping session and starts a grilling session that begins
-from the shaped report. It works after the bug is published too — the bug's
-issue is kept, and when the epic is published the bug becomes one of its
-sub-issues and the epic notes that it grew out of it.
+to grill* ends its shaping session and starts a grill whose scout begins from
+the shaped report. The questions already answered carry over and are not
+asked again. It works after the bug is published too — the bug's issue is
+kept, and when the epic is published the bug becomes one of its sub-issues.
 
 ### Published entries
 
@@ -157,10 +167,10 @@ the browser.
 
 ### Archiving and deleting
 
-Archiving moves an entry to the *Archived* tab from any state, and restoring
-returns it unchanged. Archiving an entry whose session is still running asks
-first, then ends the session. Drafts and archived entries can be deleted, but
-not while a session is running; deleting removes the entry and anything drafted
+Archiving moves an entry to the archive from any state, and restoring returns
+it unchanged. Archiving an entry whose session is still running asks first,
+then ends the session. Drafts and archived entries can be deleted, but not
+while a session is running; deleting removes the entry and anything drafted
 for it, after a confirmation, and leaves published issues alone.
 
 ### Two Groves, one Lab
@@ -168,10 +178,11 @@ for it, after a confirmation, and leaves published issues alone.
 Starting a session or publishing holds the entry's lock, so a second Grove —
 another terminal, or another machine sharing the repository — refuses with
 *Entry is in use by Grove on host (pid N)* instead of duplicating the work.
-Viewing an entry and opening its pane are never blocked. A lock left by a Grove
-that stopped on this machine is taken over automatically; one left on another
-machine is shown in the entry's context panel and can be removed with *Clear
-lock*.
+Viewing an entry, answering it, and watching its agent are never blocked, and
+a question is answered once even when two Groves show it. A lock left by a
+Grove that stopped on this machine is taken over automatically; one left on
+another machine is shown in the entry's context panel and can be removed with
+*Clear lock*.
 
 ---
 

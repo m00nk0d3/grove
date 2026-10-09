@@ -377,13 +377,13 @@ export function runSpecialistInPane(options: SpecialistOptions): void {
     onAgentStatus,
   } = options;
   const launch = getAgentLaunchConfig();
-// Override agent name with role for OpenCode agents to ensure correct specialist runs
-if (launch.backend === "opencode") {
-  const agentIndex = launch.args.indexOf("--agent");
-  if (agentIndex !== -1 && agentIndex + 1 < launch.args.length) {
-    launch.args[agentIndex + 1] = role;
+  // Override agent name with role for OpenCode agents to ensure correct specialist runs
+  if (launch.backend === "opencode") {
+    const agentIndex = launch.args.indexOf("--agent");
+    if (agentIndex !== -1 && agentIndex + 1 < launch.args.length) {
+      launch.args[agentIndex + 1] = role;
+    }
   }
-}
   if (launch.backend === "claude") {
     // A fresh worktree is a directory Claude has not seen, and its trust
     // dialog blocks the first prompt rather than the launch.
@@ -405,14 +405,13 @@ if (launch.backend === "opencode") {
     "in that worktree. Do not substitute another checkout.\n" +
     "This step may be resuming after an interruption. Inspect and preserve " +
     "valid existing work, then continue from the current state.\n" +
-    
+    resolveAgentArtifactPaths(promptText, targetDir);
   if (launch.backend === "opencode") {
     effectivePrompt = effectivePrompt + `
 
 IMPORTANT: All required artifacts must be written to absolute filesystem paths.
 For OpenCode agents, use bash commands like: echo '{"..."}' > "/absolute/path/to/file.json"
 `;
-resolveAgentArtifactPaths(promptText, targetDir);
   } else if (launch.backend === "claude") {
     effectivePrompt = effectivePrompt + `
 

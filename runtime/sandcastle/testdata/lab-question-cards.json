@@ -1,0 +1,119 @@
+{
+  "description": "Question cards and whether they are valid. The session runtime (src/lab-protocol.ts) and Grove (internal/domain/lab_questions.go) both validate cards and are tested against this file, so they accept exactly the same cards.",
+  "cases": [
+    {
+      "name": "a choice card",
+      "id": 3,
+      "valid": true,
+      "card": { "id": 3, "kind": "choice", "question": "Keep it?", "context": "lab.go:12", "options": ["Yes", "No"], "recommended": 1, "why": "Simpler." }
+    },
+    {
+      "name": "a multi card",
+      "id": 1,
+      "valid": true,
+      "card": { "id": 1, "kind": "multi", "question": "Which?", "context": "c", "options": ["A", "B", "C", "D"], "recommended": [0, 2], "why": "w" }
+    },
+    {
+      "name": "a text card",
+      "id": 2,
+      "valid": true,
+      "card": { "id": 2, "kind": "text", "question": "Which OS?", "context": "c", "recommended": "Windows 11", "why": "w" }
+    },
+    {
+      "name": "an id that does not match the file",
+      "id": 4,
+      "valid": false,
+      "card": { "id": 3, "kind": "choice", "question": "q", "context": "c", "options": ["A", "B"], "recommended": 0, "why": "w" }
+    },
+    {
+      "name": "an unknown kind",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "yesno", "question": "q", "context": "c", "options": ["A", "B"], "recommended": 0, "why": "w" }
+    },
+    {
+      "name": "a missing context",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "choice", "question": "q", "options": ["A", "B"], "recommended": 0, "why": "w" }
+    },
+    {
+      "name": "a blank why",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "choice", "question": "q", "context": "c", "options": ["A", "B"], "recommended": 0, "why": "  " }
+    },
+    {
+      "name": "one option",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "choice", "question": "q", "context": "c", "options": ["A"], "recommended": 0, "why": "w" }
+    },
+    {
+      "name": "five options",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "choice", "question": "q", "context": "c", "options": ["A", "B", "C", "D", "E"], "recommended": 0, "why": "w" }
+    },
+    {
+      "name": "a blank option",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "choice", "question": "q", "context": "c", "options": ["A", ""], "recommended": 0, "why": "w" }
+    },
+    {
+      "name": "a recommendation out of range",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "choice", "question": "q", "context": "c", "options": ["A", "B"], "recommended": 2, "why": "w" }
+    },
+    {
+      "name": "a recommendation given as the option text",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "choice", "question": "q", "context": "c", "options": ["A", "B"], "recommended": "A", "why": "w" }
+    },
+    {
+      "name": "a fractional recommendation",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "choice", "question": "q", "context": "c", "options": ["A", "B"], "recommended": 0.5, "why": "w" }
+    },
+    {
+      "name": "a multi recommendation that is not a list",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "multi", "question": "q", "context": "c", "options": ["A", "B"], "recommended": 0, "why": "w" }
+    },
+    {
+      "name": "an empty multi recommendation",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "multi", "question": "q", "context": "c", "options": ["A", "B"], "recommended": [], "why": "w" }
+    },
+    {
+      "name": "a repeated multi recommendation",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "multi", "question": "q", "context": "c", "options": ["A", "B"], "recommended": [1, 1], "why": "w" }
+    },
+    {
+      "name": "a text card with options",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "text", "question": "q", "context": "c", "options": ["A", "B"], "recommended": "x", "why": "w" }
+    },
+    {
+      "name": "a text card recommending an index",
+      "id": 1,
+      "valid": false,
+      "card": { "id": 1, "kind": "text", "question": "q", "context": "c", "recommended": 0, "why": "w" }
+    },
+    {
+      "name": "a list instead of an object",
+      "id": 1,
+      "valid": false,
+      "card": [1, 2]
+    }
+  ]
+}

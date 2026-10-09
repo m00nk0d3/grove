@@ -90,7 +90,7 @@ func readLabDraft(store *data.LabStore, e domain.LabEntry) (labDraft, error) {
 			}
 			found = true
 			if e.ReviewOf(a) != domain.LabReviewApproved {
-				return labDraft{}, fmt.Errorf("approve %s in the inspector before publishing", path)
+				return labDraft{}, fmt.Errorf("approve %s on the entry page before publishing", path)
 			}
 			approved[path] = a
 		}
@@ -291,7 +291,14 @@ func (m *Model) handleLabPublishPlan(msg labPublishPlanMsg) (tea.Model, tea.Cmd)
 	}
 	pending := msg.pending
 	m.labPending = &pending
-	m.activeModal = modal.NewLabPublishModal(pending.plan)
+	if p := m.lab.page; p == nil || p.entryID != pending.plan.EntryID {
+		e, ok := m.lab.entry(pending.plan.EntryID)
+		if !ok {
+			return m, nil
+		}
+		m.openLabPage(e)
+	}
+	m.lab.page.publish = modal.NewLabPublishPreview(pending.plan)
 	return m, nil
 }
 
@@ -448,7 +455,9 @@ func containsString(values []string, want string) bool {
 // the moment it exists, so an interrupted publication resumes instead of
 // duplicating anything.
 func (m *Model) publishLabEntry(msg modal.LabPublishConfirmedMsg) (tea.Model, tea.Cmd) {
-	m.activeModal = nil
+	if m.lab.page != nil {
+		m.lab.page.publish = nil
+	}
 	pending := m.labPending
 	m.labPending = nil
 	if pending == nil || pending.plan.EntryID != msg.EntryID {
@@ -577,7 +586,7 @@ func labEditorCommand(path string) *osexec.Cmd {
 	return osexec.Command(editor[0], append(editor[1:], path)...)
 }
 
-// handleLabArtifactReview applies a review action from the inspector.
+// handleLabArtifactReview applies a review action from the entry page.
 func (m *Model) handleLabArtifactReview(msg modal.LabArtifactReviewMsg) (tea.Model, tea.Cmd) {
 	e, ok := m.lab.entry(msg.EntryID)
 	if !ok {
@@ -590,9 +599,8 @@ func (m *Model) handleLabArtifactReview(msg modal.LabArtifactReviewMsg) (tea.Mod
 			m.statusErr = "The session has ended; resume it to ask the agent for changes"
 			return m, clearErrorCmd()
 		}
-		m.activeModal = nil
-		m.statusMsg = fmt.Sprintf("Tell the agent what to change in %s", msg.Path)
-		return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
+		m.activeModal = modal.NewLabChangeModal(e.ID, msg.Path)
+		return m, nil
 	case modal.LabReviewEdit:
 		store, err := labStoreFor(m.RepoPath)
 		if err != nil {
