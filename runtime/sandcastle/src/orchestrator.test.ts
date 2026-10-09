@@ -2378,7 +2378,9 @@ test("an interrupted review cycle's fixes are published before anyone reviews th
 test("a run cannot report a pull request approved while its worktree still holds the work", async () => {
   const { fileURLToPath } = await import("node:url");
   const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
-  const source = fs.readFileSync(path.join(srcDir, "orchestrator.ts"), "utf8");
+  const source = fs
+    .readFileSync(path.join(srcDir, "orchestrator.ts"), "utf8")
+    .replace(/\r\n/g, "\n");
 
   // publishBranch compares HEAD with the remote, so uncommitted work reads to it
   // as "already published" and the run announces a pull request that is missing

@@ -3,7 +3,7 @@ import path from "node:path";
 import test from "node:test";
 import { resolveAgentArtifactPaths } from "./herdr-specialist.js";
 
-const worktree = path.join(
+const worktree = path.posix.join(
   "/repo/.sandcastle/worktrees",
   "agent-add-close-issues-command-to-actions-menu-270",
 );
