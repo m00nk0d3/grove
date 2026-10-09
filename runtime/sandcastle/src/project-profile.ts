@@ -296,7 +296,7 @@ function isAbsent(value: unknown): value is null | undefined {
 // is incomprehensible. Rejecting the metacharacters here turns that into a
 // profiling failure with a sentence that says what to do.
 const COMMAND_PATTERN = /^[A-Za-z0-9._\/\\-]+$/;
-const MIN_PERSONA_LENGTH = 40;
+const MIN_PERSONA_LENGTH = 20;
 const MAX_PERSONA_LENGTH = 6000;
 const MAX_PATTERN_LENGTH = 200;
 const MAX_PATH_PATTERNS = 12;
