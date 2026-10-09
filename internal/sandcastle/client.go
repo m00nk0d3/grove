@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	osexec "os/exec"
+	"strings"
+	"os"
 	"time"
 
 	"github.com/m00nk0d3/grove/internal/domain"
@@ -187,7 +189,11 @@ func (c *sandcastleClient) StartWorkflow(ctx context.Context, req StartWorkflowR
 		args = append(args, "--entry", req.EntryID)
 	}
 
-	stdout, stderr, err := c.runCommand(ctx, args...)
+	// Ensure OpenCode model is set for opencode agent
+if strings.EqualFold(c.config.DefaultAgent, "opencode") {
+    os.Setenv("AGENT_FLOW_OPENCODE_MODEL", "openai/gpt-oss-20b")
+}
+stderr, stdout, err := c.runCommand(ctx, args...)
 	if err != nil {
 		return domain.WorkflowRunRef{}, fmt.Errorf("start workflow: %s: %w", preserveStderr(stderr, err), err)
 	}
