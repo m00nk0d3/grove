@@ -332,21 +332,32 @@ Requests are delivered exactly like answers.
 ## Permissions
 
 The agent's job is narrow and known in advance: read the repository, run
-read-only commands, and write under its entry's directory. The runtime starts
-each backend with a permission configuration that allows exactly that and
-denies everything else without asking:
+read-only commands, and write under its entry's directory. No backend may
+stop a session on a permission prompt, but they differ in what they enforce:
 
-- reading any file in the base checkout;
-- listing and searching files;
-- read-only `git` commands (`log`, `show`, `diff`, `grep`, `blame`, `ls-files`);
-- writing files under `<git-common-dir>/grove-lab/<entry-id>/`.
+- **Claude Code** runs in `dontAsk` mode with exactly these permissions, and
+  everything else is refused without asking:
+  - reading any file in the base checkout;
+  - listing and searching files;
+  - read-only `git` commands (`log`, `show`, `diff`, `grep`, `blame`,
+    `ls-files`, `status`);
+  - writing files under `<git-common-dir>/grove-lab/<entry-id>/`, through an
+    `Edit` rule on that path, which covers every tool that writes files.
+- **OpenCode** runs with `--auto`, which approves every tool. It never
+  prompts, but nothing confines it to the entry's directory beyond its
+  instructions.
+- **Pi** has no permission system. It never prompts, and is likewise confined
+  only by its instructions.
 
-Each backend — Claude, OpenCode, Pi — is configured through its own permission
-mechanism. A backend that cannot be configured this way, or an agent that asks
-anyway, produces a Herdr `blocked` state; Grove then shows a permission card
-with the agent's last output and **Allow** and **Deny**, and the runtime
-answers the prompt with `herdr agent send-keys`. That path drives a terminal
-interface and is a fallback, not the design.
+The rule that the agent never changes the repository therefore holds by
+enforcement on Claude Code and by instruction on OpenCode and Pi. Grove's
+approval of repository documents is unaffected: drafts reach the checkout
+only when the user approves them.
+
+An agent that asks anyway produces a Herdr `blocked` state; Grove then shows a
+permission card with the agent's last output and **Allow** and **Deny**, and
+the runtime answers the prompt with `herdr agent send-keys`. That path drives
+a terminal interface and is a fallback, not the design.
 
 ## Agent instructions
 

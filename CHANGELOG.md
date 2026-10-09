@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   CMD bootstrap is standalone, and Linux and Windows reinstall behavior runs in
   CI.
 
+### Changed
+
+- **Lab inspector and pop-ups retired** — the entry page now covers what the
+  Lab inspector did, so `v` no longer opens it in the Lab and *Inspect* is
+  gone from the Actions panel. Drafts of a session that has ended are reviewed
+  on the page as well, and an entry whose drafts were never written offers to
+  resume its session rather than to review. The publish preview opens on the
+  entry page, wherever publishing starts, and `Enter` confirms it as well as
+  `y`. Question, reply, and permission cards exist only on the page; a change
+  request is the one dialog left. Row actions now read *Start grill*, *Shape
+  bug*, *Resume grill*, *Retry grill*, *Review the spec*, *Publish 4 issues*,
+  or what the agent is doing, such as *Writing the spec…*, and rows no longer
+  name the agent's Herdr pane.
+
 ### Fixed
 
 - **Lab escalation with a question open** — escalating a bug while its
