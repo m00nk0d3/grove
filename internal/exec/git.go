@@ -394,6 +394,31 @@ func (g *GitCommand) CommonDir() (string, error) {
 	return filepath.Clean(dir), nil
 }
 
+// HeadCommit returns the full hash of the checked-out commit.
+func (g *GitCommand) HeadCommit() (string, error) {
+	out, err := g.run("resolve HEAD", "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// TrackedFiles returns the repository-relative paths of every tracked file,
+// with forward slashes. Ignored and untracked files are not included.
+func (g *GitCommand) TrackedFiles() ([]string, error) {
+	out, err := g.run("list tracked files", "ls-files", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, f := range strings.Split(out, "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files, nil
+}
+
 // BranchExists reports whether branch can be used as a start point: it exists
 // locally or on origin.
 func (g *GitCommand) BranchExists(branch string) bool {
