@@ -763,10 +763,12 @@ Completion criteria:
     issueNum: string,
     repo: string,
     issueTitle: string,
-  ): string => `
-${persona}
+  ): string => {
+const finalPersona = persona || "You are an experienced technical writer with a deep understanding of software documentation.";
+return `
+${finalPersona}
 
-You are the Documentation Specialist for ${repo}#${issueNum}: ${issueTitle}
+You are the Documentation Specialist for ${repo}#${issueNum}: ${issueTitle}`;
 
 ${CODE_ORGANIZATION_STANDARD}
 

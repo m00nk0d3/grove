@@ -192,10 +192,12 @@ func (c *sandcastleClient) StartWorkflow(ctx context.Context, req StartWorkflowR
 		return domain.WorkflowRunRef{}, fmt.Errorf("start workflow: %s: %w", preserveStderr(stderr, err), err)
 	}
 
-	var resp startWorkflowResponse
-	if err := json.Unmarshal(stdout, &resp); err != nil {
-		return domain.WorkflowRunRef{}, fmt.Errorf("parse start response: %w", err)
-	}
+var raw = bytes.ReplaceAll(stdout, []byte(`\"`), []byte("\"")
+var resp startWorkflowResponse
+if err := json.Unmarshal(raw, &resp); err != nil {
+    return domain.WorkflowRunRef{}, fmt.Errorf("parse start response: %w", err)
+}
+
 
 	wf, _ := normalizeWorkflow(resp.Workflow)
 	return wf, nil
