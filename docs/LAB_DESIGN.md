@@ -90,6 +90,27 @@ Ownership is strict: the agent writes only `scout.md`, `coverage.json`,
 answers, requests, and close files; the runtime writes `stage`,
 `session.json`, and the `.sent` receipts. No file has two writers.
 
+### Working folders
+
+Claude Code treats every file inside a `.git` directory as sensitive: it
+refuses to write there in `dontAsk` mode and asks in every other mode short of
+bypassing permissions, whatever its rules allow. The agent therefore never
+writes to the entry directly. Each stage's agent gets a folder of its own
+outside any repository, `<state>/lab-work/<entry-id>-<run-id>-<stage>/`, where
+`<state>` is `GROVE_STATE_DIR` or `~/.grove`, laid out like the entry:
+`scout.md`, `coverage.json`, `questions/NNN.json`, `artifacts/`, and `done`.
+Every path the agent is given points there.
+
+The runtime keeps the folder and the entry in step on every poll. For each of
+those files it remembers the content both sides last agreed on; whichever side
+has changed since is copied to the other, and the agent's change wins when
+both have. What the agent writes reaches the entry within a second, and a
+draft the user edits in Grove reaches the agent before it revises. Answers,
+requests, receipts, and the session state stay in the entry, which the agent
+never reads: answers reach it as prompts. The folder is seeded from the entry
+when the stage starts and removed when it ends, after a last sync. Grove reads
+only the entry.
+
 ## Entry model
 
 | Field      | Meaning                                                             |

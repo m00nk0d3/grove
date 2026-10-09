@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { contentHash } from "./lab-drafts.js";
 import { buildStagePrompt } from "./lab-prompts.js";
-import { scanQuestions, scanRequests, writeReceipt } from "./lab-protocol.js";
+import { buildRepairPrompt, scanQuestions, scanRequests, writeReceipt } from "./lab-protocol.js";
+import { agentPaths, LabWorkSync } from "./lab-work.js";
 import {
   checkStageOutput,
   claudePathRule,
@@ -272,6 +273,7 @@ async function stage(name: LabStage, script: Step[], kind: "grill" | "shape" = "
     closed: () => step().close === true,
     readDone: () => (fs.existsSync(paths.doneFile) ? fs.readFileSync(paths.doneFile, "utf8").trim() : ""),
     clearDone: () => fs.rmSync(paths.doneFile, { force: true }),
+    sync: () => {},
     checkStage: (finishRequested, answered) => checkStageOutput(name, paths, finishRequested, answered),
     approved: () => {
       const index = JSON.parse(fs.readFileSync(path.join(paths.labDir, "entries.json"), "utf8"));
@@ -289,7 +291,7 @@ async function stage(name: LabStage, script: Step[], kind: "grill" | "shape" = "
   const reporter = new SessionReporter(kind, "Claude Code", deps);
   const result = { paths, prompts, keys, reports, sessions, outcome: undefined as unknown, error: undefined as unknown };
   try {
-    result.outcome = await watchStage({ kind, stage: name, agentName: "lab-x", paneId: "w1:p3", agent: "Claude Code", paths }, deps, reporter);
+    result.outcome = await watchStage({ kind, stage: name, agentName: "lab-x", paneId: "w1:p3", agent: "Claude Code", paths, work: paths }, deps, reporter);
   } catch (error) {
     result.error = error;
   }
@@ -535,6 +537,60 @@ test("a stage ends when what it builds on is withdrawn", async () => {
 test("an idle agent that never started is not reported as waiting on the user", async () => {
   const run = await stage("scout", [{ state: "idle" }, { state: "idle" }, { state: "idle", close: true }]);
   assert.deepEqual(phases(run.sessions), ["starting"]);
+});
+
+test("an agent that writes only to its working folder is heard through the sync", async () => {
+  const lab = labFixture();
+  const sync = new LabWorkSync(lab, agentPaths(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "lab-work-")), "scout")));
+  sync.seed();
+  const work = sync.work;
+  const prompts: string[] = [];
+  let tick = 0;
+  const script: { state: string; act?: () => void }[] = [
+    { state: "working" },
+    // The agent writes an invalid card, then the scout notes, all in its folder.
+    { state: "idle", act: () => fs.writeFileSync(path.join(work.questionsDir, "001.json"), "{ broken") },
+    { state: "working" },
+    { state: "idle", act: () => (fs.writeFileSync(work.scoutFile, SCOUT), fs.writeFileSync(work.doneFile, "scout\n")) },
+  ];
+  const deps: SessionDeps = {
+    runner: (_command, args) => {
+      if (args[1] === "get") return JSON.stringify({ agent_status: script[Math.min(tick, script.length - 1)].state });
+      if (args[1] === "prompt") prompts.push(args[3]);
+      return "";
+    },
+    sleep: async () => {
+      tick++;
+      script[tick]?.act?.();
+    },
+    now: () => tick * 1000,
+    closed: () => tick > 20,
+    readDone: () => (fs.existsSync(lab.doneFile) ? fs.readFileSync(lab.doneFile, "utf8").trim() : ""),
+    clearDone: () => sync.clearDone(),
+    sync: () => sync.sync(),
+    checkStage: (finishRequested, answered) => checkStageOutput("scout", lab, finishRequested, answered),
+    approved: () => false,
+    prerequisitesHold: () => true,
+    report: () => {},
+    scanQuestions: () => [],
+    scanRequests: () => scanRequests(lab.requestsDir),
+    writeQuestionReceipt: () => {},
+    writeRequestReceipt: () => {},
+    writeSession: () => {},
+  };
+  const reporter = new SessionReporter("grill", "Claude Code", deps);
+  const outcome = await watchStage({ kind: "grill", stage: "scout", agentName: "a", paneId: "p", agent: "x", paths: lab, work }, deps, reporter);
+  assert.equal(outcome, "finished", "the done marker and notes written in the folder reached the entry");
+  assert.equal(fs.readFileSync(lab.scoutFile, "utf8"), SCOUT);
+  assert.ok(fs.existsSync(path.join(lab.questionsDir, "001.json")), "the agent's card reached the entry");
+  assert.ok(prompts.every((p) => !p.includes(lab.entryDir)), "the agent is only ever pointed at its folder");
+});
+
+test("a repair names the card where the agent wrote it", () => {
+  const record = { number: 4, file: path.join("/repo/.git/grove-lab/e1/questions", "004.json"), raw: "{", error: "the file is not valid JSON" };
+  const prompt = buildRepairPrompt(record, path.join("/home/me/.grove/lab-work/e1-r-interview/questions", "004.json"));
+  assert.ok(prompt.includes(path.join("/home/me/.grove/lab-work/e1-r-interview/questions", "004.json")));
+  assert.ok(!prompt.includes(".git"));
 });
 
 test("a stage fails once its agent has been gone for the grace period", async () => {

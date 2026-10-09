@@ -28,6 +28,7 @@ import {
   validateTickets,
 } from "./lab-drafts.js";
 import { buildStagePrompt, NONE, type LabStage, type PromptValues } from "./lab-prompts.js";
+import { agentPaths, labWorkRoot, LabWorkSync, type AgentPaths } from "./lab-work.js";
 import {
   buildAnswersPrompt,
   buildDraftRepairPrompt,
@@ -328,7 +329,10 @@ export interface StageContext {
   paneId: string;
   /** The backend and model, recorded for comparing models. */
   agent: string;
+  /** The Lab entry, which the runtime and Grove read. */
   paths: LabPaths;
+  /** Where the agent writes: the stage's working folder, outside .git. */
+  work: AgentPaths;
 }
 
 export interface SessionDeps {
@@ -338,6 +342,8 @@ export interface SessionDeps {
   closed: () => boolean;
   readDone: () => string;
   clearDone: () => void;
+  /** Brings the agent's working folder and the Lab entry in step. */
+  sync: () => void;
   /** Problems with what the stage wrote, phrased for the agent. */
   checkStage: (finishRequested: boolean, answered: number) => string[];
   /** Whether the user approved the stage's draft as it is now. */
@@ -373,7 +379,7 @@ export function permissionKeys(allow: boolean): string[] {
 }
 
 /** What the agent does instead of asking another question, by stage. */
-export function finishHint(stage: LabStage, paths: LabPaths): string {
+export function finishHint(stage: LabStage, paths: AgentPaths): string {
   switch (stage) {
     case "interview":
       return `if the interview is complete, update ${paths.coverageFile}, then write interview to ${paths.doneFile} and stop.`;
@@ -450,9 +456,9 @@ export async function watchStage(
   deps: SessionDeps,
   reporter: SessionReporter,
 ): Promise<StageOutcome> {
-  const { stage, agentName, paneId, paths } = ctx;
+  const { stage, agentName, paneId, paths, work } = ctx;
   const promptedAt = deps.now();
-  const finish = finishHint(stage, paths);
+  const finish = finishHint(stage, work);
   const reviewed = REVIEWED_DRAFT[stage] !== undefined;
   const asks = ASKING_STAGES.includes(stage);
   const cardRepairs = new Map<number, { count: number; raw: string }>();
@@ -487,6 +493,8 @@ export async function watchStage(
 
   publish("starting");
   while (!deps.closed()) {
+    // What the agent wrote reaches the Lab, and the user's edits the agent.
+    deps.sync();
     if (!deps.prerequisitesHold()) return "reopened";
     let state: AgentState;
     try {
@@ -585,14 +593,14 @@ export async function watchStage(
       deps.writeRequestReceipt(stale.number, { revision: 0, via: "grove", sent_at: stamp() });
     }
 
-    const nextCard = path.join(paths.questionsDir, cardFileName(nextQuestionNumber(records)));
+    const nextCard = path.join(work.questionsDir, cardFileName(nextQuestionNumber(records)));
     const request = requests.find((r) => r.request && r.request.kind !== "permission" && !r.receipt);
     if (request?.request) {
       const target = {
         stage,
-        doneFile: paths.doneFile,
-        draftsDir: paths.artifactsDir,
-        coverageFile: paths.coverageFile,
+        doneFile: work.doneFile,
+        draftsDir: work.artifactsDir,
+        coverageFile: work.coverageFile,
         asks,
       };
       if (request.request.kind === "change" || request.request.kind === "finish_interview") {
@@ -619,7 +627,7 @@ export async function watchStage(
       if (!tried || (tried.raw !== broken.raw && tried.count < MAX_REPAIRS)) {
         cardRepairs.set(broken.number, { count: (tried?.count ?? 0) + 1, raw: broken.raw });
         reporter.count(stage, "repairs");
-        prompt(buildRepairPrompt(broken));
+        prompt(buildRepairPrompt(broken, path.join(work.questionsDir, path.basename(broken.file))));
         await deps.sleep(POLL_MS);
         continue;
       }
@@ -652,7 +660,7 @@ export async function watchStage(
         draftRepairs++;
         reporter.count(stage, "repairs");
         deps.clearDone();
-        prompt(buildDraftRepairPrompt(problems, stage, paths.doneFile));
+        prompt(buildDraftRepairPrompt(problems, stage, work.doneFile));
         await deps.sleep(POLL_MS);
         continue;
       }
@@ -719,7 +727,7 @@ export function stageValues(
   stage: LabStage,
   entry: LabEntry,
   repo: string,
-  paths: LabPaths,
+  paths: AgentPaths,
   repoMap: string,
   records: QuestionRecord[],
 ): Omit<PromptValues, "protocol"> {
@@ -833,7 +841,7 @@ const LAB_READ_ONLY_COMMANDS = ["git log", "git show", "git diff", "git grep", "
  */
 export function labAgentArgs(
   launch: AgentLaunchConfig,
-  paths: LabPaths,
+  paths: AgentPaths,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   if (launch.backend !== "claude") return launch.args;
@@ -886,6 +894,7 @@ async function main(kind: LabSessionKind, entryId: string): Promise<void> {
     closed: () => fs.existsSync(paths.closeFile),
     readDone: () => readMarker(paths.doneFile),
     clearDone: () => clearMarkerFile(paths.doneFile),
+    sync: () => {},
     checkStage: () => [],
     approved: () => false,
     prerequisitesHold: () => true,
@@ -950,10 +959,19 @@ async function runStage(
   fs.writeFileSync(paths.stageFile, `${stage}\n`, "utf8");
   clearMarkerFile(paths.doneFile);
 
+  // The agent works in a folder of its own outside .git, which Claude Code
+  // will not write into; the runtime keeps it and the entry in step.
+  const runId = path.basename(paths.closeFile, ".close");
+  const workRoot = labWorkRoot(entry.id, runId, stage);
+  fs.rmSync(workRoot, { recursive: true, force: true });
+  const sync = new LabWorkSync(paths, agentPaths(workRoot));
+  sync.seed();
+  const work = sync.work;
+
   // A resumed session's questions are replayed in the brief, answers the
   // previous agent never received included, so those count as delivered.
   const records = scanQuestions(paths.questionsDir);
-  const promptText = buildStagePrompt(stage, repo, stageValues(stage, entry, repo, paths, repoMap, records));
+  const promptText = buildStagePrompt(stage, repo, stageValues(stage, entry, repo, work, repoMap, records));
   const assignmentPath = path.join(paths.entryDir, `assignment-${stage}.md`);
   fs.writeFileSync(assignmentPath, promptText, "utf8");
   for (const record of records.filter(needsDelivery)) {
@@ -975,13 +993,15 @@ async function runStage(
       launch.kind,
       "--pane",
       paneId,
-      ...labAgentArgs(launch, paths),
+      ...labAgentArgs(launch, work),
     ]);
     // The user answers in Grove, so the pane is not focused.
     runCommand("herdr", ["agent", "prompt", agentName, deliverablePrompt(promptText, assignmentPath)]);
     const review = REVIEWED_DRAFT[stage];
-    return await watchStage({ kind, stage, agentName, paneId, agent: launch.label, paths }, {
+    return await watchStage({ kind, stage, agentName, paneId, agent: launch.label, paths, work }, {
       ...deps,
+      sync: () => sync.sync(),
+      clearDone: () => sync.clearDone(),
       checkStage: (finishRequested, answered) => checkStageOutput(stage, paths, finishRequested, answered),
       approved: () =>
         review !== undefined &&
@@ -996,6 +1016,7 @@ async function runStage(
     } catch {
       // The user may have closed the pane already.
     }
+    sync.dispose();
   }
 }
 

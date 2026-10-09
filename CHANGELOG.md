@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Lab sessions on Claude Code could not write anything** — Claude Code
+  refuses to write inside a `.git` directory, where the Lab lives, so a Claude
+  agent could not write its first question card. Each stage's agent now works
+  in a folder of its own under `~/.grove/lab-work/`, outside any repository,
+  still confined to it, and the session runtime keeps that folder and the Lab
+  entry in step both ways.
 - **Lab escalation with a question open** — escalating a bug while its
   shaping agent waited on a question card no longer holds the new grill's
   Scout stage on that card. Only the stages that ask handle cards; the open

@@ -347,10 +347,11 @@ export function buildDraftRepairPrompt(problems: string[], stage: string, doneFi
   ].join("\n");
 }
 
-export function buildRepairPrompt(record: QuestionRecord): string {
+/** Asks the agent to rewrite an invalid card, at the path it wrote it to. */
+export function buildRepairPrompt(record: QuestionRecord, file = record.file): string {
   return [
-    `${path.basename(record.file)} is invalid: ${record.error}.`,
-    `Rewrite ${record.file} so it follows the question card format, and stop.`,
+    `${path.basename(file)} is invalid: ${record.error}.`,
+    `Rewrite ${file} so it follows the question card format, and stop.`,
   ].join("\n");
 }
 
