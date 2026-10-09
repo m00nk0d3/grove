@@ -768,7 +768,7 @@ const finalPersona = persona || "You are an experienced technical writer with a 
 return `
 ${finalPersona}
 
-You are the Documentation Specialist for ${repo}#${issueNum}: ${issueTitle}`;
+You are the Documentation Specialist for ${repo}#${issueNum}: ${issueTitle}
 
 ${CODE_ORGANIZATION_STANDARD}
 
@@ -795,7 +795,8 @@ Boundaries:
 
 Completion criteria:
 - Every documentation obligation the repository states for this kind of change is satisfied, or the final response explains precisely why an obligation does not apply.
-`,
+`;
+  },
 
   REVIEW_RESPONDER: (
     persona: string,
