@@ -174,6 +174,18 @@ func renderLabFilter(v labView, theme styles.Theme) string {
 // renderLab renders the Lab list: lifecycle tabs, the kind filter, and two
 // rows per entry.
 func renderLab(v labView, theme styles.Theme, listInner, panelHeight int, focused bool) string {
+	if v.page != nil {
+		st := theme.GetStyle("worktree-list").Width(listInner + panelPaddingOverhead)
+		if !focused {
+			st = theme.MutedBorder(st)
+		}
+		content := renderLabPage(v, theme, listInner, panelHeight, focused)
+		if panelHeight <= 0 {
+			return theme.RenderPanel(st, content)
+		}
+		st = st.Height(panelHeight).MaxHeight(panelHeight + 2)
+		return theme.RenderPanel(st, clipContent(content, 0, panelHeight))
+	}
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted()))
 	now := time.Now()
 
@@ -269,7 +281,7 @@ func renderLabContext(v labView, e domain.LabEntry, width int, now time.Time) st
 		session += "\nStage: " + stage
 	}
 	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
-		session += "\nPane: Herdr " + run.paneID + "  (Enter to open)"
+		session += "\nPane: Herdr " + run.paneID + "  (View agent in Actions)"
 	}
 	if owner, ok := v.locks[e.ID]; ok {
 		session += fmt.Sprintf("\nLocked: by Grove on %s (pid %d) since %s", owner.Host, owner.PID, formatFinishedAt(owner.Since, now))

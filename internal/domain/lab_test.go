@@ -79,8 +79,8 @@ func TestLabKind_Valid(t *testing.T) {
 }
 
 func TestLabEntry_StagesFollowModeThenKind(t *testing.T) {
-	grill := []string{"Interview", "Spec", "Tickets", "Publish"}
-	shape := []string{"Shape", "Publish"}
+	grill := []string{"Scout", "Interview", "Spec", "Tickets", "Publish"}
+	shape := []string{"Shape", "Review", "Publish"}
 
 	assert.Equal(t, grill, domain.LabEntry{Kind: domain.LabKindIdea}.LabStages())
 	assert.Equal(t, shape, domain.LabEntry{Kind: domain.LabKindBug}.LabStages(), "a bug is shaped by default")
@@ -93,12 +93,12 @@ func TestLabEntry_Stage(t *testing.T) {
 		want  int
 	}{
 		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusDraft}, 0},
-		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusGrilling}, 1},
-		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusSpecced}, 2},
-		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusTicketed}, 3},
-		{domain.LabEntry{Kind: domain.LabKindIdea, Mode: domain.LabModeGrill, Status: domain.LabStatusPublished}, 4},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusGrilling}, 2},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusSpecced}, 3},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Status: domain.LabStatusTicketed}, 4},
+		{domain.LabEntry{Kind: domain.LabKindIdea, Mode: domain.LabModeGrill, Status: domain.LabStatusPublished}, 5},
 		{domain.LabEntry{Kind: domain.LabKindBug, Status: domain.LabStatusShaping}, 1},
-		{domain.LabEntry{Kind: domain.LabKindBug, Mode: domain.LabModeShape, Status: domain.LabStatusPublished}, 2},
+		{domain.LabEntry{Kind: domain.LabKindBug, Mode: domain.LabModeShape, Status: domain.LabStatusPublished}, 3},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, tt.entry.Stage(), "%s/%s", tt.entry.Kind, tt.entry.Status)

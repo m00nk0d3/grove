@@ -144,6 +144,11 @@ const (
 	ContextActionLabArchive   = "lab-archive"
 	ContextActionLabRestore   = "lab-restore"
 	ContextActionLabDelete    = "lab-delete"
+	// ContextActionLabFinishInterview asks the agent to end the interview
+	// and write the spec.
+	ContextActionLabFinishInterview = "lab-finish-interview"
+	// ContextActionLabViewAgent focuses the session agent's pane.
+	ContextActionLabViewAgent = "lab-view-agent"
 )
 
 // CandidateKind distinguishes the type of a cleanup candidate.

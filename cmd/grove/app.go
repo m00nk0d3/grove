@@ -1332,6 +1332,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Dismiss any visible error overlay on the next keypress.
 		m.statusErr = ""
+		// The Lab's entry page owns the keyboard; Esc in its Actions panel
+		// returns to it.
+		if m.view == viewLab && m.lab.page != nil {
+			if m.focused == panelCtx && msg.Type == tea.KeyEsc {
+				m.focused = panelList
+				return m, nil
+			}
+			if m.focused == panelList {
+				return m.handleLabPageKey(msg)
+			}
+		}
 		switch msg.Type {
 		case tea.KeyTab:
 			m.focused = (m.focused + 1) % panelCount
@@ -1588,6 +1599,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lab.locks = msg.labLocks
 				m.lab.talks = msg.labTalks
 				m.lab.clamp()
+				m.syncLabPage()
 			}
 			// Always use the main worktree (first entry) as the canonical repo path
 			// so the header shows the repo name rather than the current worktree dir.
@@ -1749,6 +1761,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case missionControlUpdatedMsg:
 		m.missionState = &msg.state
 		m.lab.setMission(m.missionState)
+		m.syncLabPage()
 		m.refreshLabInspector()
 		missions := dashboardMissionsForTab(m.missionState, m.dashboardTab, m.dismissedWorkflows)
 		if len(missions) == 0 {
@@ -1765,7 +1778,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case labTalksLoadedMsg:
 		m.lab.talks = msg.talks
+		m.syncLabPage()
 		return m, nil
+
+	case modal.LabAnswerSubmittedMsg:
+		return m.handleLabAnswerSubmitted(msg)
+
+	case modal.LabRequestSubmittedMsg:
+		return m.handleLabRequestSubmitted(msg)
 
 	case labAnswerRecordedMsg:
 		return m.handleLabAnswerRecorded(msg)

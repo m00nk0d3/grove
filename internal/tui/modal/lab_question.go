@@ -19,6 +19,8 @@ type LabAnswerSubmittedMsg struct {
 	Number  int
 	Choices []int
 	Text    string
+	// Revise replaces an answer already given instead of answering anew.
+	Revise bool
 }
 
 // LabRequestSubmittedMsg carries a message for a session's agent: a reply, a
@@ -43,9 +45,60 @@ type LabQuestionModal struct {
 	picked   map[int]bool
 	note     textinput.Model
 	inNote   bool
-	err      string
-	width    int
-	theme    *styles.Theme
+	// revise marks a card reopened to change an answer already given.
+	revise bool
+	// blurred hides the card's cursor while another part of the page has
+	// the keyboard.
+	blurred bool
+	err     string
+	width   int
+	theme   *styles.Theme
+}
+
+// NewLabRevisionCard reopens question n to change its answer, starting from
+// the answer given.
+func NewLabRevisionCard(entryID string, n int, q domain.LabQuestion, a domain.LabAnswer) *LabQuestionModal {
+	m := NewLabQuestionModal(entryID, n, q, "")
+	m.revise = true
+	m.picked = map[int]bool{}
+	for _, i := range a.Choices {
+		m.picked[i] = true
+	}
+	if len(a.Choices) > 0 {
+		m.cursor = a.Choices[0]
+	}
+	m.note.SetValue(a.Text)
+	m.note.CursorEnd()
+	return m
+}
+
+// InNote reports whether the note has the keyboard.
+func (m *LabQuestionModal) InNote() bool { return m.inNote }
+
+// HasOptions reports whether the card is answered by choosing options.
+func (m *LabQuestionModal) HasOptions() bool { return len(m.question.Options) > 0 }
+
+// FocusOptions gives the keyboard to the options, or to the answer of a text
+// card.
+func (m *LabQuestionModal) FocusOptions() {
+	m.blurred = false
+	if m.HasOptions() {
+		m.leaveNote()
+	} else {
+		m.focusNote()
+	}
+}
+
+// FocusNote gives the keyboard to the note.
+func (m *LabQuestionModal) FocusNote() {
+	m.blurred = false
+	m.focusNote()
+}
+
+// Blur takes the keyboard away from the card.
+func (m *LabQuestionModal) Blur() {
+	m.blurred = true
+	m.leaveNote()
 }
 
 // NewLabQuestionModal opens the card of question n. The recommended answer is
@@ -89,6 +142,9 @@ func (m *LabQuestionModal) Init() tea.Cmd { return nil }
 // Title returns the modal title.
 func (m *LabQuestionModal) Title() string {
 	title := fmt.Sprintf("QUESTION %d", m.number)
+	if m.revise {
+		title = fmt.Sprintf("CHANGE ANSWER %d", m.number)
+	}
 	if m.position != "" {
 		title += " · " + m.position
 	}
@@ -169,7 +225,7 @@ func (m *LabQuestionModal) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // submit returns the answer, or nil with an error shown when it is empty.
 func (m *LabQuestionModal) submit() tea.Cmd {
-	answer := LabAnswerSubmittedMsg{EntryID: m.entryID, Number: m.number, Text: strings.TrimSpace(m.note.Value())}
+	answer := LabAnswerSubmittedMsg{EntryID: m.entryID, Number: m.number, Text: strings.TrimSpace(m.note.Value()), Revise: m.revise}
 	switch m.question.Kind {
 	case domain.LabQuestionText:
 		if answer.Text == "" {
@@ -217,7 +273,7 @@ func (m *LabQuestionModal) View() string {
 	}
 	for i, option := range m.question.Options {
 		marker := "  "
-		if i == m.cursor && !m.inNote {
+		if i == m.cursor && !m.inNote && !m.blurred {
 			marker = "▸ "
 		}
 		box := ""
@@ -231,7 +287,7 @@ func (m *LabQuestionModal) View() string {
 		if recommended[i] {
 			line += muted.Render("  (recommended)")
 		}
-		if i == m.cursor && !m.inNote {
+		if i == m.cursor && !m.inNote && !m.blurred {
 			line = accent.Render(line)
 		}
 		b.WriteString(line + "\n")

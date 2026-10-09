@@ -59,6 +59,8 @@ type labView struct {
 	locks map[string]data.LabLockOwner
 	// talks holds what each entry's session has asked the user, by entry ID.
 	talks map[string]labTalk
+	// page is the open entry page, or nil while the list shows.
+	page *labPage
 }
 
 // labRun is a Sandcastle run as the Lab shows it.
@@ -286,6 +288,7 @@ func (m *Model) handleLabsLoaded(msg labsLoadedMsg) (tea.Model, tea.Cmd) {
 		m.lab.locks = msg.locks
 		m.lab.talks = msg.talks
 	}
+	defer m.syncLabPage()
 	if msg.selectID != "" {
 		m.lab.selectID(msg.selectID)
 	} else {
@@ -355,6 +358,13 @@ func (m *Model) labNextStep() (tea.Model, tea.Cmd) {
 		m.openLabCapture()
 		return m, nil
 	}
+	m.openLabPage(e)
+	return m, nil
+}
+
+// labPrimaryAction performs what an entry needs next: Enter on its page, for
+// everything but the cards the page answers itself.
+func (m *Model) labPrimaryAction(e domain.LabEntry) (tea.Model, tea.Cmd) {
 	if e.Archived {
 		m.statusMsg = "Archived — restore it from the Actions panel to continue"
 		return m, clearMsgCmd()
@@ -428,6 +438,12 @@ func labContextActions(v labView) []contextActionOption {
 	if v.hasLiveSession(e) {
 		actions = append(actions, contextActionOption{icon: "■", label: "End session", action: modal.ContextActionLabEnd})
 	}
+	if t := v.talks[e.ID]; v.hasLiveSession(e) && t.hasSession && t.session.Stage == "interview" {
+		actions = append(actions, contextActionOption{icon: "»", label: "Write the spec now", action: modal.ContextActionLabFinishInterview})
+	}
+	if run, ok := v.latestRun(e); ok && run.live() && run.paneID != "" {
+		actions = append(actions, contextActionOption{icon: "◫", label: "View agent", action: modal.ContextActionLabViewAgent})
+	}
 	if owner, ok := v.foreignLock(e); ok {
 		actions = append(actions, contextActionOption{icon: "⊘", label: "Clear lock from " + owner.Host, action: modal.ContextActionLabClearLock})
 	}
@@ -462,7 +478,19 @@ func (m *Model) handleLabAction(action string) (tea.Model, tea.Cmd) {
 		m.statusErr = "No Lab entry selected"
 		return m, clearErrorCmd()
 	}
+	if m.lab.page != nil {
+		// An action chosen from the entry page returns the keyboard to it.
+		m.focused = panelList
+	}
 	switch action {
+	case modal.ContextActionLabFinishInterview:
+		return m.handleLabRequestSubmitted(modal.LabRequestSubmittedMsg{EntryID: e.ID, Kind: domain.LabRequestFinishInterview})
+	case modal.ContextActionLabViewAgent:
+		if run, ok := m.lab.latestRun(e); ok && run.live() {
+			return m.openLabRunPane(firstNonEmptyString(run.workflow.RunID, run.workflow.WorkflowID))
+		}
+		m.statusErr = "The session is not running"
+		return m, clearErrorCmd()
 	case modal.ContextActionLabInspect:
 		return m.openLabInspector()
 	case modal.ContextActionLabOpenIssue:

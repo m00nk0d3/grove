@@ -195,3 +195,14 @@ func createExclusive(path string, data []byte) error {
 	}
 	return nil
 }
+
+// Coverage returns the interview's topic coverage, if the agent has written
+// it.
+func (s *LabStore) Coverage(id string) (domain.LabCoverage, bool) {
+	raw, err := os.ReadFile(filepath.Join(s.EntryDir(id), "coverage.json"))
+	if err != nil {
+		return domain.LabCoverage{}, false
+	}
+	c, err := domain.ParseLabCoverage(raw)
+	return c, err == nil
+}

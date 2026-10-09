@@ -19,6 +19,9 @@ type labTalk struct {
 	session    domain.LabSession
 	hasSession bool
 	questions  []domain.LabQuestionRecord
+	// coverage is the interview's topic coverage, once the agent writes it.
+	coverage    domain.LabCoverage
+	hasCoverage bool
 }
 
 // loadLabTalks reads the protocol files of every entry that may have a
@@ -32,6 +35,7 @@ func loadLabTalks(store *data.LabStore, entries []domain.LabEntry) map[string]la
 		var t labTalk
 		t.session, t.hasSession = store.Session(e.ID)
 		t.questions, _ = store.Questions(e.ID)
+		t.coverage, t.hasCoverage = store.Coverage(e.ID)
 		talks[e.ID] = t
 	}
 	return talks
@@ -178,7 +182,11 @@ func (m *Model) handleLabAnswerSubmitted(msg modal.LabAnswerSubmittedMsg) (tea.M
 		if err != nil {
 			return labAnswerRecordedMsg{entryID: msg.EntryID, err: err}
 		}
-		err = store.AnswerQuestion(msg.EntryID, msg.Number, msg.Choices, msg.Text, time.Now())
+		if msg.Revise {
+			err = store.ReviseAnswer(msg.EntryID, msg.Number, msg.Choices, msg.Text, time.Now())
+		} else {
+			err = store.AnswerQuestion(msg.EntryID, msg.Number, msg.Choices, msg.Text, time.Now())
+		}
 		questions, loadErr := store.Questions(msg.EntryID)
 		if err == nil {
 			err = loadErr
@@ -197,7 +205,14 @@ func (m *Model) handleLabAnswerRecorded(msg labAnswerRecordedMsg) (tea.Model, te
 		}
 		m.lab.talks[msg.entryID] = t
 	}
-	m.activeModal = nil
+	if _, ok := m.activeModal.(*modal.LabQuestionModal); ok {
+		m.activeModal = nil
+	}
+	if p := m.lab.page; p != nil && p.entryID == msg.entryID {
+		// The page shows the next waiting card, if there is one.
+		p.revising, p.card = false, nil
+		m.syncLabPage()
+	}
 	if msg.err != nil {
 		if errors.Is(msg.err, data.ErrLabAlreadyAnswered) {
 			m.statusMsg = "That question was already answered"
@@ -206,7 +221,7 @@ func (m *Model) handleLabAnswerRecorded(msg labAnswerRecordedMsg) (tea.Model, te
 		m.statusErr = msg.err.Error()
 		return m, clearErrorCmd()
 	}
-	if e, ok := m.lab.entry(msg.entryID); ok {
+	if e, ok := m.lab.entry(msg.entryID); ok && m.lab.page == nil {
 		if ask, _ := m.lab.ask(e); ask == labAskQuestion && m.openLabAsk(e) {
 			return m, nil
 		}
@@ -225,7 +240,10 @@ type labRequestSentMsg struct {
 // handleLabRequestSubmitted writes a reply, change request, or permission
 // decision for the session runtime to deliver.
 func (m *Model) handleLabRequestSubmitted(msg modal.LabRequestSubmittedMsg) (tea.Model, tea.Cmd) {
-	m.activeModal = nil
+	switch m.activeModal.(type) {
+	case *modal.LabMessageModal, *modal.LabPermissionModal:
+		m.activeModal = nil
+	}
 	repoPath := m.RepoPath
 	return m, func() tea.Msg {
 		store, err := labStoreFor(repoPath)

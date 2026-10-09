@@ -593,8 +593,10 @@ actions menu, opened with `.`, which lists only what the entry's state allows.
 *View agent* focuses the Herdr pane.
 
 While the entry page is open it owns the keyboard: global keys are suspended
-except `Esc`, `?`, and `q`, which asks for confirmation. Whatever has focus
-receives every other key.
+except `Esc`, `?`, and `Ctrl+C`, which quits. `q` is not one of them, because
+it is a letter typed into notes and replies. Whatever has focus receives
+every other key. The actions menu is the context panel's Actions list, which
+`.` focuses and `Esc` leaves.
 
 ### Question card
 

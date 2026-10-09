@@ -71,13 +71,27 @@ var keybindingGroups = []bindingGroup{
 		bindings: [][2]string{
 			{"↑/↓  j/k", "Navigate entries"},
 			{"c", "Capture a new idea or bug"},
-			{"Enter", "Run the next action printed under the entry"},
+			{"Enter", "Open the entry's page"},
 			{"v / V", "Inspect progress, artifacts, and original capture"},
 			{"a / A", "Actions: publish, shape, grill, escalate, open issue, end session, archive"},
 			{"[ / ]", "Switch lane: working, inbox, issues, archive"},
 			{"1", "Filter: All entries"},
 			{"2", "Filter: Ideas only"},
 			{"3", "Filter: Bugs only"},
+		},
+	},
+	{
+		title: "LAB ENTRY PAGE",
+		bindings: [][2]string{
+			{"Enter", "Answer the question, or do what the entry needs next"},
+			{"↑/↓  1–4", "Choose an option on a question card"},
+			{"Space", "Toggle an option on a pick-any card"},
+			{"Tab", "Move between the options, the note, and the decisions"},
+			{"Enter on a decision", "Change that answer while the interview lasts"},
+			{"Ctrl+S", "Send a reply to the agent"},
+			{"y / n", "Allow or deny a command the agent asks to run"},
+			{".", "Actions: write the spec now, view agent, end session"},
+			{"Esc", "Leave the note, then return to the list"},
 		},
 	},
 	{

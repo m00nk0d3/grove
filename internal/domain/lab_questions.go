@@ -248,3 +248,37 @@ func ParseLabQuestion(raw []byte, id int) (*LabQuestion, error) {
 	}
 	return q, nil
 }
+
+// LabCoverageTopics are the topics an interview must settle, in order. See
+// docs/LAB_DESIGN.md, "Coverage".
+var LabCoverageTopics = []string{
+	"scope", "triggers", "data", "interface", "errors",
+	"concurrency", "compatibility", "testing", "rollout",
+}
+
+// LabCoverage is how far an interview has settled its topics.
+type LabCoverage struct {
+	// Settled counts the topics covered or not applicable.
+	Settled int
+	// Open lists the topics not settled yet, in order.
+	Open []string
+}
+
+// ParseLabCoverage reads coverage.json. A topic is settled when it is
+// "covered" or "n/a: <reason>"; anything else, missing included, is open.
+func ParseLabCoverage(raw []byte) (LabCoverage, error) {
+	var topics map[string]string
+	if err := json.Unmarshal(raw, &topics); err != nil {
+		return LabCoverage{}, err
+	}
+	var c LabCoverage
+	for _, topic := range LabCoverageTopics {
+		status := strings.TrimSpace(topics[topic])
+		if status == "covered" || (strings.HasPrefix(status, "n/a:") && strings.TrimSpace(strings.TrimPrefix(status, "n/a:")) != "") {
+			c.Settled++
+		} else {
+			c.Open = append(c.Open, topic)
+		}
+	}
+	return c, nil
+}

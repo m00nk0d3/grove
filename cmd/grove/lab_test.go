@@ -492,9 +492,9 @@ func TestLabView_RunStateDrivesRows(t *testing.T) {
 	assert.Equal(t, labToneAttention, s.tone)
 
 	assert.Equal(t, "SPECCED", labStateOf(v, running).badge)
-	assert.Equal(t, "Spec 2/4", labStageLabel(v, running), "a live run's current step is shown")
+	assert.Equal(t, "Spec 3/5", labStageLabel(v, running), "a live run's current step is shown")
 	assert.Contains(t, labDetail(v, running, now), "Herdr pane-run-r")
-	assert.Equal(t, "Tickets 3/4", labStageLabel(v, idle), "without a run the stored stage is shown")
+	assert.Equal(t, "Tickets 4/5", labStageLabel(v, idle), "without a run the stored stage is shown")
 	assert.NotContains(t, labDetail(v, idle, now), "Herdr")
 }
 
@@ -506,7 +506,7 @@ func TestLabView_FinishedRunDoesNotOverrideStatus(t *testing.T) {
 	v.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowSucceeded}))
 
 	assert.Equal(t, "TICKETED", labStateOf(v, e).badge)
-	assert.Equal(t, "Tickets 3/4", labStageLabel(v, e))
+	assert.Equal(t, "Tickets 4/5", labStageLabel(v, e))
 	assert.NotContains(t, labDetail(v, e, time.Now()), "Herdr", "a finished run's pane is not offered")
 }
 
@@ -590,10 +590,12 @@ func TestLab_EnterOnLiveRunFocusesItsPane(t *testing.T) {
 	m.lab.setMission(labMissionState(map[string]string{"run-1": domain.WorkflowBlocked}))
 	m.lab.setTab(labTabActive)
 
+	m, _ = press(t, m, "enter")
+	require.NotNil(t, m.lab.page, "Enter on a row opens the entry page")
 	m, cmd := press(t, m, "enter")
 	require.NotNil(t, cmd)
 	cmd()
-	assert.Equal(t, "pane-run-1", navigator.focusedPane, "Enter takes the user to the waiting agent")
+	assert.Equal(t, "pane-run-1", navigator.focusedPane, "Enter on the page takes the user to the waiting agent")
 	assert.Nil(t, m.activeModal)
 }
 
@@ -604,6 +606,8 @@ func TestLab_EnterWithoutLiveRunOpensInspector(t *testing.T) {
 	m.lab.entries = []domain.LabEntry{ended}
 	m.lab.setTab(labTabActive)
 
+	m, _ = press(t, m, "enter")
+	require.NotNil(t, m.lab.page, "Enter on a row opens the entry page")
 	m, _ = press(t, m, "enter")
 	assert.IsType(t, &modal.LabInspectorModal{}, m.activeModal)
 }
@@ -672,7 +676,7 @@ func TestLabContextActions_DependOnStateAndSession(t *testing.T) {
 
 	shaping := entryAt(now, "s", domain.LabKindBug, domain.LabStatusShaping, "Bug")
 	shaping.Runs = []string{"run-1"}
-	assert.Equal(t, []string{"Inspect", "End session", "Archive", "Capture new entry"},
+	assert.Equal(t, []string{"Inspect", "End session", "View agent", "Archive", "Capture new entry"},
 		labels(viewOf(shaping, map[string]string{"run-1": domain.WorkflowBlocked})), "a live session is ended, not restarted")
 	assert.Equal(t, []string{"Resume shaping", "Inspect", "Archive", "Capture new entry"},
 		labels(viewOf(shaping, map[string]string{"run-1": domain.WorkflowSucceeded})), "an ended session can be resumed")
@@ -718,6 +722,8 @@ func shapeModel(t *testing.T) (*Model, *data.LabStore, *fakeLabStarter, domain.L
 func TestLab_EnterOnBugDraftStartsShapingSession(t *testing.T) {
 	m, store, starter, e := shapeModel(t)
 
+	m, _ = press(t, m, "enter")
+	require.NotNil(t, m.lab.page, "Enter on a row opens the entry page")
 	m, cmd := press(t, m, "enter")
 	require.NotNil(t, cmd)
 	updated, _ := m.Update(cmd())
@@ -801,6 +807,8 @@ func TestLab_EnterOnIdeaDraftStartsGrillSession(t *testing.T) {
 	m.lab.setTab(labTabDrafts)
 	m.lab.selectID(idea.ID)
 
+	m, _ = press(t, m, "enter")
+	require.NotNil(t, m.lab.page, "Enter on a row opens the entry page")
 	m, cmd := press(t, m, "enter")
 	updated, _ := m.Update(cmd())
 	m = updated.(*Model)
@@ -931,6 +939,8 @@ func TestLab_EnterOnPublishedEntryOpensItsEpicInIssues(t *testing.T) {
 	m.issues = []domain.Issue{{Number: 240, Title: "Other"}, {Number: 251, Title: "Offline mode"}}
 
 	assert.Contains(t, labelsOf(labContextActions(m.lab)), "Open on GitHub")
+	m, _ = press(t, m, "enter")
+	require.NotNil(t, m.lab.page, "Enter on a row opens the entry page")
 	m, _ = press(t, m, "enter")
 	assert.Equal(t, viewIssues, m.view)
 	assert.Equal(t, 1, m.selectedIssueIdx, "the epic is selected, with its sub-issues beneath it")

@@ -85,21 +85,23 @@ func TestLabAsk_RowsSayWhatTheSessionWaitsFor(t *testing.T) {
 	assert.NotContains(t, labNextAction(m.lab, e), "Answer", "a finished session asks nothing")
 }
 
-func TestLabAsk_CardsAreAnsweredInGroveOneAfterAnother(t *testing.T) {
+func TestLabPage_CardsAreAnsweredInlineOneAfterAnother(t *testing.T) {
 	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
 	writeLabCard(t, store, e.ID, 1)
 	writeLabCard(t, store, e.ID, 2)
 	m.lab.talks = loadLabTalks(store, m.lab.entries)
 
 	m, _ = press(t, m, "enter")
-	card, ok := m.activeModal.(*modal.LabQuestionModal)
-	require.True(t, ok, "Enter opens the first waiting card, got %T", m.activeModal)
-	assert.Equal(t, 1, card.Number())
-	assert.Equal(t, "QUESTION 1 · 1 of 2", card.Title())
+	require.NotNil(t, m.lab.page, "Enter opens the entry page")
+	require.Nil(t, m.activeModal, "the card is on the page, not in a modal")
+	require.NotNil(t, m.lab.page.card)
+	assert.Equal(t, "QUESTION 1 · 1 of 2", m.lab.page.card.Title())
+	assert.Contains(t, m.View(), "Question 1?", "the page shows the card")
 
 	m, _ = press(t, m, "2")
 	m, _ = press(t, m, "tab")
-	m = typeInto(t, m, "only for now")
+	m = typeInto(t, m, "only for now. q?")
+	assert.NotNil(t, m.lab.page, "keys typed in the note never reach the global key map")
 	var cmd tea.Cmd
 	m, cmd = press(t, m, "enter")
 	m = feed(t, m, cmd, 2)
@@ -109,38 +111,84 @@ func TestLabAsk_CardsAreAnsweredInGroveOneAfterAnother(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(raw, &answer))
 	assert.Equal(t, []int{1}, answer.Choices)
-	assert.Equal(t, "only for now", answer.Text)
+	assert.Equal(t, "only for now. q?", answer.Text)
 
-	next, ok := m.activeModal.(*modal.LabQuestionModal)
-	require.True(t, ok, "the next waiting card opens, got %T", m.activeModal)
-	assert.Equal(t, 2, next.Number())
+	require.NotNil(t, m.lab.page.card, "the next waiting card replaces it")
+	assert.Equal(t, 2, m.lab.page.card.Number())
+	assert.Contains(t, m.View(), "DECISIONS (1)")
 
 	m, cmd = press(t, m, "enter")
 	m = feed(t, m, cmd, 2)
-	assert.Nil(t, m.activeModal)
+	assert.Nil(t, m.lab.page.card)
 	assert.Equal(t, "Answer sent to the agent", m.statusMsg)
+
+	m, _ = press(t, m, "esc")
+	assert.Nil(t, m.lab.page, "Esc returns to the list")
 }
 
-func TestLabAsk_RepliesAndPermissionDecisionsBecomeRequests(t *testing.T) {
+func TestLabPage_AnAnswerIsChangedFromTheDecisionsLog(t *testing.T) {
+	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
+	writeLabCard(t, store, e.ID, 1)
+	writeLabCard(t, store, e.ID, 2)
+	require.NoError(t, store.AnswerQuestion(e.ID, 1, []int{1}, "", time.Now()))
+	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(`{"phase":"question","stage":"interview","pending":[2]}`), 0o644))
+	m.lab.talks = loadLabTalks(store, m.lab.entries)
+
+	m, _ = press(t, m, "enter")
+	m, _ = press(t, m, "tab") // the note
+	m, _ = press(t, m, "tab") // the decisions log
+	require.Equal(t, labFocusLog, m.lab.page.focus)
+	m, _ = press(t, m, "enter")
+	require.True(t, m.lab.page.revising, "Enter on a decision reopens its card")
+	assert.Equal(t, "CHANGE ANSWER 1", m.lab.page.card.Title())
+
+	m, _ = press(t, m, "1")
+	m, cmd := press(t, m, "enter")
+	m = feed(t, m, cmd, 2)
+
+	var answer domain.LabAnswer
+	raw, err := os.ReadFile(filepath.Join(store.EntryDir(e.ID), "questions", "001.answer.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &answer))
+	assert.Equal(t, []int{0}, answer.Choices)
+	require.Len(t, answer.Revisions, 1, "the earlier answer is kept")
+	assert.Equal(t, []int{1}, answer.Revisions[0].Choices)
+	assert.Equal(t, 2, m.lab.page.card.Number(), "the waiting card comes back")
+	assert.Contains(t, m.View(), "Yes (changed)")
+
+	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(`{"phase":"review","stage":"spec","pending":[]}`), 0o644))
+	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.syncLabPage()
+	m.lab.page.focus = labFocusLog
+	m, _ = press(t, m, "enter")
+	assert.False(t, m.lab.page.revising, "after the interview, answers are not changed here")
+	assert.Contains(t, m.statusMsg, "only while the agent is asking")
+}
+
+func TestLabPage_RepliesAndPermissionDecisionsBecomeRequests(t *testing.T) {
 	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
 	writeLabSession(t, store, e.ID, domain.LabPhaseFallback, "Which database?")
 	m.lab.talks = loadLabTalks(store, m.lab.entries)
 
 	m, _ = press(t, m, "enter")
-	_, ok := m.activeModal.(*modal.LabMessageModal)
-	require.True(t, ok, "a turn without a card opens a reply, got %T", m.activeModal)
-	assert.Contains(t, m.activeModal.View(), "Which database?", "the agent's output is shown")
+	require.NotNil(t, m.lab.page)
+	assert.True(t, m.lab.page.replyOn, "a turn without a card opens a reply on the page")
+	assert.Contains(t, m.View(), "Which database?", "the agent's output is shown")
 	m = typeInto(t, m, "Postgres")
 	m, cmd := press(t, m, "ctrl+s")
-	m = feed(t, m, cmd, 2)
+	m = feed(t, m, cmd, 1)
 	assert.Equal(t, "Reply sent to the agent", m.statusMsg)
+	assert.Contains(t, m.View(), "Waiting for the agent")
 
+	writeLabSession(t, store, e.ID, domain.LabPhaseWorking, "")
+	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m.syncLabPage()
 	writeLabSession(t, store, e.ID, domain.LabPhasePermission, "Allow git push?")
 	m.lab.talks = loadLabTalks(store, m.lab.entries)
-	m, _ = press(t, m, "enter")
-	require.IsType(t, &modal.LabPermissionModal{}, m.activeModal)
+	m.syncLabPage()
+	assert.Contains(t, m.View(), "PERMISSION REQUEST")
 	m, cmd = press(t, m, "n")
-	m = feed(t, m, cmd, 2)
+	m = feed(t, m, cmd, 1)
 	assert.Equal(t, "Denied; the agent continues", m.statusMsg)
 
 	var reply, permission domain.LabRequest
@@ -157,23 +205,76 @@ func TestLabAsk_RepliesAndPermissionDecisionsBecomeRequests(t *testing.T) {
 	assert.False(t, *permission.Allow)
 }
 
-func TestLabAsk_DraftsBetweenStagesAreReviewedInTheInspector(t *testing.T) {
+func TestLabPage_DraftsBetweenStagesAreReviewedInTheInspector(t *testing.T) {
 	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
-	writeSession := func(stage string) {
-		raw := fmt.Sprintf(`{"phase":"review","stage":%q,"pending":[]}`, stage)
+	writeSession := func(raw string) {
 		require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(raw), 0o644))
 		m.lab.talks = loadLabTalks(store, m.lab.entries)
 	}
 	require.NoError(t, os.MkdirAll(store.EntryDir(e.ID), 0o755))
 
-	writeSession("spec")
+	writeSession(`{"phase":"review","stage":"spec","pending":[]}`)
 	assert.Equal(t, "Review the spec", labNextAction(m.lab, e))
-	writeSession("tickets")
+	writeSession(`{"phase":"review","stage":"tickets","pending":[],"problems":["ticket 02 body: the \"## Why\" section is missing"]}`)
 	assert.Equal(t, "Review the tickets", labNextAction(m.lab, e))
+	m, _ = press(t, m, "enter")
+	assert.Contains(t, m.View(), "could not fix these problems", "problems left in the draft are shown")
+	assert.Contains(t, m.View(), "ticket 02 body")
 	m, _ = press(t, m, "enter")
 	require.IsType(t, &modal.LabInspectorModal{}, m.activeModal, "Enter opens the draft for review")
 
 	m.activeModal = nil
-	writeSession("publish")
+	writeSession(`{"phase":"review","stage":"publish","pending":[]}`)
 	assert.NotContains(t, labNextAction(m.lab, e), "Review the", "a session waiting to publish is published, not reviewed")
+}
+
+func TestLabPage_StepperFollowsTheRun(t *testing.T) {
+	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
+	state := labMissionState(map[string]string{"run-1": domain.WorkflowBlocked})
+	state.WorkflowRuns[0].Steps = []domain.WorkflowStep{
+		{Title: "Scout", Status: "succeeded"},
+		{Title: "Interview", Status: "blocked"},
+		{Title: "Spec", Status: "queued"},
+	}
+	m.lab.setMission(state)
+	require.NoError(t, os.MkdirAll(store.EntryDir(e.ID), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "coverage.json"),
+		[]byte(`{"scope":"covered","triggers":"covered","data":"open"}`), 0o644))
+	m.lab.talks = loadLabTalks(store, m.lab.entries)
+
+	steps := labPageSteps(m.lab, e)
+	require.Len(t, steps, 3)
+	assert.Equal(t, labPageStep{title: "Interview", status: "blocked", detail: "2/9"}, steps[1])
+
+	idea := entryAt(time.Now(), "fresh", domain.LabKindIdea, domain.LabStatusDraft, "Fresh")
+	bug := entryAt(time.Now(), "bug", domain.LabKindBug, domain.LabStatusDraft, "Bug")
+	assert.Len(t, labPageSteps(m.lab, idea), 5, "an idea goes through the grill's steps")
+	assert.Equal(t, "Review", labPageSteps(m.lab, bug)[1].title, "a bug is shaped, reviewed, and published")
+}
+
+func TestLabPage_ActionsPanelServesThePage(t *testing.T) {
+	m, store, e := labTalkModel(t, domain.WorkflowBlocked)
+	writeLabCard(t, store, e.ID, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(store.EntryDir(e.ID), "session.json"), []byte(`{"phase":"question","stage":"interview","pending":[1]}`), 0o644))
+	m.lab.talks = loadLabTalks(store, m.lab.entries)
+	m, _ = press(t, m, "enter")
+
+	m, _ = press(t, m, ".")
+	assert.Equal(t, panelCtx, m.focused, ". opens the actions")
+	labels := labelsOf(labContextActions(m.lab))
+	assert.Contains(t, labels, "Write the spec now")
+	assert.Contains(t, labels, "View agent")
+
+	updated, cmd := m.handleLabAction(modal.ContextActionLabFinishInterview)
+	m = feed(t, updated.(*Model), cmd, 1)
+	assert.Equal(t, panelList, m.focused, "the page gets the keyboard back")
+	raw, err := os.ReadFile(filepath.Join(store.EntryDir(e.ID), "requests", "001.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"finish_interview"`)
+
+	m.focused = panelCtx
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(*Model)
+	assert.Equal(t, panelList, m.focused, "Esc in the actions returns to the page")
+	assert.NotNil(t, m.lab.page)
 }

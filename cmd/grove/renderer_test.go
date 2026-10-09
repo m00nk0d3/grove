@@ -1924,10 +1924,10 @@ func TestRenderFooterBar_ShowsListPosition_Issues(t *testing.T) {
 		issues[i] = domain.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
 	}
 
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, 0, nil, 0)
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, false, issues, 0, nil, 0)
 	assert.Contains(t, footer, "1/120 issues", "should show the selection's place in the list")
 
-	footer2 := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, issues, 119, nil, 0)
+	footer2 := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, false, issues, 119, nil, 0)
 	assert.Contains(t, footer2, "120/120 issues", "should show the last issue as the last of the list")
 }
 
@@ -1938,14 +1938,14 @@ func TestRenderFooterBar_ShowsListPosition_PRs(t *testing.T) {
 		prs[i] = domain.PullRequest{Number: i + 1, Title: fmt.Sprintf("PR %d", i+1)}
 	}
 
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewPRs, nil, 0, prs, 50)
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewPRs, false, nil, 0, prs, 50)
 	assert.Contains(t, footer, "51/60 PRs", "should show the selection's place in the list")
 }
 
 func TestRenderFooterBar_NoListPosition_WhenListEmpty(t *testing.T) {
 	theme := styles.NewTheme("digital-noir")
 
-	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, nil, 0, nil, 0)
+	footer := renderFooterBar(theme, "2025-01-01", 200, false, time.Time{}, nil, viewIssues, false, nil, 0, nil, 0)
 	assert.NotContains(t, footer, "issues", "no position readout when there are no issues")
 }
 

@@ -203,21 +203,25 @@ func (e LabEntry) LabStages() []string {
 		}
 	}
 	if mode == LabModeShape {
-		return []string{"Shape", "Publish"}
+		return []string{"Shape", "Review", "Publish"}
 	}
-	return []string{"Interview", "Spec", "Tickets", "Publish"}
+	return []string{"Scout", "Interview", "Spec", "Tickets", "Publish"}
 }
 
 // Stage returns the 1-based step of LabStages the entry has reached, or 0 for
 // a draft.
 func (e LabEntry) Stage() int {
 	switch e.Status {
-	case LabStatusGrilling, LabStatusShaping:
+	case LabStatusShaping:
 		return 1
-	case LabStatusSpecced:
+	case LabStatusGrilling:
+		// Grilling covers scouting and the interview; the interview is
+		// where it waits on the user.
 		return 2
-	case LabStatusTicketed:
+	case LabStatusSpecced:
 		return 3
+	case LabStatusTicketed:
+		return 4
 	case LabStatusPublished:
 		return len(e.LabStages())
 	default:

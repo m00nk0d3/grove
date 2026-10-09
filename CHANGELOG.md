@@ -26,6 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Lab entry page** — the third slice of the Lab redesign. Enter on a Lab
+  entry opens its page in place of the list: a stepper of the session's
+  steps, with interview coverage such as `Interview 6/9`; a panel for what the
+  entry needs now; and the decisions answered so far. Question cards are
+  answered on the page, with the coverage still open shown above them; a turn
+  that ended without a card is replied to on the page with the agent's output
+  above the editor, and permission prompts are answered with `y` or `n`.
+  Enter on a decision reopens its card to change the answer while the
+  interview lasts. Enter does what the entry needs next, `.` focuses the
+  Actions panel, which adds *Write the spec now* and *View agent*, and Esc
+  returns to the list. The page owns the keyboard, so typing in a note never
+  triggers a global key.
 - **Lab stages and prompts** — the second slice of the Lab redesign. A grill
   session now runs four stages, *Scout*, *Interview*, *Spec*, and *Tickets*,
   each with a fresh agent and its own prompt; a shaping session runs *Shape*.

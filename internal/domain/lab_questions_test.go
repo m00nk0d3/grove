@@ -74,3 +74,20 @@ func TestLabQuestionRecord_PendingUntilAnswered(t *testing.T) {
 		t.Error("an invalid card is never pending")
 	}
 }
+
+func TestParseLabCoverage_CountsSettledTopics(t *testing.T) {
+	c, err := ParseLabCoverage([]byte(`{"scope":"covered","triggers":"n/a: one user","data":"open","interface":"n/a:","errors":"covered"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Settled != 3 {
+		t.Errorf("settled = %d, want 3 (n/a needs a reason)", c.Settled)
+	}
+	want := []string{"data", "interface", "concurrency", "compatibility", "testing", "rollout"}
+	if !reflect.DeepEqual(c.Open, want) {
+		t.Errorf("open = %v, want %v", c.Open, want)
+	}
+	if _, err := ParseLabCoverage([]byte("{")); err == nil {
+		t.Error("invalid JSON is an error")
+	}
+}

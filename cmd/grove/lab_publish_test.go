@@ -337,6 +337,8 @@ func TestLab_EnterOnDraftedEntryOpensReview(t *testing.T) {
 	m.lab.setMission(state)
 
 	m, _ = press(t, m, "enter")
+	require.NotNil(t, m.lab.page, "Enter on a row opens the entry page")
+	m, _ = press(t, m, "enter")
 	inspector, ok := m.activeModal.(*modal.LabInspectorModal)
 	require.True(t, ok, "a finished draft is reviewed in Grove, not in the pane")
 	assert.Contains(t, inspector.View(), "3 ARTIFACTS")

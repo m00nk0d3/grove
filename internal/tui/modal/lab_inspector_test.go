@@ -112,7 +112,7 @@ func TestLabInspector_StepsShowChainAndRuns(t *testing.T) {
 	m.Update(labKey("2"))
 	view := m.View()
 
-	assert.Contains(t, view, "BUILD CHAIN  2/4")
+	assert.Contains(t, view, "BUILD CHAIN  3/5")
 	assert.Contains(t, view, "✓  Interview", "steps before the current one are done")
 	assert.Contains(t, view, "◆  Spec", "the step waiting on the user is marked")
 	assert.Contains(t, view, "○  Tickets")
