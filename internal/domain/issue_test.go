@@ -61,3 +61,10 @@ func TestSlugFromTitle(t *testing.T) {
 		})
 	}
 }
+
+func TestIssue_IsClosed(t *testing.T) {
+	assert.True(t, Issue{State: "CLOSED"}.IsClosed())
+	assert.True(t, Issue{State: "closed"}.IsClosed(), "state comparison is case-insensitive")
+	assert.False(t, Issue{State: "OPEN"}.IsClosed())
+	assert.False(t, Issue{}.IsClosed(), "an empty state is not closed")
+}

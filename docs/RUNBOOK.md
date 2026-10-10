@@ -124,6 +124,26 @@ data and the footer shows the error.
 Workflows can also be started directly from a Herdr pane, for example
 `imp 42`, `review 17`, or `address 17`.
 
+### Closing an issue
+
+1. In Issues, select the issue, press `a` to focus Actions, choose
+   *Close issue*, and press `Enter`.
+2. Grove checks close permission through `gh` (`gh api repos/<owner>/<name>
+   --jq .permissions`): only collaborators with push, maintain, or admin
+   access may close. An already closed issue, or a viewer without that
+   access, opens the dialog with confirmation disabled and the reason shown.
+3. Pick a reason — *Completed*, *Not planned*, or *Duplicate* — with
+   `↑`/`↓` or `j`/`k`, add an optional closing comment with `Tab`, and
+   confirm with `y` or `Enter` (`n` or `Esc` cancels).
+4. Grove runs `gh issue close <N> --reason <reason> --comment <comment>`,
+   retrying transient network failures with backoff. A failure reopens the
+   dialog with the cause inline (rate limit, permission denial, or the `gh`
+   error) so it can be retried with `y`; success toasts `Closed #N` and
+   refreshes GitHub in the background.
+
+A permission check that cannot reach GitHub reports *Cannot verify close
+permission* in the status line instead of opening the dialog.
+
 ---
 
 ## Recovery

@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Close issue from the Issues view** — Actions → *Close issue* closes the
+  selected issue through `gh` without leaving Grove. Grove checks collaborator
+  permission first and opens the dialog disabled for already closed issues or
+  viewers without push access. The dialog offers the `gh` close reasons
+  (*Completed*, *Not planned*, *Duplicate*) and an optional closing comment;
+  transient network failures are retried, while rate-limit and permission
+  failures reopen the dialog with the cause inline for retry. Success refreshes
+  GitHub in the background.
 - **Lab review on the entry page** — the fifth slice of the Lab redesign. A
   draft waiting between stages is reviewed on the entry page: the spec and a
   bug report are shown rendered and scroll with the arrow keys, and tickets

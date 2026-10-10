@@ -365,7 +365,7 @@ The **Actions** panel lists what can be done with the current selection. Press
 
 | Selection | Actions |
 |---|---|
-| Issue | Implement issue (`imp`), open on GitHub |
+| Issue | Implement issue (`imp`), close issue, open on GitHub |
 | Pull request | Review (`review`), address review feedback (`address`), repair CI (`ci`), resolve conflicts (`resolve`), open on GitHub |
 | Worktree | Open, open a separate shell, close the session, delete the worktree and its local branch, clean merged work (`clean`) |
 | Dashboard workflow | Inspect, retry a failed run, mark a succeeded run done, stop and remove, clean merged work (`clean`) |
@@ -411,6 +411,21 @@ threads stays with you, and the agent's final response lists what it did for
 each item, including anything it deliberately did not change and why. Threads
 marked outdated are shown to the agent as outdated, so it checks the current
 code rather than redoing work that has already landed.
+
+### Closing an issue
+
+Actions → *Close issue* on a selected issue closes it through `gh` without
+leaving the Issues view. Grove first checks whether the authenticated viewer
+can close issues in the repository (push, maintain, or admin permission); an
+already closed issue, or a viewer without that permission, opens the dialog in
+its disabled state with confirmation unavailable.
+
+The dialog offers a reason — *Completed* (the default), *Not planned*, or
+*Duplicate* — picked with `↑`/`↓` or `j`/`k`, and an optional closing comment
+(`Tab` to edit, `Enter` to confirm). `y` or `Enter` closes the issue,
+`n` or `Esc` cancels. A close that fails reopens the dialog with the failure
+inline — a rate limit or permission denial names itself — so the issue can be
+retried; a successful close refreshes GitHub in the background.
 
 ### Review specialists
 
