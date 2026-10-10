@@ -69,6 +69,10 @@ Do not introduce unrelated refactors.
 `,
 };
 
+function implementationPromptForStack(stack: KnownTechStack): string {
+  return IMPLEMENTATION_PROMPTS[stack] || IMPLEMENTATION_PROMPTS.TYPESCRIPT;
+}
+
 // Every role needs some persona, including in a repository that has never been
 // profiled and whose language this runtime does not recognise. Claiming a
 // specific expertise there would repeat the bug; claiming none at all leaves the
@@ -309,7 +313,12 @@ Required work:
    project should read as a React reviewer, not as a TypeScript one. This is the
    register to match:
 
-${IMPLEMENTATION_PROMPTS.CSHARP}
+implementationPromptForStack(
+        (() => {
+          const stacks = projects.map((p) => p.label ?? "TYPESCRIPT");
+          const primary = stacks[0];
+          return isKnownStack(primary as TechStack) ? primary : "TYPESCRIPT";
+        })() as KnownTechStack),
 4. For each project give the command that runs its tests, and the command that
    prepares a fresh checkout when its ecosystem needs one, together with the
    path whose presence means that preparation can be skipped (node_modules,
