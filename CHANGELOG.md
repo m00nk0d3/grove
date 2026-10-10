@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v1.11.1] - 2026-10-10
+
+### Added
+
+- **Close issue from the Issues view** — Actions → *Close issue* closes the
+  selected issue through `gh` without leaving Grove, with collaborator
+  permission check, close reasons, and retry on transient failures (#283).
+
+### Fixed
+
+- **Sandcastle JSON parsing** — fix parsing breaks and expand the
+  documentation specialist persona; fix follow-on build breaks.
+- **Prompt engineer label handling** — fix label handling and lower the
+  persona length threshold to 20 for prompt-engineer compatibility.
+- **JSON-safe artifact writes** — file-writing specialists use shell
+  heredocs with the terminator at line start so artifacts stay valid JSON.
+
+### Changed
+
+- **Sandcastle reliability** — bounded retries with delivery gates; no
+  bogus agent override.
+- **Sandcastle default model** — default OpenCode model is now
+  `gpt-oss-20b`, selectable via env var for the opencode agent.
+
 ## [Unreleased]
 
 ### Removed
