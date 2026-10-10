@@ -965,7 +965,7 @@ Required work:
 4. Write the report as clear GitHub-flavored Markdown to '${reportPath}'.
 5. Use this exact section order and visual hierarchy:
    # 🚀 Implementation Report
-   > **Issue:** ${repo}#${issueNum} — ${issueTitle}
+   > **Closes:** ${repo}#${issueNum} — ${issueTitle}
    ## 🧭 Overview
    ## ✅ What Changed
    ## 🏗️ Architecture and Data Flow
