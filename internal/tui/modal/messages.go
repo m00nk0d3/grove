@@ -35,6 +35,15 @@ type WorktreeDeleteConfirmedMsg struct {
 	Branch string
 }
 
+// IssueCloseConfirmedMsg is sent when the user confirms closing an issue.
+// Number is the issue number; Reason is one of the CloseIssueReasons values;
+// Comment is the optional closing comment.
+type IssueCloseConfirmedMsg struct {
+	Number  int
+	Reason  string
+	Comment string
+}
+
 // ModalCancelledMsg is sent when the user cancels a modal (Esc or 'n').
 type ModalCancelledMsg struct{}
 
@@ -143,6 +152,8 @@ const (
 	ContextActionLabArchive   = "lab-archive"
 	ContextActionLabRestore   = "lab-restore"
 	ContextActionLabDelete    = "lab-delete"
+	// ContextActionIssueClose opens the close-issue confirmation modal.
+	ContextActionIssueClose = "close-issue"
 	// ContextActionLabFinishInterview asks the agent to end the interview
 	// and write the spec.
 	ContextActionLabFinishInterview = "lab-finish-interview"

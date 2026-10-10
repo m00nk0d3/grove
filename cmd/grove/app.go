@@ -1594,6 +1594,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingSync = &msg
 		return m, debouncedRenderCmd(100 * time.Millisecond)
 
+	case issueClosePermissionMsg:
+		return m.handleIssueClosePermission(msg)
+
+	case modal.IssueCloseConfirmedMsg:
+		return m.handleIssueCloseConfirmed(msg)
+
+	case issueCloseDoneMsg:
+		return m.handleIssueCloseDone(msg)
+
 	case debouncedRenderMsg:
 		if m.pendingSync != nil {
 			pending := m.pendingSync
@@ -3319,6 +3328,8 @@ func (m *Model) handleContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr = "No GitHub item selected"
 		return m, clearErrorCmd()
+	case modal.ContextActionIssueClose:
+		return m.openIssueCloseFlow()
 	case modal.ContextActionLabCapture, modal.ContextActionLabShape, modal.ContextActionLabGrill, modal.ContextActionLabEscalate, modal.ContextActionLabOpenIssue, modal.ContextActionLabClearLock, modal.ContextActionLabEnd,
 		modal.ContextActionLabPublish,
 		modal.ContextActionLabEdit, modal.ContextActionLabArchive,
@@ -3366,11 +3377,16 @@ func contextActionsFor(view activeView, worktrees []domain.Worktree, worktreeIdx
 		if len(issues) == 0 || issueIdx < 0 || issueIdx >= len(issues) {
 			return nil
 		}
-		return []contextActionOption{
+		actions := []contextActionOption{
 			{icon: "↵", label: "Jump to workflow or create worktree", action: modal.ContextActionOpen},
 			{icon: "⚡", label: "Implement issue", workflowKind: modal.WorkflowKindImplement},
 			{icon: "◉", label: "Open on GitHub", action: modal.ContextActionOpenGitHub},
 		}
+		closeLabel := "Close issue"
+		if issues[issueIdx].IsClosed() {
+			closeLabel = "Close issue (already closed)"
+		}
+		return append(actions, contextActionOption{icon: "×", label: closeLabel, action: modal.ContextActionIssueClose})
 	case viewPRs:
 		if len(prs) == 0 || prIdx < 0 || prIdx >= len(prs) {
 			return nil

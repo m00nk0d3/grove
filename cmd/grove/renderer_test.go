@@ -678,7 +678,9 @@ func TestRenderContextPanel_IssueContext(t *testing.T) {
 				{Number: 1, Title: "Some Issue", Labels: nil},
 			},
 			selectedIdx: 0,
-			wantIn:      []string{"+2 more actions"},
+			// Open, Implement, Close issue, Open on GitHub, plus the global
+			// Sync action: two shown, three overflowed.
+			wantIn: []string{"+3 more actions"},
 		},
 	}
 
@@ -1638,7 +1640,7 @@ func TestRenderer_IssueContextPanel_ShowsBody(t *testing.T) {
 				"Labels: [bug]",
 				"Details about the issue.",
 				"◆ ACTIONS",
-				"+2 more actions",
+				"+3 more actions",
 			},
 		},
 	}

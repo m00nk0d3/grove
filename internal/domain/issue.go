@@ -20,6 +20,11 @@ type Issue struct {
 
 var nonAlnumRe = regexp.MustCompile(`[^a-z0-9]+`)
 
+// IsClosed reports whether the issue's GitHub state is closed.
+func (i Issue) IsClosed() bool {
+	return strings.EqualFold(strings.TrimSpace(i.State), "CLOSED")
+}
+
 // SlugFromTitle returns a URL-safe hyphenated slug from an issue title.
 // It lowercases, strips non-alphanumeric characters, and limits to 5 words.
 func SlugFromTitle(title string) string {
